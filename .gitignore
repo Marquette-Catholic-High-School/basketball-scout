@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local config & data (never commit secrets or game film)
+.env
+.env.*
+!.env.example
+data/
+*.mp4
+*.mov
+*.m4v
+*.part
+*.db
+*.db-wal
+*.db-shm
+
+# Model weights downloaded for local runs
+*.pt
+*.onnx
+weights/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "basketball-scout"
+version = "0.1.0"
+description = "Self-hosted high school basketball opponent scouting: film upload, Modal GPU tracking, play recognition, box scores, FastScout exports and Claude scouting reports."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary - Marquette Catholic High School" }
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1",
+    "rapidfuzz>=3.9",
+    "PyYAML>=6.0",
+    "numpy>=1.26",
+    "anthropic>=2.0,<3",
+    "modal>=1.0,<2",
+    "redis>=5.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+scout-web = "scout.main:run"
+scout-worker = "scout.worker:main"
+
+[tool.setuptools.packages.find]
+include = ["scout*", "modal_app*"]
+
+[tool.setuptools.package-data]
+scout = ["static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

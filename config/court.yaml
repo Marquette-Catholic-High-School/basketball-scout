@@ -1,0 +1,19 @@
+# Court geometry in feet (NFHS / high school defaults).
+# Coordinates: x along the court length from the LEFT baseline (camera view),
+# y across the court from the NEAR sideline (camera side).
+#
+# High school courts are commonly 84 ft long; many gyms are shorter (74-80 ft).
+# Set length_ft to your opponent's gym if you know it -- it affects the half-court
+# line and fast-break detection, not shot zones.
+length_ft: 84.0
+width_ft: 50.0
+basket_from_baseline_ft: 5.25        # basket centre: 4 ft backboard + 15 in
+lane_width_ft: 12.0
+ft_line_from_baseline_ft: 19.0        # 15 ft from the backboard face
+three_pt_radius_ft: 19.75             # 19'9" from the basket centre
+three_pt_corner_lateral_ft: 19.75     # straight corner segments (NFHS: same as radius)
+restricted_radius_ft: 4.0             # used only for the "at the rim" sub-zone
+ft_circle_radius_ft: 6.0
+center_circle_radius_ft: 6.0
+corner_three_max_depth_ft: 10.0       # sub-zone labelling: corner vs wing three
+rim_height_ft: 10.0

@@ -1,0 +1,15 @@
+# Server + worker runtime (the GPU pipeline's dependencies live in modal_app/app.py
+# and modal_app/requirements-gpu.txt; they are NOT needed on the server).
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7,<3
+pydantic-settings>=2.3
+python-dotenv>=1.0
+python-multipart>=0.0.9
+openpyxl>=3.1
+rapidfuzz>=3.9
+PyYAML>=6.0
+numpy>=1.26
+anthropic>=2.0,<3
+modal>=1.0,<2
+redis>=5.0

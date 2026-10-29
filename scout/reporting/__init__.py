@@ -1,0 +1,1 @@
+"""Claude-written scouting reports."""
