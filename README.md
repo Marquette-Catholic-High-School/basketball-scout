@@ -310,7 +310,8 @@ after changing them): `SCOUT_MODAL_GPU` (default `A10G`), `SCOUT_MODAL_TIMEOUT_S
 once). Put them in `.env`, so `update.sh` keeps using them on later deploys. If you
 raise `SCOUT_MODAL_TIMEOUT_S` above 8 hours, also raise `SCOUT_MODAL_MAX_WAIT_HOURS`
 (default 8): the worker stops waiting after that many hours, counted from the start of
-the job, and cancels the GPU call. To stop the GPU app:
+the job, and cancels the GPU call (while Modal cannot be reached at all it keeps
+waiting, until 24 hours without contact: `MODAL_REMOTE_ERROR`). To stop the GPU app:
 `modal app stop basketball-scout -y` (redeploy to bring it back); to delete the Volume
 and what is on it: `modal volume delete basketball-scout-data -y`.
 
@@ -457,9 +458,12 @@ Choose *replace* or *merge*, or type players in. "0" and "00" are different numb
 Jersey numbers read from the film are matched to the roster, tolerating typical OCR
 mistakes (8/3/0, 1/7, 5/6, missing digits). The **Jersey assignments from the film**
 table lists every tracked player with the readings and the match; pick the right
-player when it is wrong, or mark referees and spectators as **Not a player**, then
-**Save & re-run analysis** (about a minute, no GPU). The FastScout name column sets the
-exact spelling FastScout expects.
+player when it is wrong, choose a team's **Unknown player** when you know the team but
+not the player (also for a track the tracker took for a referee), or mark referees and
+spectators as **Not a player**, then **Save & re-run analysis** (about a minute, no
+GPU). **Unclear match** means the best read is a roster number, but another track was
+matched to that player or the readings were too split to be sure: assign it yourself if
+you know who it is. The FastScout name column sets the exact spelling FastScout expects.
 
 ### 3. Confirm the team colours
 
@@ -591,7 +595,7 @@ reads the same file).
 | `SCOUT_MODAL_ENVIRONMENT` | (workspace default) | Modal environment the app runs in |
 | `MODAL_ENVIRONMENT` | (workspace default) | The same for Modal commands you run yourself (`make deploy-modal`, `modal run`); `install.sh` / `update.sh` deploy into `SCOUT_MODAL_ENVIRONMENT` anyway. Set both together |
 | `SCOUT_MODAL_POLL_SECONDS` | `10` | How often the worker checks a GPU job |
-| `SCOUT_MODAL_MAX_WAIT_HOURS` | `8` | Give up waiting for a GPU job after this long (`MODAL_TIMEOUT`) |
+| `SCOUT_MODAL_MAX_WAIT_HOURS` | `8` | Give up waiting for a GPU job after this long (`MODAL_TIMEOUT`; not while Modal cannot be reached) |
 | `SCOUT_MODAL_CLEANUP` | `true` | Delete film and results from the Modal Volume after download |
 | `SCOUT_MODAL_GPU` | `A10G` | Deploy time: GPU type (redeploy after changing) |
 | `SCOUT_MODAL_TIMEOUT_S` | `21600` | Deploy time: GPU time limit per film in seconds (max 86400). Above 8 hours also raise `SCOUT_MODAL_MAX_WAIT_HOURS` |
@@ -691,7 +695,7 @@ Every error shown in the app has a code. Find it here:
 | `MODAL_APP_NOT_DEPLOYED` | The GPU app or function was not found. | `sudo /opt/basketball-scout/scripts/update.sh --deploy-modal`. Check that `SCOUT_MODAL_APP_NAME` and the Modal environment match the deployment. |
 | `MODAL_UPLOAD_FAILED` | The film could not be copied to the Modal Volume (the upload is tried three times). | Check the internet connection. School firewalls that inspect TLS traffic must let modal.com through untouched. Retry. |
 | `MODAL_TIMEOUT` | The GPU job ran longer than `SCOUT_MODAL_TIMEOUT_S` (6 hours) or the worker waited longer than `SCOUT_MODAL_MAX_WAIT_HOURS` (8 hours). | Retry. For very long films raise `SCOUT_MODAL_TIMEOUT_S` (max 86400) and redeploy; above 8 hours also raise `SCOUT_MODAL_MAX_WAIT_HOURS` and restart the worker. Or split the film. |
-| `MODAL_REMOTE_ERROR` | The GPU job crashed. | Retry; details in `modal app logs basketball-scout`. |
+| `MODAL_REMOTE_ERROR` | The GPU job crashed, or the server could not reach Modal (while a job runs, for 24 hours: "Lost contact with Modal for more than 24 hours"). | Check the server's internet connection, then Retry; details in `modal app logs basketball-scout`. |
 | `MODAL_RESULT_EXPIRED` | The GPU result is no longer available (Modal keeps it 7 days) and its files are no longer on the volume. | Re-run the analysis. |
 | `VIDEO_INVALID` | The file is not an MP4, MOV or M4V video. | Export the film as H.264 MP4 and upload again. |
 | `VIDEO_DECODE_FAILED` | The video is corrupt or uses a codec that cannot be read. | Re-export as H.264 MP4 (for example with HandBrake) and upload again. |
@@ -716,8 +720,8 @@ Every error shown in the app has a code. Find it here:
 | `REPORT_OVERLOADED` | The Anthropic API is busy. | Try again in a few minutes. |
 | `REPORT_REFUSED` | Claude declined the request. | Remove unusual instructions from the coach focus box and try again. |
 | `REPORT_TRUNCATED` | The report hit the output limit. | Raise `SCOUT_CLAUDE_MAX_TOKENS` (e.g. 96000), restart the worker, regenerate. |
-| `REPORT_FAILED` | The report could not be written. | Try again; stats and exports still work. Details in the worker log. |
-| `UPLOAD_TOO_LARGE` | The film is larger than `SCOUT_MAX_UPLOAD_GB`. | Raise the limit (restart the web app) or compress / trim the film. |
+| `REPORT_FAILED` | The report could not be written, or a web filter or proxy answered instead of Anthropic. | Try again; stats and exports still work. If a school filter blocks it, ask IT to allow `https://api.anthropic.com`. Details in the worker log. |
+| `UPLOAD_TOO_LARGE` | The film is larger than `SCOUT_MAX_UPLOAD_GB`, the server's disk has no room for it, a roster file is over 2 MB, or nginx refused a request as too large. | Raise the limit (restart the web app), compress / trim the film, free disk space by deleting old games, or save just the roster as a CSV. Behind nginx keep `client_max_body_size 64m` (see `deploy/nginx`). |
 | `UPLOAD_INCOMPLETE` | Part of the file did not arrive. | Retry the upload; it resumes where it stopped. |
 | `UPLOAD_NOT_FOUND` | The upload session expired. | Start the upload again. |
 | `REQUEST_TOO_LARGE` | A request was larger than the server accepts (1 MB of JSON, 4 MB for a roster file). | Send film with the upload page; keep roster files under 2 MB. |

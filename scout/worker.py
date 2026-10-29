@@ -256,8 +256,8 @@ class Worker:
         run.result = self._wait_for_processor(run, handle)
         self._check_cancel(job.id)
         self._stage(job.id, JobStage.DOWNLOADING, PROGRESS_DOWNLOADING, "Downloading results from the GPU service")
-        output = run.processor.fetch(handle, run.result, storage.game_dir(job.game_id, create=True))
-        self._install_outputs(job.game_id, output)
+        output = self._download(run, handle)
+        self._install_outputs(job, output)
         self._add_warnings(run, output.warnings)
         analysis = self._analyze(run, PROGRESS_ANALYZING)
         if self.settings.auto_report and self.settings.claude_configured:
@@ -356,21 +356,57 @@ class Worker:
                 pct = min(100.0, max(0.0, status.progress))
                 progress = max(progress, PROGRESS_GPU_START + PROGRESS_GPU_SPAN * pct / 100)
             db.update_job(job.id, progress=round(progress, 1), message=status.message or "Processing on the GPU")
-            if time.time() > deadline:
+            # Not while the processor cannot be reached: a job resumed after the server was off would fail
+            # on its first poll, and its cleanup could delete results waiting for us. The processor ends a
+            # long outage itself (ModalProcessor: CONNECTION_GRACE_S).
+            if time.time() > deadline and not status.unreachable:
                 hours = self.settings.modal_max_wait_hours
                 raise ScoutError(ErrorCode.MODAL_TIMEOUT, f"The GPU did not finish within {hours:g} hours.")
             self._stop.wait(interval)
 
-    def _install_outputs(self, game_id: str, output: ProcessorOutput) -> None:
-        """Make sure the results sit where the rest of the app looks for them."""
+    def _download(self, run: _Run, handle: str) -> ProcessorOutput:
+        """DOWNLOADING: fetch the results into the game's download folder; _install_outputs moves them in.
+
+        Not over the installed run: a download cut short (the worker killed during a restart, a full
+        disk) would leave the new tracking in place with the earlier run's overlay and track overrides.
+        """
+        job = run.job
+        incoming = storage.incoming_dir(job.game_id)
+        incoming.mkdir(parents=True, exist_ok=True)
+        try:
+            output = run.processor.fetch(handle, run.result, incoming)
+        except Exception:
+            self._check_owner(job.id)  # taken over meanwhile: not ours to fail (its owner downloads it)
+            raise
+        # Our lease ran out during the download and another worker took the job over: it installs this
+        # run (maybe did already, and the coach has fixed the new run's tracks since).
+        self._check_owner(job.id)
+        return output
+
+    def _install_outputs(self, job: Job, output: ProcessorOutput) -> None:
+        """Move the downloaded results to where the rest of the app looks for them."""
+        game_id = job.game_id
         if not output.tracking_path.exists():  # never fall back to a tracking file from an earlier run
             raise ScoutError(ErrorCode.TRACKING_RESULT_INVALID, "The GPU results did not include a tracking file.")
-        _move_into_place(output.tracking_path, storage.tracking_path(game_id))
+        tracking = storage.tracking_path(game_id)
+        # ``job`` is the job as claimed: one claimed at ANALYZING or REPORTING installed this very run before
+        # its worker died, and cleared the overrides then; the coach may have fixed the new run's tracks since.
+        replaces_earlier_run = tracking.exists() and job.stage not in (JobStage.ANALYZING, JobStage.REPORTING)
+        _move_into_place(output.tracking_path, tracking)
+        if replaces_earlier_run:
+            # The new run numbers its tracks anew, so "track 12 is #23" would now name someone else.
+            # team_id_map stays: OpenHoopVision's team ids are its dark/light jersey clusters.
+            cleared = db.clear_track_overrides(game_id)
+            logger.info("Game %s: new tracking installed; cleared %d track override(s)", game_id, cleared)
         annotated = storage.annotated_video_path(game_id)
         if output.annotated_video_path is None:
             annotated.unlink(missing_ok=True)  # an overlay from an earlier run would not match the new tracks
         else:
             _move_into_place(output.annotated_video_path, annotated)
+        # At once, not when the analysis is saved: a job that fails after this point must not leave
+        # the flag pointing at a removed overlay, or hide a new one.
+        self._update_game(game_id, has_annotated_video=annotated.exists())
+        shutil.rmtree(storage.incoming_dir(game_id), ignore_errors=True)  # with what a download cut short left there
 
     # --- shared steps ---------------------------------------------------------
 
@@ -581,6 +617,12 @@ class Worker:
         if current.cancel_requested:
             raise _Cancelled
 
+    def _check_owner(self, job_id: str) -> None:
+        """Raise _LeaseLost when another worker has taken the job over (a cancel is left to _check_cancel)."""
+        current = db.get_job(job_id)
+        if current is not None and current.worker_id not in (None, self.worker_id):
+            raise _LeaseLost
+
     def _check_stop(self) -> None:
         if self._stop.is_set():
             raise _Paused
@@ -598,8 +640,11 @@ class Worker:
         return False
 
     def _set_game_status(self, game_id: str, status: GameStatus, **changes: Any) -> None:
+        self._update_game(game_id, status=status, **changes)
+
+    def _update_game(self, game_id: str, **changes: Any) -> None:
         try:
-            db.update_game(game_id, status=status, **changes)
+            db.update_game(game_id, **changes)
         except ScoutError as exc:
             if exc.code != ErrorCode.NOT_FOUND:
                 raise

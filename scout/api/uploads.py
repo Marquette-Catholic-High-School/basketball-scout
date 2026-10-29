@@ -19,6 +19,7 @@ import errno
 import logging
 import shutil
 import subprocess
+import unicodedata
 from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
@@ -52,6 +53,8 @@ CHUNK_IDLE_TIMEOUT_S = 120.0
 # An unfinished upload of the same game with no data for this long was given up (the
 # browser only remembers its latest upload per game); its .part file is deleted.
 ABANDONED_UPLOAD_S = 3600.0
+MAX_FILENAME_CHARS = 255  # as UploadInit and VideoUrlRequest allow
+MAX_EXTENSION_CHARS = 10  # ".mp4", ".webm", ".m2ts"
 
 router = APIRouter(tags=["uploads"])
 
@@ -276,12 +279,26 @@ def _check_container(part: Path, upload: UploadSession) -> None:
 def _check_duration(part: Path, upload: UploadSession, settings: Settings) -> None:
     """Reject an over-long film before it reaches the GPU (only when ffprobe is installed)."""
     seconds = probe_duration_s(part)
-    if seconds is not None and seconds > settings.max_video_minutes * 60:
+    limit_s = settings.max_video_minutes * 60
+    if seconds is not None and seconds > limit_s:
         _abort(upload)
-        raise ScoutError(
-            ErrorCode.VIDEO_TOO_LONG,
-            f"This film is {seconds / 60:.0f} minutes long; the limit is {settings.max_video_minutes:.0f} minutes.",
-        )
+        film, limit = _durations(seconds, limit_s)
+        raise ScoutError(ErrorCode.VIDEO_TOO_LONG, f"This film is {film} long; the limit is {limit}.")
+
+
+def _durations(*seconds: float) -> list[str]:
+    """Durations in minutes, with as many decimals (up to 2) as it takes to tell them apart;
+    closer than that, in minutes and seconds (as the GPU worker words VIDEO_TOO_LONG)."""
+    for digits in (0, 1, 2):
+        texts = [f"{s / 60:.{digits}f} minutes" for s in seconds]
+        if len(set(texts)) == len(texts):
+            return texts
+    for digits in (1, 2, 3):
+        parts = [divmod(round(s, digits), 60) for s in seconds]
+        texts = [f"{whole:.0f} minutes {rest:.{digits}f} seconds" for whole, rest in parts]
+        if len(set(texts)) == len(texts):
+            break
+    return texts
 
 
 def probe_duration_s(path: Path) -> float | None:
@@ -342,7 +359,7 @@ def _human_size(size: int) -> str:
 def set_video_url(body: VideoUrlRequest, game: CurrentGame, settings: SettingsDep, auto_start: bool = True) -> FilmResult:
     """Use a direct MP4 link as the film; the GPU worker downloads it."""
     url, parsed = _check_video_url(body.url)
-    filename = _clean_filename(body.filename or "") or _clean_filename(unquote(parsed.path)) or "film.mp4"
+    filename = _clean_filename(body.filename or "") or _link_filename(parsed)
     with start_lock:  # as in _finish_upload: no job may start on the old film meanwhile
         ensure_no_active_job(game.id, JobKind.ANALYZE)
         _discard_old_film(game.id)
@@ -391,6 +408,17 @@ def _check_video_url(raw: str) -> tuple[str, ParseResult]:
     return url, parsed
 
 
+def _link_filename(parsed: ParseResult) -> str:
+    """The film's name from the link (its last path segment, URL-decoded) or ``film.mp4``, cut to
+    255 characters keeping its extension, like a name the coach types (a link may have 2000)."""
+    name = _clean_filename(unquote(parsed.path))
+    if len(name) > MAX_FILENAME_CHARS:
+        extension = Path(name).suffix
+        extension = extension if len(extension) <= MAX_EXTENSION_CHARS else ""  # not a real extension
+        name = name[: MAX_FILENAME_CHARS - len(extension)].rstrip() + extension
+    return name or "film.mp4"
+
+
 def _maybe_start_analysis(game: Game, settings: Settings, auto_start: bool) -> FilmResult:
     """The response for a film change, queueing the analysis when ``auto_start``."""
     if not auto_start:
@@ -405,11 +433,15 @@ def _discard_old_film(game_id: str) -> None:
         storage.source_video_path(game_id, extension).unlink(missing_ok=True)
     for path in (storage.tracking_path(game_id), storage.annotated_video_path(game_id), storage.analysis_path(game_id)):
         path.unlink(missing_ok=True)
+    # What a download of the old film's results that was cut short left (up to an overlay's size).
+    shutil.rmtree(storage.incoming_dir(game_id), ignore_errors=True)
     db.clear_track_overrides(game_id)  # track ids from the old film mean nothing now
 
 
 def _clean_filename(name: str) -> str:
-    """Last path component of a browser/URL file name (``C:\\fakepath\\x.mp4`` -> ``x.mp4``)."""
+    """Last path component of a browser/URL file name (``C:\\fakepath\\x.mp4`` -> ``x.mp4``).
+    Control characters (a decoded ``%0A`` in a link) become spaces: the name is logged."""
+    name = "".join(" " if unicodedata.category(char) == "Cc" else char for char in name)
     return name.replace("\\", "/").rsplit("/", 1)[-1].strip()
 
 

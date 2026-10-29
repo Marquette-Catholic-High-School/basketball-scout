@@ -432,14 +432,6 @@ function renderProgress() {
 // Video link
 // ---------------------------------------------------------------------------
 
-function filenameFromUrl(url) {
-  try {
-    return decodeURIComponent(new URL(url).pathname.split("/").pop() || "") || null;
-  } catch {
-    return null;
-  }
-}
-
 async function submitVideoUrl(event) {
   event.preventDefault();
   const errorBox = byId("url-error");
@@ -450,10 +442,11 @@ async function submitVideoUrl(event) {
     byId("f-url").focus();
     return;
   }
-  const filename = filenameFromUrl(url);
   await withBusy(byId("url-btn"), "Saving…", async () => {
     try {
-      const result = await api.post(gamePath(state.game.id, "/video-url?auto_start=true"), { url, filename });
+      // No file name: the server takes it from the link and cuts a long one to 255 characters
+      // (keeping the extension); a longer name sent from here would be refused.
+      const result = await api.post(gamePath(state.game.id, "/video-url?auto_start=true"), { url });
       state.done = true;
       window.location.assign(`/games/${encodeURIComponent(result.game.id)}`);
     } catch (err) {

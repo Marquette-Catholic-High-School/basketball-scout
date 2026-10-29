@@ -582,9 +582,20 @@ def _is_server_error(exc: anthropic.APIError) -> bool:
 def _scout_error(exc: anthropic.APIError, model: str) -> ScoutError:
     """Map an SDK error to the coach-facing error taxonomy (most specific first)."""
     detail = _error_detail(exc)
+    status_error = exc if isinstance(exc, anthropic.APIStatusError) else None
+    # Not the API's JSON error: a web filter's "blocked" page, or a proxy's own 401 / 404 page, which
+    # says nothing about the key or the model. A gateway's 5xx page still means a busy API (below).
+    if status_error is not None and status_error.status_code < 500 and _api_error(status_error) is None:
+        return ScoutError(
+            ErrorCode.REPORT_FAILED,
+            f"The request to the Anthropic API failed (HTTP {status_error.status_code}) and the answer did not "
+            "come from the API: a web filter or proxy may have answered instead.",
+            hint=_FILTER_HINT,
+            detail=detail,
+        )
     if isinstance(exc, anthropic.AuthenticationError):
         return ScoutError(ErrorCode.REPORT_AUTH_FAILED, detail=detail)
-    if isinstance(exc, anthropic.PermissionDeniedError) and _api_error(exc) is not None:
+    if isinstance(exc, anthropic.PermissionDeniedError):
         # A key the API accepts but may not use here: no access to the model, or not from this country.
         return ScoutError(
             ErrorCode.REPORT_AUTH_FAILED,
@@ -602,7 +613,6 @@ def _scout_error(exc: anthropic.APIError, model: str) -> ScoutError:
             retryable=False,
             detail=detail,
         )
-    status_error = exc if isinstance(exc, anthropic.APIStatusError) else None
     if status_error is not None and (status_error.status_code == 402 or status_error.type == "billing_error"):
         return ScoutError(
             ErrorCode.REPORT_FAILED,
@@ -621,14 +631,6 @@ def _scout_error(exc: anthropic.APIError, model: str) -> ScoutError:
         return ScoutError(ErrorCode.REPORT_RATE_LIMITED, message, detail=detail)
     if _is_server_error(exc):
         return ScoutError(ErrorCode.REPORT_OVERLOADED, detail=detail)
-    if status_error is not None and _api_error(status_error) is None:  # e.g. a web filter's "blocked" page
-        return ScoutError(
-            ErrorCode.REPORT_FAILED,
-            f"The request to the Anthropic API failed (HTTP {status_error.status_code}) and the answer did not "
-            "come from the API: a web filter or proxy may have answered instead.",
-            hint=_FILTER_HINT,
-            detail=detail,
-        )
     if isinstance(exc, anthropic.BadRequestError):
         message = f"The Anthropic API rejected the request: {_api_message(exc)}"
         return ScoutError(ErrorCode.REPORT_FAILED, message, retryable=False, detail=detail)

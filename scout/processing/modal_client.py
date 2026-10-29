@@ -42,11 +42,12 @@ logger = logging.getLogger(__name__)
 HANDLE_SEPARATOR = "|"
 TRACKING_FILENAME = "tracking.json.gz"
 ANNOTATED_FILENAME = "annotated.mp4"
-# While Modal cannot be reached at all, poll() keeps answering "running" for this long
-# before failing the job: the GPU call keeps running meanwhile and its result waits for us
-# (7 days). Giving up throws that paid run away (Retry starts a new one) and, with Modal
-# unreachable, cleanup() cannot delete the film either; so in practice the worker's own
-# limit (SCOUT_MODAL_MAX_WAIT_HOURS, from the job's start) ends a long outage first.
+# While Modal cannot be reached at all, poll() keeps answering "running" (PollResult.unreachable)
+# for this long before failing the job: the GPU call keeps running meanwhile and its result waits
+# for us (7 days). Giving up throws that paid run away (Retry starts a new one) and, with Modal
+# unreachable, cleanup() cannot delete the film either. The worker's own limit
+# (SCOUT_MODAL_MAX_WAIT_HOURS) does not end the wait while Modal is unreachable, so this is what
+# ends a long outage. It is counted by this process: a worker restart starts it again.
 CONNECTION_GRACE_S = 24 * 3600.0
 # The results are hours of paid GPU work and a failed job deletes them from the volume, so a
 # download rides out a few minutes without internet: delays double from download_retry_delay_s
@@ -64,6 +65,20 @@ def _modal() -> ModuleType:
     import modal
 
     return modal
+
+
+def _stream_terminated_error() -> type[Exception]:
+    """grpclib's StreamTerminatedError ("Connection lost"): unlike other transport errors, the SDK
+    re-raises it as it is once its retries run out, not as ``modal.exception.ConnectionError``."""
+    try:
+        from grpclib.exceptions import StreamTerminatedError
+    except ImportError:  # grpclib comes with modal; only a stand-in for modal can lack it
+        return _NeverRaised
+    return StreamTerminatedError
+
+
+class _NeverRaised(Exception):
+    pass
 
 
 def make_handle(call_id: str, job_id: str) -> str:
@@ -131,13 +146,15 @@ class ModalProcessor(Processor):
         except errors.OutputExpiredError as exc:  # after 7 days; the files may still be on the volume
             return self._expired(job_id, exc)
         # Trouble with Modal's API (gRPC UNAVAILABLE / INTERNAL / RESOURCE_EXHAUSTED after the SDK's own
-        # retries), not an outcome of our GPU call, which keeps running meanwhile.
+        # retries, or a connection that dropped mid-request on every retry), not an outcome of our GPU
+        # call, which keeps running meanwhile.
         except (
             errors.ConnectionError,
             errors.ServiceError,
             errors.InternalError,
             errors.ResourceExhaustedError,
             errors.TimeoutError,
+            _stream_terminated_error(),
         ) as exc:
             return self._unreachable(handle, exc)
         except (errors.AuthError, errors.PermissionDeniedError) as exc:
@@ -366,7 +383,7 @@ class ModalProcessor(Processor):
             message = f"Lost contact with Modal for more than {CONNECTION_GRACE_S / 3600:.0f} hours."
             return _failed(ErrorCode.MODAL_REMOTE_ERROR, message, exc)
         logger.warning("Could not reach Modal to check %s (will keep trying): %s", handle, _describe(exc))
-        return PollResult(state="running", message="Lost contact with the GPU service; retrying...")
+        return PollResult(state="running", message="Lost contact with the GPU service; retrying...", unreachable=True)
 
     def _forget_unreachable(self, handle: str) -> None:
         with self._lock:

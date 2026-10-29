@@ -25,6 +25,11 @@ const COLUMN_NAMES = {
 const METHOD_LABELS = {
   exact: "Exact read", fuzzy: "Close read", partial: "Partial read", manual: "Set by you", unrostered: "Not on roster", none: "No readable jersey",
 };
+// "unrostered" with no jersey: the best read is a roster number, but the server never shows it
+// on a track that is not that player (another track is, or the reads were too split).
+const UNCLEAR_MATCH = "Unclear match";
+const UNCLEAR_MATCH_TITLE = "Its best read is a roster number, but another track was matched to that player "
+  + "or the readings were too split to be sure. Assign it yourself if you know who it is.";
 const IMPORT_EXTENSIONS = [".csv", ".tsv", ".txt", ".xlsx"];
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 const IGNORE = "__ignore";
@@ -116,6 +121,7 @@ class RosterEditor {
 
   load(roster) {
     this.rows = roster.players.map((p) => ({ ...p }));
+    this.savedIds = new Set(roster.players.map((p) => p.id)); // the roster on the server, before any unsaved edit
     this.teamInput.value = roster.team_name || "";
     this.dirty = false;
     this.status.textContent = "";
@@ -260,25 +266,33 @@ function playerLabel(player) {
   return name ? `#${player.jersey} ${name}` : `#${player.jersey}`;
 }
 
+function teamName(side) {
+  return state.editors[side]?.teamInput.value || SIDE_TITLES[side];
+}
+
+/** The choice an override stands for: "scouted:" is the scouted team's unknown player, UNKNOWN keeps the track's team. */
 function overrideValue(override) {
   if (!override) return "";
   if (override.ignore) return IGNORE;
-  const side = ["scouted", "other"].find((s) => rosterPlayers(s).some((p) => p.id === override.player_id));
-  // An override for a player who is no longer on a roster behaves like "unknown player".
-  return override.player_id && side ? `${side}:${override.player_id}` : UNKNOWN;
+  if (!override.player_id) return override.side ? `${override.side}:` : UNKNOWN;
+  // Saving the roster drops an override whose player left it; the server then matches the track automatically.
+  // Until then (a player removed but not saved yet) the override still holds, so look in the saved rosters.
+  const side = ["scouted", "other"].find((s) => state.editors[s]?.savedIds.has(override.player_id));
+  return side ? `${side}:${override.player_id}` : "";
 }
 
 function currentValue(trackId) {
   return state.pending.has(trackId) ? state.pending.get(trackId) : overrideValue(state.overrides.get(trackId));
 }
 
-/** One <select> with every choice; cloned for each row. */
+/** One <select> with every choice; cloned for each row. Each team starts with its unknown player. */
 function assignmentTemplate() {
   return el("select", {},
     el("option", { value: "", text: "Automatic (best jersey match)" }),
     el("option", { value: UNKNOWN, text: "Unknown player (keep team)" }),
     el("option", { value: IGNORE, text: "Not a player (referee, coach, fan…)" }),
-    ["scouted", "other"].map((side) => el("optgroup", { label: state.editors[side]?.teamInput.value || SIDE_TITLES[side] },
+    ["scouted", "other"].map((side) => el("optgroup", { label: teamName(side) },
+      el("option", { value: `${side}:`, text: `Unknown player (${teamName(side)})` }),
       rosterPlayers(side).map((p) => el("option", { value: `${side}:${p.id}`, text: playerLabel(p) })))));
 }
 
@@ -294,6 +308,14 @@ function matchedText(a) {
   if (player) return playerLabel(player);
   return a.jersey ? `#${a.jersey} (not on roster)` : "–";
 }
+
+/** Match score; none for a track without reads or one you set without naming a player (e.g. a referee made a player). */
+function scoreText(a) {
+  return a.method === "none" || (a.method === "manual" && !a.player_id) ? "–" : formatPct(a.match_score, 0);
+}
+
+/** No roster player, yet its best read is a roster number, so it has no jersey (see UNCLEAR_MATCH). */
+const unclearMatch = (a) => a.method === "unrostered" && !a.jersey && Boolean(a.best_read);
 
 function sortedTracks() {
   const sideRank = { scouted: 0, other: 1 };
@@ -327,8 +349,9 @@ function renderTracks() {
       el("td", { text: a.best_read ? `#${a.best_read}` : "–" }),
       el("td", { class: "small", text: votesText(a.votes) }),
       el("td", { text: matchedText(a) }),
-      el("td", { class: "num", text: a.method === "none" ? "–" : formatPct(a.match_score, 0) }),
-      el("td", { class: "small" }, METHOD_LABELS[a.method] || a.method, a.ignored ? el("span", { class: "badge", text: "ignored" }) : null),
+      el("td", { class: "num", text: scoreText(a) }),
+      el("td", { class: "small", title: unclearMatch(a) ? UNCLEAR_MATCH_TITLE : null },
+        unclearMatch(a) ? UNCLEAR_MATCH : METHOD_LABELS[a.method] || a.method, a.ignored ? el("span", { class: "badge", text: "ignored" }) : null),
       el("td", {}, select));
   });
   setChildren(byId("tracks-body"), rows.length ? rows : el("tr", {}, el("td", { colspan: "9", class: "muted", text: "No tracks match this filter." })));
@@ -355,9 +378,10 @@ function onAssignmentChange(e) {
 function overrideBody(trackId, value) {
   const assignment = state.tracks.find((a) => a.track_id === trackId);
   if (value === IGNORE) return { track_id: trackId, player_id: null, side: assignment?.side ?? null, ignore: true };
-  if (value === UNKNOWN) return { track_id: trackId, player_id: null, side: assignment?.side ?? null, ignore: false };
+  // "Keep team" names no side: the server takes the track's own team (none for a referee).
+  if (value === UNKNOWN) return { track_id: trackId, player_id: null, side: null, ignore: false };
   const [side, playerId] = value.split(":");
-  return { track_id: trackId, player_id: playerId, side, ignore: false };
+  return { track_id: trackId, player_id: playerId || null, side, ignore: false }; // "other:" = their unknown player
 }
 
 async function saveTracksAndRerun() {

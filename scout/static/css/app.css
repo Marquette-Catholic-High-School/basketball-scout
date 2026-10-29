@@ -538,6 +538,7 @@ label.btn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
 .import-result { font-size: 0.88rem; }
 .import-result ul { margin: 0.25rem 0; padding-left: 1.2rem; }
 .track-table td { font-size: 0.85rem; }
+.track-table select { min-width: 14rem; } /* the three "Unknown player (...)" choices differ at the end; the table scrolls on phones */
 .track-table tr.changed td { background: var(--warning-soft); }
 .unsaved { color: var(--warning); font-weight: 600; }
 

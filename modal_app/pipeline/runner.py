@@ -45,8 +45,12 @@ OCR_MIN_TRACK_S = 2.0
 PARTIAL_FILM_SHARE = 0.9  # fewer analysed frames than this share of the film: OHV stopped early
 FREE_THROWS_NOT_DETECTED_MESSAGE = (
     "The court could not be mapped, so free throws (and the shooting fouls before them) were not detected: "
-    "each free throw counts as a 2-point attempt, so FGA and points run high. "
+    "each free throw counts as a 2-point attempt, so FGA and points run high and PF runs low. "
     "Calibrate the court, then choose Full re-analysis."
+)
+EXTRA_EVENTS_FAILED_MESSAGE = (
+    "Free throws, fouls, screens, jump balls and periods could not be detected: OpenHoopVision's free throws "
+    "stay field-goal attempts, so FGA and points run high and PF runs low."
 )
 
 
@@ -414,7 +418,7 @@ def merge_events(perception: Perception, ohv_events: list[dict[str, Any]]) -> li
         extra = list(extra_events.detect_events(perception, existing_events=enriched))
     except Exception:  # noqa: BLE001
         logger.exception("supplementary event detection failed")
-        perception.warn("EXTRA_EVENTS_FAILED", "Free throws, fouls and screens could not be detected for this film.")
+        perception.warn("EXTRA_EVENTS_FAILED", EXTRA_EVENTS_FAILED_MESSAGE)
         extra = []
     else:
         if not extra_events.has_court_positions(perception):  # OHV's free throws stay field-goal attempts

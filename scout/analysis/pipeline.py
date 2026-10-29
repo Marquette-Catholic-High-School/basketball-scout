@@ -393,8 +393,9 @@ def _free_throw_warnings(tracking: TrackingResult, *, calibrated: bool) -> list[
     )
     return [PipelineWarning(
         code=FREE_THROWS_NOT_DETECTED,
-        message="Free throws were not detected because the court could not be mapped on the GPU: each free throw "
-        f"counts as a 2-point attempt, so FGA and points run high. {fix}",
+        message="Free throws (and the shooting fouls inferred from them) were not detected because the court could "
+        "not be mapped on the GPU: each free throw counts as a 2-point attempt, so FGA and points run high and PF "
+        f"runs low. {fix}",
         severity="warning",
     )]
 

@@ -10,6 +10,7 @@
         tracking.json.gz                raw TrackingResult from the GPU pipeline
         annotated.mp4                   rendered overlay video (optional)
         analysis.json                   latest GameAnalysis
+        .incoming/                      an ANALYZE's download from the GPU, until the worker moves it in
 """
 
 from __future__ import annotations
@@ -57,6 +58,12 @@ def tracking_path(game_id: str) -> Path:
 
 def analysis_path(game_id: str) -> Path:
     return game_dir(game_id) / "analysis.json"
+
+
+def incoming_dir(game_id: str) -> Path:
+    """Where an ANALYZE downloads its results: inside the game folder, so moving them in is a
+    rename. A download cut short (the worker killed mid-download) leaves its partial files here."""
+    return game_dir(game_id) / ".incoming"
 
 
 def upload_part_path(upload_id: str) -> Path:

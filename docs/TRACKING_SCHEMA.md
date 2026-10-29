@@ -60,7 +60,7 @@ links whose host resolves to a private, loopback, link-local, site-local, multic
 reserved address (also after a redirect) with `VIDEO_DOWNLOAD_FAILED`. It connects to the
 address it checked, so these downloads do not go through an HTTP(S) proxy set in the
 environment. A file name taken from the link is shortened to 100 characters on the GPU
-(the extension is kept). Paths are
+(an extension of up to 10 characters, such as `.mp4`, is kept). Paths are
 relative to the Modal volume root (mounted at `/data` in the container) or, for the local
 processor, to its run folder `<SCOUT_DATA_DIR>/local_runs/<job_id>/`.
 
@@ -71,8 +71,9 @@ frames), `work_dir`, `keep_work_dir` (keep OpenHoopVision's raw output) and
 Time limits: the GPU function stops after `SCOUT_MODAL_TIMEOUT_S` (deploy time, default
 21600 s = 6 hours, at most 86400), and the worker stops waiting after
 `SCOUT_MODAL_MAX_WAIT_HOURS` (default 8) counted from the job's start, then cancels the
-call (`MODAL_TIMEOUT`). Raising `SCOUT_MODAL_TIMEOUT_S` above 8 hours also requires
-raising `SCOUT_MODAL_MAX_WAIT_HOURS`.
+call (`MODAL_TIMEOUT`). While Modal cannot be reached at all it keeps waiting, until 24
+hours without contact (`MODAL_REMOTE_ERROR`). Raising `SCOUT_MODAL_TIMEOUT_S` above 8
+hours also requires raising `SCOUT_MODAL_MAX_WAIT_HOURS`.
 
 `calibration` (optional) is a manual pixel→court homography for a FIXED camera,
 made by clicking court landmarks in the UI. When present and the pipeline has no
@@ -161,7 +162,7 @@ screen; the runner still picks them up from those lines.
 | `FILM_PARTIALLY_ANALYSED` | Fewer than 90 % of the film's frames (the video stream's frame count divided by the analysis step) were analysed, so stats and plays cover only the part that was read. |
 | `EVENT_ENRICHMENT_FAILED` | Assists, blocks and offensive / defensive rebounds could not be filled in. |
 | `EXTRA_EVENTS_FAILED` | Free throws, fouls, screens, jump balls and periods could not be detected: OpenHoopVision's free throws stay field-goal attempts, so FGA and points run high and PF runs low. |
-| `FREE_THROWS_NOT_DETECTED` | No court positions, so free throws (and the shooting fouls inferred from them) could not be detected: OpenHoopVision reports each free throw as a field-goal attempt, so FGA and points run high. A manual calibration sent with the GPU job lets the pipeline find them; a server-side re-analysis cannot. |
+| `FREE_THROWS_NOT_DETECTED` | No court positions, so free throws (and the shooting fouls inferred from them) could not be detected: OpenHoopVision reports each free throw as a field-goal attempt, so FGA and points run high and PF runs low. A manual calibration sent with the GPU job lets the pipeline find them; a server-side re-analysis cannot. |
 | `ANNOTATED_VIDEO_MISSING` | No overlay video was produced; the film plays without overlays. |
 | `ANNOTATED_VIDEO_FAILED` | The overlay video could not be encoded; stats and the timeline are unaffected. |
 

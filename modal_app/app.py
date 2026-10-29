@@ -139,6 +139,9 @@ progress_dict = modal.Dict.from_name(PROGRESS_DICT_NAME, create_if_missing=True)
 
 _JOB_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".mkv", ".webm")
+# A link film is downloaded as "<name>.part" and a file name may have 255 bytes at most.
+_MAX_NAME_CHARS = 100
+_MAX_SUFFIX_CHARS = 10  # longer is not an extension (".mp4", ".webm", ".m2ts")
 
 
 @dataclass(frozen=True)
@@ -201,7 +204,13 @@ def _filename_from_url(url: str) -> str:
 
 
 def _safe_name(name: str) -> str:
+    """A plain file name for ``name``: no folders or odd characters, at most 100 characters
+    (the extension is kept)."""
     cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", PurePosixPath(name).name).lstrip(".")
+    if len(cleaned) > _MAX_NAME_CHARS:
+        suffix = PurePosixPath(cleaned).suffix
+        suffix = suffix if len(suffix) <= _MAX_SUFFIX_CHARS else ""
+        cleaned = cleaned[: _MAX_NAME_CHARS - len(suffix)] + suffix
     return cleaned or "film.mp4"
 
 

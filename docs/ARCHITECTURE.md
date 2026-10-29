@@ -205,6 +205,11 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   so a failure later in the job does not leave the flag pointing at a removed file. New
   tracking installed over an earlier run's also clears the game's track overrides (see
   **Full re-analysis** below).
+* An ANALYZE downloads its results into the game folder's `.incoming/` and moves them
+  into place in one step, so a download cut short (the worker killed mid-download, a
+  full disk) leaves the earlier run's tracking, overlay and track overrides together.
+  A worker whose job was taken over during the download steps aside: it neither
+  installs nor fails it.
 * A report failure after a successful analysis does NOT fail the ANALYZE job; it is
   recorded as a job warning and the coach can click "Generate report" again.
 * Mock processor (`SCOUT_PROCESSOR=mock`): the seed of the synthetic game is written to
@@ -237,9 +242,10 @@ comes from the same middleware: the request's `Host`, or a name in `X-Forwarded-
 never allow one), is not one the server answers to (`SCOUT_ALLOWED_HOSTS`, `*.school.org`
 for subdomains, `*` for any name; IP addresses, `localhost` and `*.localhost` always
 work; when it is empty, any name while auth is on, and with auth disabled only those and
-the machine's own name, which blocks DNS rebinding). `GET /api/health/live` is exempt. Request bodies are capped:
-1 MB for JSON, 4 MB for a roster file; upload chunks have their own limit
-(`REQUEST_TOO_LARGE`, 413). The interactive API docs are at `/api/docs` and
+the machine's own name, which blocks DNS rebinding). `GET /api/health/live` is exempt.
+Request bodies are capped (`REQUEST_TOO_LARGE`, 413): 1 MB for JSON, 4 MB for a
+multipart form such as a roster file; upload chunks have their own limit (twice the
+upload's chunk size, `UPLOAD_TOO_LARGE`). The interactive API docs are at `/api/docs` and
 `/api/openapi.json` (behind sign-in).
 
 Extra rules beyond the table:
@@ -252,12 +258,14 @@ Extra rules beyond the table:
   track overrides, the coach's team-colour choice (`team_id_map`) and the court
   calibration: track and team ids from the old film mean nothing for the new one, and
   the calibration was clicked on the old film's frame. It also aborts the game's other
-  open uploads and deletes their `.part` files. A video URL game has `has_video=false`,
+  open uploads and deletes their `.part` files, and what a results download cut short
+  left in the game's `.incoming/` folder. A video URL game has `has_video=false`,
   `video_url` set (the GPU downloads it; the local processor downloads it on the server
   and refuses links whose host resolves to a private, loopback, link-local, site-local,
   multicast or reserved address, also after a redirect). Video links must be `http(s)`
-  with a valid host and port (0-65535); a file name taken from the link is cut to 255
-  characters, keeping its extension.
+  with a valid host and port (0-65535); a file name taken from the link is URL-decoded,
+  has control characters turned into spaces and is cut to 255 characters, keeping an
+  extension of up to 10 characters (the upload page sends only the link).
 * **Full re-analysis** (an ANALYZE of a game that already has GPU results) sends the
   film and the court calibration to the GPU again; the old results stay until the new
   ones arrive. When the worker installs the new tracking over the earlier run's, it

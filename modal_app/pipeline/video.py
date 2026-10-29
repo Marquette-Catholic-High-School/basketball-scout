@@ -186,16 +186,22 @@ def validate_probe(probe: VideoProbe, *, max_duration_s: float | None) -> None:
         raise PipelineError(errors.VIDEO_DECODE_FAILED, "The video has no readable frames.")
     if max_duration_s and probe.duration_s > max_duration_s:
         film, limit = _minutes(probe.duration_s, max_duration_s)
-        raise PipelineError(errors.VIDEO_TOO_LONG, f"The film is {film} minutes long; the limit is {limit} minutes.")
+        raise PipelineError(errors.VIDEO_TOO_LONG, f"The film is {film} long; the limit is {limit}.")
 
 
 def _minutes(*seconds: float) -> list[str]:
-    """Durations in minutes, with as many decimals (up to 2) as it takes to tell them apart."""
-    for digits in (0, 1):
-        texts = [f"{s / 60:.{digits}f}" for s in seconds]
+    """Durations in minutes, with as many decimals (up to 2) as it takes to tell them apart;
+    closer than that (about 0.3 s), in minutes and seconds."""
+    for digits in (0, 1, 2):
+        texts = [f"{s / 60:.{digits}f} minutes" for s in seconds]
         if len(set(texts)) == len(texts):
             return texts
-    return [f"{s / 60:.2f}" for s in seconds]
+    for digits in (1, 2, 3):
+        parts = [divmod(round(s, digits), 60) for s in seconds]
+        texts = [f"{whole:.0f} minutes {rest:.{digits}f} seconds" for whole, rest in parts]
+        if len(set(texts)) == len(texts):
+            break
+    return texts
 
 
 def check_decodable(path: str | os.PathLike[str]) -> None:

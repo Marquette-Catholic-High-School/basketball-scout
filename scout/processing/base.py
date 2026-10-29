@@ -52,6 +52,9 @@ class PollResult:
     message: str | None = None
     result: dict[str, Any] | None = None  # processor response dict (see docs/TRACKING_SCHEMA.md)
     error: ScoutError | None = None
+    # The processor could not be reached at all (state stays "running"): the worker's wait limit
+    # does not end the wait then; the processor gives up on a long outage itself.
+    unreachable: bool = False
 
 
 @dataclass

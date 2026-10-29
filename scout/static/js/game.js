@@ -24,6 +24,8 @@ const TAB_KEY = "scout.gameTab";
 const FULL_RUN_CONFIRM = "Send the film to the GPU again?\n\n"
   + "A full re-analysis takes about as long as the first run and costs another GPU run. "
   + "The current results stay on this page until it finishes.\n\n"
+  + "It numbers the players' tracks again, so it clears the track assignments you made on the Roster page; "
+  + "redo them afterwards.\n\n"
   + "(Re-run analysis only redoes the stats on this server.)";
 const gameId = gameIdFromPath();
 // filmRenewed: a GPU run finished while the page was open, so the annotated copy is a new file.
