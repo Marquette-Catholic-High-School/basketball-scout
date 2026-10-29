@@ -1,0 +1,136 @@
+# Play recognition thresholds (scout/analysis/plays.py).
+#
+# Every value here overrides a built-in default, so you can delete a line to go back
+# to the default, or set `enabled: false` to switch a detector off. Distances are in
+# feet, speeds in feet per second, times in seconds. "Half-court" positions are
+# [feet from the attacked baseline, feet from the offense's LEFT sideline].
+#
+# After editing, click "Re-run analysis" on a game; no restart is needed.
+
+general:
+  pixel_confidence_factor: 0.6   # confidence multiplier when the court could not be mapped (pixel mode)
+  outcome_window_s: 3.0          # how long after the action we look for the shot/turnover that ends the play
+  max_pass_flight_s: 2.0         # longest gap between two holders that still counts as a pass (catch)
+  holder_gap_s: 0.3              # short ball-tracking dropouts inside one player's dribble are ignored
+  speed_window_s: 0.4            # speeds are averaged over this window
+
+pick_and_roll:                   # on-ball screen; also used for pick-and-pop
+  enabled: true
+  screen_distance_ft: 4.0        # screener within this distance of the ball handler
+  screener_max_speed_fts: 2.5    # screener "nearly stationary"
+  min_screen_s: 0.4              # ...for at least this long
+  min_basket_distance_ft: 12.0   # screens closer to the basket are ignored (post traffic)
+  defender_distance_ft: 6.0      # handler's nearest defender must be this close (someone to screen)
+  roll_window_s: 2.5             # watch the screener this long after the screen
+  roll_min_gain_ft: 5.0          # screener gets this much closer to the basket = roll
+  handoff_exclusion_s: 1.0       # a "screen" right after a handoff by the same player is the handoff
+  confidence: 0.75
+
+pick_and_pop:
+  enabled: true
+  pop_min_basket_distance_ft: 17.0  # screener ends at least this far out (perimeter / beyond the arc) = pop
+  confidence: 0.7
+
+handoff:                         # dribble handoff (DHO)
+  enabled: true
+  max_distance_ft: 3.0           # giver and receiver this close at the exchange
+  giver_max_speed_fts: 3.0       # giver nearly stationary
+  max_gap_s: 0.4                 # no flight time between the two holders
+  confidence: 0.7
+
+isolation:
+  enabled: true
+  min_hold_s: 3.0                # handler keeps the ball at least this long
+  min_basket_distance_ft: 15.0   # starts on the perimeter / wing
+  defender_distance_ft: 6.0      # exactly one defender this close
+  spacing_ft: 12.0               # nearest teammate farther than this
+  min_share: 0.7                 # share of the hold that must meet the conditions above
+  drive_min_gain_ft: 8.0         # a drive gets at least this much closer to the basket
+  shot_after_hold_s: 1.0         # or the handler shoots within this time of the hold ending
+  confidence: 0.65
+
+post_up:
+  enabled: true
+  max_basket_distance_ft: 12.0   # catch within this distance of the basket...
+  min_lane_offset_ft: 3.0        # ...and this far sideways from the middle of the lane (block / lane line)
+  max_lane_offset_ft: 10.0
+  min_hold_s: 1.5
+  defender_distance_ft: 4.0
+  min_share: 0.6                 # share of the hold with a defender this close
+  confidence: 0.7
+
+off_ball_screen:
+  enabled: true
+  screen_distance_ft: 4.0
+  screener_max_speed_fts: 2.5
+  min_screen_s: 0.4
+  defender_distance_ft: 6.0      # the player being freed has a defender this close
+  receive_within_s: 2.0          # ...and catches a pass within this time
+  confidence: 0.6
+
+spot_up:                         # catch-and-shoot outside the paint
+  enabled: true
+  max_catch_to_shot_s: 1.5
+  max_move_ft: 4.0               # shooter moves less than this between catch and shot
+  confidence: 0.7
+
+cut:
+  enabled: true
+  min_speed_fts: 10.0            # speed toward the basket in the second before the catch
+  lookback_s: 1.0
+  confidence: 0.6
+
+putback:
+  enabled: true
+  max_rebound_to_shot_s: 2.0
+  max_basket_distance_ft: 10.0   # offensive rebound this close to the basket
+  confidence: 0.8
+
+fast_break:                      # FastScout "transition": ends within the first 10 s, not after a stoppage
+  enabled: true
+  start_reasons: [def_rebound, steal, turnover]
+  shot_within_s: 8.0             # the shot comes this soon after the possession starts
+  cross_half_within_s: 5.0       # the ball crosses half court this soon (court mapping needed)
+  ahead_margin_ft: 3.0           # attackers level with the ball count as "ahead" for numbers like 3v2
+  count_turnovers: false         # true = transition turnovers also count as fast breaks
+  confidence: 0.75
+
+defense:                         # shared by man_defense / zone_defense (one label per half-court possession)
+  settle_s: 1.5                  # start judging this long after the ball and all five defenders are in the half court
+  min_window_s: 4.0              # need at least this much half-court time to judge
+  sample_hz: 2.0
+  min_move_ft: 1.5               # attacker movement smaller than this is ignored
+  man_min_follow: 0.5            # 0..1: how closely defenders copy their man's movement; above = man
+  zone_max_follow: 0.3           # below = zone (they hold spots while attackers move through)
+  zone_max_anchor_ratio: 0.6     # in between: defender wander / his attacker's wander below this = zone
+  pixel_skip_s: 5.0              # pixel mode: skip this much of the possession start (no half-court line)
+  set_speed_fts: 7.0             # ...and wait until defenders average below this and none runs over twice it (set)
+  confidence: 0.7
+
+man_defense:
+  enabled: true
+
+zone_defense:
+  enabled: true
+  max_template_error_ft: 5.0     # mean distance to the best zone shape; worse = "unknown"
+  templates:                     # mean defender spots, half-court feet [from baseline, from offense's left]
+    "2-3": [[22, 17], [22, 33], [9, 9], [9, 41], [6, 25]]
+    "3-2": [[24, 25], [19, 10], [19, 40], [8, 17], [8, 33]]
+    "1-3-1": [[28, 25], [18, 9], [16, 25], [18, 41], [5, 25]]
+    "1-2-2": [[28, 25], [20, 14], [20, 36], [8, 15], [8, 35]]
+
+press:                           # full-court pressure after a made basket / inbound
+  enabled: true
+  start_reasons: [made_basket, made_ft, free_throws, free_throw, inbound, out_of_bounds, period_start, timeout]
+  min_delay_s: 1.0               # judge from the inbound catch (at least this long after the possession starts)
+  pickup_within_s: 3.0           # defenders must be picking up within this long of the inbound
+  min_defenders: 2               # defenders in the offense's backcourt picking someone up
+  pickup_distance_ft: 8.0
+  backcourt_margin_ft: 2.0       # must be at least this far past half court
+  min_hold_s: 1.0
+  trap_distance_ft: 6.0          # two defenders this close to the ball handler = trap (zone press)
+  confidence: 0.7
+
+dedupe:                          # when two plays end on the same shot/turnover, keep the first in this list
+  priority: [fast_break, putback, pick_and_roll, pick_and_pop, handoff,
+             off_ball_screen, post_up, isolation, cut, spot_up]

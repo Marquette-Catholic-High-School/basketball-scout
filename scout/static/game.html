@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game - Basketball Scout</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/game.js"></script>
+</head>
+<body>
+  <a class="visually-hidden" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-ball" aria-hidden="true"></span>Basketball Scout</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/">Games</a>
+      <a id="nav-roster" href="/">Roster</a>
+      <a href="/upload">New game</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <div>
+        <h1 id="game-title">Loading game…</h1>
+        <div id="game-meta" class="game-header-meta"></div>
+      </div>
+      <div class="row no-print">
+        <a id="roster-link" class="btn" href="/">Roster &amp; jerseys</a>
+        <a id="film-link" class="btn" href="/upload">Replace film</a>
+        <button id="reanalyze-btn" type="button" disabled>Re-run analysis</button>
+      </div>
+    </div>
+
+    <div id="page-error" aria-live="assertive"></div>
+    <section id="job-panel" class="card job-panel" aria-live="polite" hidden></section>
+    <section id="team-banner" class="card team-banner" aria-live="polite" hidden></section>
+
+    <section id="no-film" class="card" hidden>
+      <h2>No film yet</h2>
+      <p>Upload the game film (MP4) or give a direct video link to start the analysis.</p>
+      <a id="no-film-link" class="btn btn-primary" href="/upload">Add film</a>
+    </section>
+
+    <div id="analysis-pending" aria-live="polite" hidden></div>
+
+    <div id="game-layout" class="game-layout" hidden>
+      <section class="card player-card" aria-label="Game film">
+        <div id="player-missing" hidden></div>
+        <div id="player-main">
+        <div id="player-stage" class="player-stage">
+          <video id="video" controls preload="metadata" playsinline></video>
+          <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
+          <canvas id="calibration-layer" class="overlay calibration-layer" aria-label="Video frame: click the selected court landmark" hidden></canvas>
+        </div>
+        <div class="player-toolbar no-print">
+          <div class="btn-group" role="group" aria-label="Video version">
+            <button id="variant-annotated" type="button" aria-pressed="false">Annotated</button>
+            <button id="variant-original" type="button" aria-pressed="true">Original</button>
+          </div>
+          <label class="inline-label">Speed
+            <select id="speed-select">
+              <option value="0.25">0.25×</option>
+              <option value="0.5">0.5×</option>
+              <option value="0.75">0.75×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.25">1.25×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </label>
+          <label class="inline-label"><input id="overlay-toggle" type="checkbox" checked> Captions</label>
+          <button id="prev-event" type="button" class="btn-small" title="Previous event ( [ )">&#9664; Event</button>
+          <button id="next-event" type="button" class="btn-small" title="Next event ( ] )">Event &#9654;</button>
+          <span class="spacer"></span>
+          <button id="fullscreen-btn" type="button" class="btn-small">Full screen</button>
+          <button id="calibrate-btn" type="button" class="btn-small" aria-expanded="false" aria-controls="calibration-panel">Calibrate court</button>
+        </div>
+        <div id="video-error" aria-live="polite"></div>
+        <div class="marker-strip">
+          <canvas id="marker-strip" role="img" aria-label="Event markers along the film. The event timeline lists the same events."></canvas>
+          <div id="marker-tip" class="marker-tip" hidden></div>
+        </div>
+        <div id="marker-legend" class="legend"></div>
+        <details class="shortcuts no-print">
+          <summary>Keyboard shortcuts</summary>
+          <ul>
+            <li><kbd>Space</kbd> play / pause</li>
+            <li><kbd>&larr;</kbd> <kbd>&rarr;</kbd> back / forward 5 seconds (<kbd>Shift</kbd> for 1 second)</li>
+            <li><kbd>[</kbd> <kbd>]</kbd> previous / next event on the marker strip</li>
+          </ul>
+        </details>
+        </div>
+
+        <section id="calibration-panel" class="calibration section-sub" aria-labelledby="calibration-heading" hidden>
+          <div class="card-head">
+            <h3 id="calibration-heading">Court calibration (fixed cameras only)</h3>
+            <button id="cal-close" type="button" class="btn-small">Close</button>
+          </div>
+          <p class="hint">Use this when the camera never moves. Find a frame where the floor lines are clear (arrow keys step through the film), pick a landmark, then click exactly where it is on the frame. Add at least 4 points spread across the court.</p>
+          <div class="calibration-grid">
+            <div>
+              <label class="field">Landmark to click
+                <select id="cal-landmark"></select>
+              </label>
+              <div id="cal-diagram" class="court-diagram section-sub"></div>
+            </div>
+            <div>
+              <p id="cal-count" aria-live="polite"></p>
+              <ul id="cal-points" class="points-list"></ul>
+              <div class="row">
+                <button id="cal-undo" type="button" class="btn-small">Undo last point</button>
+                <button id="cal-clear" type="button" class="btn-small">Clear points</button>
+              </div>
+              <div class="row section-sub">
+                <button id="cal-save" type="button" class="btn-primary" disabled>Save calibration</button>
+                <button id="cal-delete" type="button" class="btn-danger" hidden>Remove saved calibration</button>
+              </div>
+              <div id="cal-result" class="section-sub" aria-live="polite"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section id="timeline-card" class="card timeline-card" aria-labelledby="timeline-heading" hidden>
+        <div class="card-head">
+          <h2 id="timeline-heading">Event timeline</h2>
+          <label class="inline-label small"><input id="follow-toggle" type="checkbox" checked> Follow video</label>
+        </div>
+        <div class="timeline-filters">
+          <label><span class="visually-hidden">Team</span><select id="filter-team"></select></label>
+          <details id="filter-types-wrap" class="type-filter">
+            <summary id="filter-types-summary">All event types</summary>
+            <fieldset class="type-options">
+              <legend class="visually-hidden">Event types to show</legend>
+              <div id="filter-types" class="type-list"></div>
+            </fieldset>
+          </details>
+          <label><span class="visually-hidden">Player</span><select id="filter-player"></select></label>
+          <label><span class="visually-hidden">Play type</span><select id="filter-play"></select></label>
+          <label><span class="visually-hidden">Search events</span><input id="filter-search" type="search" placeholder="Search events…"></label>
+        </div>
+        <div id="timeline-scroll" class="timeline-scroll">
+          <table class="timeline-table">
+            <caption class="visually-hidden">Game events in order. Click a time to watch it.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Event · player · zone</th>
+                <th scope="col">Team</th>
+                <th scope="col" title="Team in possession and possession number">Poss.</th>
+                <th scope="col" class="num" title="Points on the play and running score: scouted team - opponent">Score</th>
+                <th scope="col" class="num" title="How sure the analysis is about this event">Conf.</th>
+              </tr>
+            </thead>
+            <tbody id="timeline-body"></tbody>
+          </table>
+        </div>
+        <div class="timeline-footer">
+          <span id="timeline-count" aria-live="polite"></span>
+          <button id="filter-reset" type="button" class="btn-link">Clear filters</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="analysis-tabs-wrap" hidden>
+      <div id="analysis-tabs" class="tabs no-print" role="tablist" aria-label="Analysis sections">
+        <button id="tabbtn-box" type="button" role="tab" aria-controls="tab-box" aria-selected="true">Box score</button>
+        <button id="tabbtn-shots" type="button" role="tab" aria-controls="tab-shots" aria-selected="false">Shot chart</button>
+        <button id="tabbtn-plays" type="button" role="tab" aria-controls="tab-plays" aria-selected="false">Plays</button>
+        <button id="tabbtn-report" type="button" role="tab" aria-controls="tab-report" aria-selected="false">Scouting report</button>
+        <button id="tabbtn-exports" type="button" role="tab" aria-controls="tab-exports" aria-selected="false">Exports</button>
+        <button id="tabbtn-quality" type="button" role="tab" aria-controls="tab-quality" aria-selected="false">Data quality</button>
+      </div>
+
+      <section id="tab-box" class="card" role="tabpanel" aria-labelledby="tabbtn-box" tabindex="0">
+        <div class="card-head">
+          <h2>Box score</h2>
+          <div id="box-team-switch" class="btn-group" role="group" aria-label="Team"></div>
+        </div>
+        <div id="box-content"></div>
+        <p class="hint">MIN is approximate on-floor video time (includes stoppages). Stats the analysis couldn't tie to a player go on the Team line. Click a column to sort.</p>
+      </section>
+
+      <section id="tab-shots" class="card" role="tabpanel" aria-labelledby="tabbtn-shots" tabindex="0" hidden>
+        <div class="card-head">
+          <h2>Shot chart</h2>
+          <div class="row">
+            <label class="inline-label">Team <select id="shot-team"></select></label>
+            <label class="inline-label">Player <select id="shot-player"></select></label>
+            <label class="inline-label">Result
+              <select id="shot-result">
+                <option value="">Made and missed</option>
+                <option value="made">Made only</option>
+                <option value="missed">Missed only</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="shotchart-layout">
+          <div class="shotchart-wrap">
+            <div id="shot-chart" class="shotchart"></div>
+            <div id="shot-tip" class="chart-tip" hidden></div>
+          </div>
+          <div>
+            <h3>By zone</h3>
+            <div id="shot-zones"></div>
+            <div id="shot-note" class="hint section-sub"></div>
+            <p class="hint">Dot = made, &times; = missed. Hover a shot for details; click it to watch.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-plays" class="card" role="tabpanel" aria-labelledby="tabbtn-plays" tabindex="0" hidden>
+        <h2>Plays</h2>
+        <div id="plays-summary"></div>
+        <p class="hint">% Poss is the share of that team's possessions with the play. For defenses, PTS and PPP are what the other team scored against it.</p>
+        <div class="card-head section-sub">
+          <h3>Individual plays</h3>
+          <div class="row">
+            <label class="inline-label">Type <select id="plays-filter-type"></select></label>
+            <label class="inline-label">Team <select id="plays-filter-side"></select></label>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="plays-list table-compact">
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Play</th>
+                <th scope="col">Team</th>
+                <th scope="col">Players</th>
+                <th scope="col">Outcome</th>
+                <th scope="col" class="num">Pts</th>
+                <th scope="col" class="num">Conf.</th>
+              </tr>
+            </thead>
+            <tbody id="plays-body"></tbody>
+          </table>
+        </div>
+        <p id="plays-count" class="hint"></p>
+      </section>
+
+      <section id="tab-report" class="card" role="tabpanel" aria-labelledby="tabbtn-report" tabindex="0" hidden>
+        <div class="card-head report-controls">
+          <h2>Scouting report</h2>
+          <div class="row">
+            <label id="report-history-wrap" class="inline-label" hidden>Version <select id="report-history"></select></label>
+            <a id="report-download" class="btn btn-small" href="/" hidden>Download .md</a>
+            <button id="report-print" type="button" class="btn-small" hidden>Print</button>
+          </div>
+        </div>
+        <div class="report-controls">
+          <div id="report-claude-warning"></div>
+          <label class="field">Coach focus (optional)
+            <textarea id="report-focus" maxlength="2000" placeholder="For example: we play a 2-3 zone - how will they attack it? Who do we leave open?"></textarea>
+          </label>
+          <div class="row section-sub">
+            <button id="report-generate" type="button" class="btn-primary">Generate report</button>
+            <span id="report-status" class="muted small" aria-live="polite"></span>
+          </div>
+          <div id="report-error" class="section-sub" aria-live="assertive"></div>
+        </div>
+        <article id="report-body" class="report-body section-sub"></article>
+      </section>
+
+      <section id="tab-exports" class="card" role="tabpanel" aria-labelledby="tabbtn-exports" tabindex="0" hidden>
+        <h2>Exports</h2>
+        <div id="export-error" aria-live="assertive"></div>
+        <div class="grid-2">
+          <div>
+            <h3>FastScout Stats Database (Classic)</h3>
+            <div class="row">
+              <label class="inline-label">Team <select id="export-side"></select></label>
+              <button id="export-copy" type="button" class="btn-primary">Copy FastScout paste block</button>
+              <a id="export-txt" class="btn" href="/">Download .txt</a>
+            </div>
+            <div id="export-status" class="section-sub" aria-live="polite"></div>
+            <label class="visually-hidden" for="export-preview">FastScout paste block</label>
+            <textarea id="export-preview" class="mono-box section-sub" readonly spellcheck="false"></textarea>
+            <p class="hint">In FastScout Classic: Stats &gt; Edit Stats Database &gt; Box Score &gt; Paste <span id="export-help-team">Team</span> Data.</p>
+          </div>
+          <div>
+            <h3>FastScout Web custom table (CSV)</h3>
+            <div class="row">
+              <label class="inline-label">Table <select id="export-table"></select></label>
+              <a id="export-csv" class="btn" href="/">Download CSV</a>
+            </div>
+            <p class="hint">In FastScout Web: open a Custom Table tile and upload the CSV.</p>
+            <h3 class="section-sub">Other downloads</h3>
+            <div class="row">
+              <a id="export-timeline" class="btn" href="/">Timeline CSV</a>
+              <a id="export-json" class="btn" href="/">Analysis JSON</a>
+            </div>
+            <p class="hint">Timeline CSV opens in Excel or Google Sheets. Analysis JSON is the complete raw result.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-quality" class="card" role="tabpanel" aria-labelledby="tabbtn-quality" tabindex="0" hidden>
+        <h2>Data quality</h2>
+        <div id="quality-body"></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

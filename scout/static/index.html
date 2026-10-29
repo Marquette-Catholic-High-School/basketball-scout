@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Games - Basketball Scout</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/index.js"></script>
+</head>
+<body>
+  <a class="visually-hidden" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-ball" aria-hidden="true"></span>Basketball Scout</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/" aria-current="page">Games</a>
+      <a href="/upload">New game</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <div>
+        <h1>Scouting games</h1>
+        <p class="subtitle">Upload opponent film, then review the timeline, box score, plays and scouting report.</p>
+      </div>
+      <a class="btn btn-primary" href="/upload">+ New game</a>
+    </div>
+
+    <div id="page-error" aria-live="assertive"></div>
+
+    <section class="card" aria-labelledby="games-heading">
+      <div class="card-head">
+        <h2 id="games-heading">Games</h2>
+        <span id="games-refresh-note" class="muted small" aria-live="polite"></span>
+      </div>
+      <div id="games-list" class="games-list" aria-busy="true">
+        <p class="muted">Loading games…</p>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="health-heading">
+      <div class="card-head">
+        <h2 id="health-heading">System status</h2>
+        <button id="health-refresh" class="btn-small" type="button">Refresh</button>
+      </div>
+      <div id="health-warnings" aria-live="polite"></div>
+      <ul id="health-list" class="status-list"></ul>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,61 @@
+# Basketball Scout background worker: sends film to the GPU, builds the box score,
+# plays and timeline, and asks Claude for the scouting report.
+#
+# This is a TEMPLATE. scripts/install.sh fills in the @...@ placeholders and writes it
+# to /etc/systemd/system/basketball-scout-worker.service. Re-running install.sh
+# overwrites that copy, so put local changes in a drop-in instead:
+#   sudo systemctl edit basketball-scout-worker
+# (install.sh --with-redis adds the drop-in basketball-scout-worker.service.d/10-redis.conf
+# so the worker starts after Redis.)
+#
+# Status:  systemctl status basketball-scout-worker
+# Logs:    journalctl -u basketball-scout-worker -f
+# Restart: sudo systemctl restart basketball-scout-worker
+
+[Unit]
+Description=Basketball Scout worker (film analysis jobs)
+Documentation=https://github.com/Marquette-Catholic-High-School/basketball-scout
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=exec
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@DIR@
+EnvironmentFile=@DIR@/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@DIR@/.venv/bin/python -m scout.worker
+Restart=on-failure
+RestartSec=10
+# On SIGTERM the worker stops taking new jobs and hands jobs that are waiting on the GPU
+# back to the queue: after the restart they resume polling, so no film is processed
+# twice. systemd waits up to 60 seconds, then kills whatever is left.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+# Box-score and play analysis can keep a CPU core busy for a minute; keep the web
+# pages responsive meanwhile.
+Nice=5
+UMask=0027
+
+# --- Hardening (same as the web unit; see the notes there) -----------------------------
+# No PrivateDevices here: SCOUT_PROCESSOR=local needs the NVIDIA devices in /dev. The
+# worker cannot load kernel modules itself, so `install.sh --processor local` makes the
+# NVIDIA modules (nvidia, nvidia_uvm) load at boot.
+# The home folder stays writable for ~/.modal.toml and the model caches.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@DATA_DIR@ @HOME@
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

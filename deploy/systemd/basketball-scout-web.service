@@ -1,0 +1,63 @@
+# Basketball Scout web app (FastAPI served by uvicorn).
+#
+# This is a TEMPLATE. scripts/install.sh fills in the @...@ placeholders and writes it
+# to /etc/systemd/system/basketball-scout-web.service. Re-running install.sh overwrites
+# that copy, so put local changes in a drop-in instead:
+#   sudo systemctl edit basketball-scout-web
+#
+# Status:  systemctl status basketball-scout-web
+# Logs:    journalctl -u basketball-scout-web -f
+# Restart: sudo systemctl restart basketball-scout-web
+
+[Unit]
+Description=Basketball Scout web app
+Documentation=https://github.com/Marquette-Catholic-High-School/basketball-scout
+After=network-online.target
+Wants=network-online.target
+# Keep retrying for a while (e.g. while the network comes up) before giving up.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=exec
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@DIR@
+# Settings (passwords, API keys). The app also reads this file itself.
+EnvironmentFile=@DIR@/.env
+Environment=PYTHONUNBUFFERED=1
+# --forwarded-allow-ips: trust X-Forwarded-For only from nginx on this machine, so the
+# sign-in lockout sees the coach's real address.
+ExecStart=@DIR@/.venv/bin/python -m uvicorn scout.main:app --host @HOST@ --port @PORT@ --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+# New files (film, database) are readable by the service user and its group only.
+UMask=0027
+
+# --- Hardening -------------------------------------------------------------------
+# The app can write ONLY to the data folder and the service user's home; the code in
+# @DIR@ is read-only to the running service.
+#   * ProtectSystem=strict makes the whole filesystem read-only except ReadWritePaths.
+#   * The home folder must stay readable and writable: the Modal SDK reads its token
+#     from ~/.modal.toml (`modal token new`) and Python libraries keep caches there.
+#     That is why this is ProtectHome=read-only and not ProtectHome=true:
+#     "true" hides /home completely, which would hide ~/.modal.toml (error
+#     MODAL_NOT_CONFIGURED) and break any install or data folder under /home.
+# If the service fails with "status=226/NAMESPACE", a path in ReadWritePaths is
+# missing; re-run `sudo scripts/install.sh` to recreate it.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@DATA_DIR@ @HOME@
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

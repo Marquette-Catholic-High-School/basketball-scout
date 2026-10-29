@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Roster - Basketball Scout</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/roster.js"></script>
+</head>
+<body>
+  <a class="visually-hidden" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-ball" aria-hidden="true"></span>Basketball Scout</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/">Games</a>
+      <a id="nav-game" href="/">Game</a>
+      <a href="/upload">New game</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <div>
+        <h1 id="roster-title">Rosters</h1>
+        <p id="roster-subtitle" class="subtitle">Loading…</p>
+      </div>
+      <div class="row">
+        <a class="btn" href="/api/roster-template.csv?download=1" download="roster-template.csv">Download roster template</a>
+        <a id="back-link" class="btn" href="/">Back to game</a>
+      </div>
+    </div>
+
+    <div id="page-error" aria-live="assertive"></div>
+    <div id="rerun-banner" class="notice notice-info" role="status" hidden>
+      <strong class="notice-title">Roster saved</strong>
+      <p>Names and jersey matches update after the analysis runs again (it only takes a minute - no GPU needed).</p>
+      <div class="notice-actions">
+        <button id="rerun-btn" type="button" class="btn-primary">Re-run analysis</button>
+      </div>
+    </div>
+
+    <p class="hint">Import the roster from a CSV or Excel file (FastScout exports, MaxPreps copies and team sheets all work) or type it in. Jersey numbers link the film to player names; "0" and "00" are different numbers.</p>
+
+    <div id="roster-columns" class="roster-columns" aria-busy="true"></div>
+
+    <section id="tracks" class="card" aria-labelledby="tracks-heading" hidden>
+      <div class="card-head">
+        <h2 id="tracks-heading">Jersey assignments from the film</h2>
+        <div class="row">
+          <span id="tracks-unsaved" class="unsaved" aria-live="polite"></span>
+          <button id="tracks-save" type="button" class="btn-primary" disabled>Save &amp; re-run analysis</button>
+        </div>
+      </div>
+      <p class="hint">Each row is one player the video tracker followed. If the jersey reading picked the wrong player, choose the right one. Mark referees, coaches or fans as "Not a player".</p>
+      <div class="row">
+        <label class="inline-label">Show
+          <select id="tracks-filter">
+            <option value="">All tracks</option>
+            <option value="attention">Needs attention (no player)</option>
+            <option value="scouted">Scouted team</option>
+            <option value="other">Opponent</option>
+            <option value="ignored">Not a player</option>
+          </select>
+        </label>
+        <span id="tracks-count" class="muted small"></span>
+      </div>
+      <div id="tracks-error" class="section-sub" aria-live="assertive"></div>
+      <div class="table-wrap section-sub">
+        <table class="track-table table-compact">
+          <thead>
+            <tr>
+              <th scope="col">Track</th>
+              <th scope="col">Team</th>
+              <th scope="col" class="num" title="How many analysed frames this track appears in">Seen</th>
+              <th scope="col">Best read</th>
+              <th scope="col">Jersey readings</th>
+              <th scope="col">Matched player</th>
+              <th scope="col" class="num">Match</th>
+              <th scope="col">How</th>
+              <th scope="col">Assign to</th>
+            </tr>
+          </thead>
+          <tbody id="tracks-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

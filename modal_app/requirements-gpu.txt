@@ -1,0 +1,23 @@
+# GPU stack for SCOUT_PROCESSOR=local: a Linux machine with an NVIDIA GPU whose driver
+# supports CUDA 13.0 (driver >= 580). The Modal image (modal_app/app.py) installs exactly
+# these pins; they come from modal_app/pipeline/ohv.py (TORCH_REQUIREMENTS / OHV_REQUIREMENTS)
+# and tests/test_modal_app.py checks the two stay in sync.
+#
+#   pip install -r modal_app/requirements-gpu.txt
+#   python -m modal_app.pipeline.ohv install --home /opt/openhoopvision   # OHV checkout + weights
+#   export OHV_HOME=/opt/openhoopvision                                    # and ffmpeg on PATH
+#
+# torch / torchvision CUDA 13.0 builds come from the PyTorch index (validated by
+# OpenHoopVision's requirements.lock):
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.12.1+cu130
+torchvision==0.27.1+cu130
+
+# OpenHoopVision (commit ec969037b2c0) dependencies. Headless OpenCV replaces opencv-python.
+rfdetr==1.10.1
+supervision==0.30.1
+numpy==2.3.5
+opencv-python-headless==5.0.0.93
+scipy==1.18.1
+pillow==10.2.0
+tqdm==4.70.0

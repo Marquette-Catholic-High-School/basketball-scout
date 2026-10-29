@@ -1,0 +1,153 @@
+# FastScout export settings for Basketball Scout
+# ==============================================
+#
+# This file controls the FastScout exports on a game's Results page:
+#
+#   1. "FastScout paste" (paste_block) - text for FastScout Classic's Stats Database:
+#      Stats > Edit Stats Database > Schedule > (game) > Goto Game > Box Score tab >
+#      "Paste <Team> Data". FastScout reads the columns BY HEADER NAME and matches
+#      players BY NAME, so the header text below must match what FastScout expects.
+#   2. "FastScout CSV" (custom_tables) - a .csv file for a FastScout Web
+#      "Custom Table" tile. Custom tables are display-only: every cell is shown
+#      exactly as written, so values are pre-formatted ("5-11", "45.5%").
+#
+# Edits apply the next time you click an export - no restart needed. If something
+# in this file is wrong, the export shows an error that names the setting.
+# Delete this file to go back to the built-in defaults.
+# Step-by-step coach instructions: docs/FASTSCOUT.md
+#
+# ---------------------------------------------------------------------------
+# FIELDS you can put in "field:"
+#
+#   Player rows (paste_block, and tables with "rows: players"):
+#     jersey, name, first_name, last_name, position
+#     min (minutes, rounded), minutes_est (one decimal)
+#     pts, fgm, fga, tpm, tpa, ftm, fta, oreb, dreb, reb, ast, stl, blk, tov, pf, plus_minus
+#     fgm_fga, tpm_tpa, ftm_fta           made-attempted, e.g. "7-16"
+#     fg_pct, tp_pct, ft_pct              e.g. "43.8%"
+#     zone_paint, zone_mid, zone_three, zone_unknown          made-attempted by shot zone
+#     zone_paint_made, zone_paint_att, zone_paint_pct         (same for mid / three / unknown)
+#
+#   Play-type rows (tables with "rows: plays" or "rows: defense"):
+#     label, type, count, possessions_pct, points, ppp, fgm, fga, fgm_fga, fg_pct,
+#     turnovers, zone_shapes (defense tables only)
+#
+# FORMATS (optional "format:" on a column; every field already has a sensible default):
+#   text, int, dec1 ("1.0"), dec2 ("0.95"), pct ("45.5%"), signed ("+5")
+# ---------------------------------------------------------------------------
+
+paste_block:
+  delimiter: tab              # tab | comma | semicolon | pipe   (FastScout expects tab)
+  header_row: true            # FastScout needs the header row - leave this true
+  name_format: first_last     # first_last ("JR Smith") | last_first ("Smith JR")
+  skip_dnp: true              # leave out players with no stats and under 1 minute (FastScout ticks G for every row)
+  unknown_minutes: blank      # MIN when the film cannot tell: blank | zero
+  # Name for players who are not on your roster. Letters and spaces only, because
+  # FastScout names cannot contain digits; {jersey_words} becomes e.g. "Twenty Three".
+  unrostered_name: "Unknown {jersey_words}"
+  # Only players who played are pasted; never add TEAM or totals rows.
+  # FastScout derives DEF rebounds (REB - OREB) and all percentages itself.
+  columns:
+    - {header: NAME, field: name}
+    - {header: MIN, field: min}
+    - {header: FGM-A, field: fgm_fga}
+    - {header: 3PM-A, field: tpm_tpa}
+    - {header: FTM-A, field: ftm_fta}
+    - {header: OREB, field: oreb}
+    - {header: REB, field: reb}
+    - {header: AST, field: ast}
+    - {header: ST, field: stl}
+    - {header: BLK, field: blk}
+    - {header: TO, field: tov}
+    - {header: PF, field: pf}
+    - {header: PTS, field: pts}
+
+csv:
+  delimiter: comma            # comma | semicolon | tab | pipe   (FastScout Web expects comma)
+  line_ending: crlf           # crlf | lf
+  bom: false                  # true adds a UTF-8 byte-order mark (helps old Excel show accents; FastScout does not want it)
+  default_table: box          # table used when none is picked
+  unrostered_name: Unknown    # player name shown for jerseys missing from your roster
+  totals_label: Team Totals
+  unattributed_label: Unidentified   # row for stats the film could not credit to a player
+
+# Display names for play types in the "plays" and "defense" tables (Synergy-style).
+play_labels:
+  pick_and_roll: P&R Ball Handler
+  pick_and_pop: Pick & Pop
+  isolation: Isolation
+  fast_break: Transition
+  post_up: Post Up
+  handoff: Hand Off
+  off_ball_screen: Off Screen
+  spot_up: Spot Up
+  cut: Cut
+  putback: Putbacks
+  man_defense: Man-to-Man
+  zone_defense: Zone
+  press: Full-Court Press
+
+# FastScout Web custom tables. Keep each table to about 12-18 columns.
+#   rows: players | plays (the team's offense) | defense (the team's defensive looks)
+#   For player tables: skip_dnp, totals_row and unattributed_row (all true by default).
+custom_tables:
+  box:
+    title: Box Score
+    rows: players
+    columns:
+      - {header: "#", field: jersey}
+      - {header: Player, field: name}
+      - {header: MIN, field: min}
+      - {header: PTS, field: pts}
+      - {header: FGM-A, field: fgm_fga}
+      - {header: FG%, field: fg_pct}
+      - {header: 3PM-A, field: tpm_tpa}
+      - {header: 3P%, field: tp_pct}
+      - {header: FTM-A, field: ftm_fta}
+      - {header: FT%, field: ft_pct}
+      - {header: ORB, field: oreb}
+      - {header: DRB, field: dreb}
+      - {header: REB, field: reb}
+      - {header: AST, field: ast}
+      - {header: TO, field: tov}
+      - {header: STL, field: stl}
+      - {header: BLK, field: blk}
+      - {header: PF, field: pf}
+
+  zones:
+    title: Shot Zones
+    rows: players
+    columns:
+      - {header: "#", field: jersey}
+      - {header: Player, field: name}
+      - {header: Paint FGM-A, field: zone_paint}
+      - {header: Paint FG%, field: zone_paint_pct}
+      - {header: Mid FGM-A, field: zone_mid}
+      - {header: Mid FG%, field: zone_mid_pct}
+      - {header: 3PT FGM-A, field: zone_three}
+      - {header: 3P%, field: zone_three_pct}
+
+  plays:
+    title: Play Types
+    rows: plays
+    columns:
+      - {header: Play Type, field: label}
+      - {header: Poss, field: count}
+      - {header: "% Poss", field: possessions_pct}
+      - {header: PTS, field: points}
+      - {header: PPP, field: ppp}
+      - {header: FG, field: fgm_fga}
+      - {header: TO, field: turnovers}
+
+  defense:
+    title: Defensive Looks
+    rows: defense
+    columns:
+      - {header: Defense, field: label}
+      - {header: Poss, field: count}
+      - {header: "% Poss", field: possessions_pct}
+      - {header: PTS Allowed, field: points}
+      - {header: PPP Allowed, field: ppp}
+      - {header: Opp FG, field: fgm_fga}
+      - {header: TO Forced, field: turnovers}
+      - {header: Zone Shape, field: zone_shapes}

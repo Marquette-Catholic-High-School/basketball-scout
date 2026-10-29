@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New game - Basketball Scout</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/upload.js"></script>
+</head>
+<body>
+  <a class="visually-hidden" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-ball" aria-hidden="true"></span>Basketball Scout</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/">Games</a>
+      <a href="/upload" aria-current="page">New game</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <div>
+        <h1 id="upload-title">New game</h1>
+        <p id="upload-subtitle" class="subtitle">Enter the game details, then add the film.</p>
+      </div>
+    </div>
+
+    <div id="page-error" aria-live="assertive"></div>
+
+    <section id="game-form-section" class="card" aria-labelledby="form-heading">
+      <h2 id="form-heading">1. Game details</h2>
+      <form id="game-form" novalidate>
+        <div class="form-grid">
+          <label class="field">
+            <span class="required">Team you are scouting</span>
+            <input id="f-scouted" name="scouted_team" required maxlength="120" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Their opponent in this film</span>
+            <input id="f-other" name="other_team" maxlength="120" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Game date</span>
+            <input id="f-date" name="game_date" type="date">
+          </label>
+          <label class="field">
+            <span>Location</span>
+            <input id="f-location" name="location" maxlength="200">
+          </label>
+          <label class="field">
+            <span>Level</span>
+            <input id="f-level" name="level" maxlength="40" list="level-options" placeholder="Varsity, JV…">
+            <datalist id="level-options">
+              <option value="Varsity"></option>
+              <option value="JV"></option>
+              <option value="Sophomore"></option>
+              <option value="Freshman"></option>
+            </datalist>
+          </label>
+          <fieldset class="span-all">
+            <legend>Scouted team's jersey colour in this film</legend>
+            <label class="choice"><input type="radio" name="color_mode" value="dark" checked> Dark</label>
+            <label class="choice"><input type="radio" name="color_mode" value="light"> Light</label>
+            <label class="choice"><input type="radio" name="color_mode" value="pick"> Pick a colour</label>
+            <input id="f-color" type="color" value="#1f3a93" aria-label="Scouted team's jersey colour" disabled>
+            <p class="hint">Helps the analysis tell the two teams apart. You can confirm it on the results page.</p>
+          </fieldset>
+          <label class="field span-all">
+            <span>Notes</span>
+            <textarea id="f-notes" name="notes" maxlength="5000" placeholder="Anything worth remembering about this film (camera angle, missing quarter…)"></textarea>
+          </label>
+        </div>
+        <div id="form-error" aria-live="assertive"></div>
+        <div class="row row-end">
+          <a class="btn" href="/">Cancel</a>
+          <button id="create-btn" class="btn-primary" type="submit">Continue to film upload</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="film-section" class="card" aria-labelledby="film-heading" hidden>
+      <h2 id="film-heading" tabindex="-1">2. Game film</h2>
+      <p id="film-game-name" class="muted"></p>
+      <div id="film-notices" aria-live="polite"></div>
+
+      <div id="dropzone" class="dropzone">
+        <div class="dropzone-icon" aria-hidden="true">&#9654;</div>
+        <p><strong>Drag and drop the game film here</strong></p>
+        <p class="muted small">MP4, MOV or M4V. A wide, full-court angle works best.</p>
+        <label class="btn btn-primary" for="file-input">Choose a file</label>
+        <input id="file-input" class="visually-hidden" type="file" accept=".mp4,.mov,.m4v,video/mp4,video/quicktime,video/x-m4v">
+      </div>
+
+      <div id="upload-panel" hidden>
+        <p><strong id="upload-filename"></strong> <span id="upload-filesize" class="muted"></span></p>
+        <div id="upload-progress" class="progress progress-lg" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="upload-bar"></span>
+        </div>
+        <div class="upload-stats" aria-live="polite">
+          <span><strong id="upload-pct">0%</strong></span>
+          <span id="upload-speed"></span>
+          <span id="upload-eta"></span>
+          <span id="upload-state"></span>
+        </div>
+        <div class="row upload-actions">
+          <button id="pause-btn" type="button">Pause</button>
+          <button id="resume-btn" type="button" class="btn-primary" hidden>Resume</button>
+          <button id="cancel-btn" type="button" class="btn-danger">Cancel upload</button>
+        </div>
+      </div>
+      <div id="upload-error" aria-live="assertive"></div>
+
+      <div id="film-divider" class="divider">or</div>
+
+      <form id="url-form" novalidate>
+        <h3>Use a video link</h3>
+        <p class="hint">A direct link to an MP4 file that the GPU service can download, not a web page (Hudl or YouTube pages won't work).</p>
+        <div class="form-grid">
+          <label class="field span-all">
+            <span>Video link</span>
+            <input id="f-url" type="url" required minlength="8" maxlength="2000" placeholder="Paste a direct link to an .mp4 file" autocomplete="off">
+          </label>
+        </div>
+        <div id="url-error" aria-live="assertive"></div>
+        <div class="row row-end">
+          <button id="url-btn" type="submit">Use this link</button>
+        </div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

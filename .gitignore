@@ -34,3 +34,7 @@ weights/
 .idea/
 .vscode/
 *.swp
+
+# Local tooling and run output
+.claude/
+modal_output/
