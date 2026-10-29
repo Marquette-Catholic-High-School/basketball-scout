@@ -12,6 +12,7 @@ and pixel coordinates scale back by ``FrameMap.scale_x/scale_y``.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
@@ -486,7 +487,12 @@ def _download_once(
         if exc.code >= 500 or exc.code == 429:
             raise _RetryableDownloadError(error) from exc
         raise error from exc
-    except OSError as exc:  # URLError, timeouts, resets, local disk errors
+    except http.client.IncompleteRead as exc:  # a chunked transfer (no Content-Length) cut off midway
+        stopped = PipelineError(
+            errors.VIDEO_DOWNLOAD_FAILED, "The download stopped before the end of the file.", detail=repr(exc)[:500]
+        )
+        raise _RetryableDownloadError(stopped) from exc
+    except (OSError, http.client.HTTPException) as exc:  # URLError, timeouts, resets, bad replies, local disk errors
         raise _RetryableDownloadError(
             PipelineError(errors.VIDEO_DOWNLOAD_FAILED, "The video link could not be reached.", detail=str(exc)[:500])
         ) from exc

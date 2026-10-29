@@ -25,6 +25,7 @@ from typing import Literal
 import numpy as np
 import yaml
 
+from scout.errors import ErrorCode, ScoutError
 from scout.schemas import BBox, Point, ShotZone
 
 BasketSide = Literal["left", "right"]
@@ -64,18 +65,43 @@ class CourtConfig:
         return (b, self.mid_y) if side == "left" else (self.length_ft - b, self.mid_y)
 
 
+_COURT_HINT = "Fix the setting in config/court.yaml (or delete the line to use the NFHS default) and re-run."
+
+
 @lru_cache(maxsize=8)
 def _load_cached(path: str) -> CourtConfig:
     p = Path(path)
     if not p.exists():
         return CourtConfig()
-    data = yaml.safe_load(p.read_text()) or {}
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise _config_error(f"config/court.yaml could not be read: {exc}") from exc
+    if not isinstance(data, dict):
+        raise _config_error("config/court.yaml must be a list of 'setting: feet' lines.")
     known = {f.name for f in fields(CourtConfig)}
-    return CourtConfig(**{k: float(v) for k, v in data.items() if k in known and v is not None})
+    values = {}
+    for key, value in data.items():
+        if key not in known or value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = math.nan
+        if isinstance(value, bool) or not math.isfinite(number) or number <= 0:
+            raise _config_error(f"court.yaml: {key} should be a number of feet above 0, got {value!r}.")
+        values[key] = number
+    return CourtConfig(**values)
+
+
+def _config_error(message: str) -> ScoutError:
+    return ScoutError(ErrorCode.CONFIG_INVALID, message, hint=_COURT_HINT, retryable=False)
 
 
 def load_court_config(path: Path | str | None = None) -> CourtConfig:
-    """Load ``config/court.yaml`` (missing file or keys fall back to NFHS defaults)."""
+    """Load ``config/court.yaml`` (missing file or keys fall back to NFHS defaults).
+
+    Raises ``ScoutError(CONFIG_INVALID)`` naming the setting when the file cannot be used."""
     if path is None:
         from scout.config import get_settings
 
@@ -205,8 +231,10 @@ def is_three(cfg: CourtConfig, xy: Point, basket: BasketSide | None = None) -> b
 
 
 def in_paint(cfg: CourtConfig, xy: Point, basket: BasketSide | None = None) -> bool:
+    """In the lane. A shot location a little behind the baseline in line with the lane is a
+    projection error of a shot at the rim, so it counts as paint too (not baseline mid-range)."""
     hx, hy = to_half_court(cfg, xy, basket)
-    return 0.0 <= hx <= cfg.ft_line_from_baseline_ft and abs(hy - cfg.mid_y) <= cfg.lane_width_ft / 2
+    return hx <= cfg.ft_line_from_baseline_ft and abs(hy - cfg.mid_y) <= cfg.lane_width_ft / 2
 
 
 def on_court(cfg: CourtConfig, xy: Point, margin_ft: float = 2.0) -> bool:

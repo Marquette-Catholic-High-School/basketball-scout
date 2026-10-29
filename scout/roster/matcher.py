@@ -8,7 +8,9 @@ distribution is matched against the roster of the track's team.
 
 The tracker also splits one player into several tracks (after occlusions, or when
 the player leaves the frame), so several tracks may resolve to the same player as
-long as they are not on screen at the same time.
+long as they are not on screen at the same time. "On screen" is judged from the
+samples, not from a track's first and last frame: a ReID track spans the whole game
+with the player on the bench in between.
 """
 
 from __future__ import annotations
@@ -91,7 +93,7 @@ class _Pending:
 
     index: int
     base: TrackAssignment
-    span: tuple[int, int] | None
+    presence: list[tuple[int, int]]  # frame ranges the track is on screen
     candidates: list[_Candidate]
 
     @property
@@ -209,9 +211,9 @@ def assign_tracks(
     * Referees -> ``role="referee"``, never matched.
     * Overrides win (``method="manual"``; ``ignore=True`` -> ``ignored=True``).
     * Otherwise match each track's votes against its side's roster.
-    * Conflict resolution: two tracks that overlap in time cannot be the same player.
-      When they do, the lower-scoring track falls back to its next-best candidate or
-      becomes ``unrostered`` (keeping ``best_read`` as its jersey).
+    * Conflict resolution: two tracks on screen at the same time cannot be the same
+      player. When they are, the lower-priority track falls back to its next-best
+      candidate or becomes ``unrostered`` (keeping ``best_read`` as its jersey).
     * ``frames`` = number of samples; ``jersey`` = matched roster jersey, else best read.
 
     Details: an override is applied even to a track the pipeline called a referee (the
@@ -219,15 +221,21 @@ def assign_tracks(
     is ignored. A track whose team id is missing from ``team_map`` is matched against both
     rosters and takes the side of the better match; an exact tie between the two teams'
     players leaves it unrostered rather than guessing. Tracks choose in order of
-    score x log(1 + frames); overlaps up to ``MAX_SHARED_SCREEN_TIME_S`` are tolerated
-    (tracker hand-overs), so fragments of one player that do not overlap all match the
-    same player. Unrostered tracks score the vote share of their best read. Assignments
-    come back in ``tracking.tracks`` order.
+    score x log(1 + frames), and every track's best candidate is settled before any
+    track falls back to a weaker one, so a fallback guess never takes a player from a
+    track that read that player's number. Two tracks conflict when they are on screen
+    together (from their samples; gaps over ``MAX_SHARED_SCREEN_TIME_S`` are absences)
+    for longer than ``MAX_SHARED_SCREEN_TIME_S`` (shorter overlaps are tracker
+    hand-overs), so fragments and ReID ids of one player that are never on screen
+    together all match the same player. Unrostered tracks score the vote share of their
+    best read. Assignments come back in ``tracking.tracks`` order.
     """
-    tolerance_frames = MAX_SHARED_SCREEN_TIME_S * tracking.video.fps
+    video = tracking.video
+    tolerance_frames = MAX_SHARED_SCREEN_TIME_S * video.fps
+    max_gap = max(tolerance_frames, 2 * video.fps / video.analysis_fps)  # never below two sample steps
     overrides_by_track = {override.track_id: override for override in overrides or []}
     results: dict[int, TrackAssignment] = {}
-    on_screen: dict[str, list[tuple[int, int] | None]] = defaultdict(list)  # player id -> spans of its tracks
+    on_screen: dict[str, list[list[tuple[int, int]]]] = defaultdict(list)  # player id -> presence of its tracks
     pending: list[_Pending] = []
 
     for index, track in enumerate(tracking.tracks):
@@ -237,21 +245,27 @@ def assign_tracks(
         if manual is not None:
             results[index] = manual
             if manual.player_id:
-                on_screen[manual.player_id].append(_span(track))
+                on_screen[manual.player_id].append(_presence(track, max_gap))
         elif track.role == "referee":
             results[index] = base.model_copy(update={"side": None})
         elif candidates := _acceptable_candidates(base, rosters):
-            pending.append(_Pending(index=index, base=base, span=_span(track), candidates=candidates))
+            presence = _presence(track, max_gap)
+            pending.append(_Pending(index=index, base=base, presence=presence, candidates=candidates))
         else:
             results[index] = _unrostered(base)
 
-    for item in sorted(pending, key=lambda p: (-p.priority, p.base.track_id)):
-        choice = _first_free_candidate(item, on_screen, tolerance_frames)
-        if choice is None:
+    ranked = sorted(pending, key=lambda p: (-p.priority, p.base.track_id))
+    for rank in range(max((len(item.candidates) for item in ranked), default=0)):
+        for item in ranked:  # round ``rank``: each still unmatched track tries its next candidate
+            if item.index in results or rank >= len(item.candidates):
+                continue
+            choice = item.candidates[rank]
+            if not any(_overlaps(item.presence, other, tolerance_frames) for other in on_screen[choice.player.id]):
+                on_screen[choice.player.id].append(item.presence)
+                results[item.index] = _matched(item.base, choice)
+    for item in ranked:
+        if item.index not in results:
             results[item.index] = _unrostered(item.base)
-        else:
-            on_screen[choice.player.id].append(item.span)
-            results[item.index] = _matched(item.base, choice)
 
     assignments = [results[index] for index in range(len(tracking.tracks))]
     matched = sum(1 for a in assignments if a.player_id)
@@ -376,17 +390,6 @@ def _apply_override(
     return None
 
 
-def _first_free_candidate(
-    item: _Pending, on_screen: dict[str, list[tuple[int, int] | None]], tolerance_frames: float
-) -> _Candidate | None:
-    """Best candidate not already shown by another track at the same time."""
-    for candidate in item.candidates:
-        spans = on_screen[candidate.player.id]
-        if not any(_overlaps(item.span, span, tolerance_frames) for span in spans):
-            return candidate
-    return None
-
-
 def _matched(base: TrackAssignment, choice: _Candidate) -> TrackAssignment:
     return base.model_copy(
         update={
@@ -408,13 +411,25 @@ def _unrostered(base: TrackAssignment) -> TrackAssignment:
     return base.model_copy(update={"jersey": base.best_read, "match_score": round(share, 4), "method": "unrostered"})
 
 
-def _span(track: Track) -> tuple[int, int] | None:
-    first, last = track.first_frame, track.last_frame
-    return (first, last) if first is not None and last is not None else None
+def _presence(track: Track, max_gap: float) -> list[tuple[int, int]]:
+    """Frame ranges the track is on screen: samples more than ``max_gap`` frames apart start a new range."""
+    ranges: list[tuple[int, int]] = []
+    for frame in sorted(sample.f for sample in track.samples):
+        if ranges and frame - ranges[-1][1] <= max_gap:
+            ranges[-1] = (ranges[-1][0], frame)
+        else:
+            ranges.append((frame, frame))
+    return ranges
 
 
-def _overlaps(a: tuple[int, int] | None, b: tuple[int, int] | None, tolerance_frames: float) -> bool:
-    """True when two tracks share more than ``tolerance_frames`` of screen time."""
-    if a is None or b is None:
-        return False
-    return min(a[1], b[1]) - max(a[0], b[0]) > tolerance_frames
+def _overlaps(a: list[tuple[int, int]], b: list[tuple[int, int]], tolerance_frames: float) -> bool:
+    """True when two tracks are on screen together for more than ``tolerance_frames`` at a stretch."""
+    i = j = 0
+    while i < len(a) and j < len(b):
+        if min(a[i][1], b[j][1]) - max(a[i][0], b[j][0]) > tolerance_frames:
+            return True
+        if a[i][1] < b[j][1]:
+            i += 1
+        else:
+            j += 1
+    return False

@@ -18,7 +18,7 @@ from scout.schemas import TeamSide, TrackOverride
 
 router = APIRouter(tags=["tracks"])
 
-TrackId = Annotated[int, Path(ge=0)]
+TrackId = Annotated[int, Path(ge=0, le=2**63 - 1)]  # SQLite INTEGER range
 
 
 @router.get("/games/{game_id}/tracks", response_model=TrackState)

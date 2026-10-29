@@ -9,7 +9,7 @@
   <script type="module" src="/static/js/upload.js"></script>
 </head>
 <body>
-  <a class="visually-hidden" href="#main">Skip to content</a>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
     <a class="brand" href="/"><span class="brand-ball" aria-hidden="true"></span>Basketball Scout</a>
     <nav class="site-nav" aria-label="Main">
@@ -97,11 +97,11 @@
         <div id="upload-progress" class="progress progress-lg" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <span id="upload-bar"></span>
         </div>
-        <div class="upload-stats" aria-live="polite">
+        <div class="upload-stats">
           <span><strong id="upload-pct">0%</strong></span>
           <span id="upload-speed"></span>
           <span id="upload-eta"></span>
-          <span id="upload-state"></span>
+          <span id="upload-state" role="status"></span>
         </div>
         <div class="row upload-actions">
           <button id="pause-btn" type="button">Pause</button>

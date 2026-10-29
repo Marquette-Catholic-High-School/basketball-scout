@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from modal_app.pipeline import runner
+from modal_app.pipeline import runner, video
 from modal_app.pipeline.errors import PipelineError
 from scout import config, storage
 from scout.analysis import synthetic
@@ -262,10 +262,20 @@ def test_local_url_source_and_missing_file(monkeypatch, tmp_path):
     fake = FakeRunner()
     fake.release.set()
     monkeypatch.setattr(runner, "run_pipeline", fake)
+    fetched: list[str] = []
+
+    def download(url, dest, **_kw):  # run_pipeline needs a local file: URL films are downloaded first
+        fetched.append(url)
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest).write_bytes(b"film")
+        return Path(dest)
+
+    monkeypatch.setattr(video, "download_video", download)
     processor = LocalProcessor()
     url = VideoSource(kind="url", filename="film.mp4", url="https://films.example.org/film.mp4")
     _wait_until_finished(processor, processor.submit(job_id="j_url", video=url, options={}))
-    assert fake.calls[0]["video_path"] == "https://films.example.org/film.mp4"
+    assert fetched == ["https://films.example.org/film.mp4"]
+    assert fake.calls[0]["video_path"].endswith("source.mp4") and fake.calls[0]["filename"] == "film.mp4"
 
     gone = VideoSource(kind="file", filename="gone.mp4", path=tmp_path / "gone.mp4")
     with pytest.raises(ScoutError) as exc:

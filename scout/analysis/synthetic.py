@@ -453,7 +453,8 @@ class _Game:
         """Script every period: jump ball / inbound, then possessions until the period clock runs out."""
         period_len = self.duration_s / self.n_periods
         self.period = 1
-        start = self._jump_ball(1.0)
+        t_jump = min(1.0, 0.2 * self.duration_s)  # a demo of a clip of a second or two stays inside the clip
+        start = self._jump_ball(t_jump)
         arrow = 1 - start.team
         for period in range(1, self.n_periods + 1):
             self.period = period
@@ -462,10 +463,11 @@ class _Game:
             if period > 1:
                 start = _Start(max(t0, start.t) + 1.0, arrow, "period_start", spot=(L / 2, -0.8))
                 arrow = 1 - arrow
-            self.ev(max(t0, start.t - 0.8) + 0.1, RawEventType.PERIOD_START, period=period)
+            t_open = max(t0, start.t - 0.8) + 0.1
+            self.ev(min(t_open, t_jump) if period == 1 else t_open, RawEventType.PERIOD_START, period=period)
             while start.t < t_end - 24.0:
                 start = self._possession(start)
-            t_stop = min(max(t_end, start.t + 0.5), self.duration_s - 0.2)
+            t_stop = min(max(t_end, start.t + 0.5), max(self.duration_s - 0.2, 0.8 * self.duration_s))
             self.ball(t_stop, "dead", (L / 2, W / 2))
             self.ev(t_stop, RawEventType.PERIOD_END, period=period)
             start = _Start(t_stop, start.team, start.reason)

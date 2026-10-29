@@ -1,9 +1,9 @@
 // Exports: FastScout paste block (copy as tab-separated text AND an HTML table, which
-// is what FastScout reads when you paste), FastScout Web custom-table CSV, timeline
-// CSV and the raw analysis JSON.
+// is what FastScout reads when you paste) with its warnings and the team numbers typed
+// in by hand, FastScout Web custom-table CSV, timeline CSV and the raw analysis JSON.
 
 import { api, gamePath } from "./api.js";
-import { byId, clearError, el, notice, setChildren, showError, withBusy } from "./ui.js";
+import { byId, clearError, el, notice, setChildren, show, showError, withBusy } from "./ui.js";
 
 const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 
@@ -16,17 +16,17 @@ export function tsvToHtml(text) {
 }
 
 /**
- * Copy text with both clipboard flavours when the browser allows it. Returns
+ * Copy text (plus an HTML table when html is given) when the browser allows it. Returns
  * "copied", or "manual" after selecting the textarea (plain-HTTP installs: the
  * Clipboard API only works on HTTPS or localhost).
  */
-async function copyBlock(text, textarea) {
+async function copyBlock(text, textarea, html = null) {
   if (window.isSecureContext && navigator.clipboard) {
     try {
-      if (window.ClipboardItem && navigator.clipboard.write) {
+      if (html && window.ClipboardItem && navigator.clipboard.write) {
         await navigator.clipboard.write([new ClipboardItem({
           "text/plain": new Blob([text], { type: "text/plain" }),
-          "text/html": new Blob([tsvToHtml(text)], { type: "text/html" }),
+          "text/html": new Blob([html], { type: "text/html" }),
         })]);
       } else {
         await navigator.clipboard.writeText(text);
@@ -51,7 +51,9 @@ export class Exports {
     this.gameId = gameId;
     this.teamNames = {};
     this.text = "";
+    this.teamNumbers = "";
     this.loadedSide = null;
+    this.loads = 0; // only the newest team's answers are shown
     this.tablesLoaded = false;
     byId("export-side").addEventListener("change", () => {
       this.updateLinks();
@@ -59,6 +61,7 @@ export class Exports {
     });
     byId("export-table").addEventListener("change", () => this.updateLinks());
     byId("export-copy").addEventListener("click", (e) => withBusy(e.currentTarget, "Copying…", () => this.copy()));
+    byId("export-team-copy").addEventListener("click", (e) => withBusy(e.currentTarget, "Copying…", () => this.copyTeamNumbers()));
   }
 
   render(teamNames) {
@@ -105,31 +108,73 @@ export class Exports {
     byId("export-help-team").textContent = team;
   }
 
+  /** Paste block and its notes for the selected team (an answer for a team no longer selected is dropped). */
   async loadBlock() {
     const side = byId("export-side").value || "scouted";
+    const load = ++this.loads;
     const preview = byId("export-preview");
     clearError(byId("export-error"));
+    clearError(byId("export-status"));
     preview.value = "Loading…";
+    this.text = "";
+    this.loadedSide = null;
+    const notes = this.loadNotes(side, load);
     try {
-      this.text = await api.text(gamePath(this.gameId, `/export/fastscout.txt?side=${encodeURIComponent(side)}`));
+      const text = await api.text(gamePath(this.gameId, `/export/fastscout.txt?side=${encodeURIComponent(side)}`));
+      if (load !== this.loads) return;
+      this.text = text || "";
       this.loadedSide = side;
       preview.value = this.text;
     } catch (err) {
-      this.text = "";
-      this.loadedSide = null;
+      if (load !== this.loads) return;
       preview.value = "";
       showError(byId("export-error"), err);
     }
+    await notes;
+  }
+
+  /** Things to check before pasting, and the team numbers typed in by hand (not part of the paste). */
+  async loadNotes(side, load) {
+    this.renderNotes(null);
+    try {
+      const notes = await api.get(gamePath(this.gameId, `/export/fastscout-notes?side=${encodeURIComponent(side)}`));
+      if (load === this.loads) this.renderNotes(notes);
+    } catch {
+      // Optional extras (an older server has no notes route): the paste block works without them.
+      if (load === this.loads) this.renderNotes(null);
+    }
+  }
+
+  renderNotes(notes) {
+    const warnings = Array.isArray(notes?.warnings) ? notes.warnings.filter(Boolean) : [];
+    this.teamNumbers = typeof notes?.team_numbers === "string" ? notes.team_numbers.trim() : "";
+    setChildren(byId("export-warnings"), warnings.length
+      ? el("div", { class: "notice notice-warning" },
+        el("strong", { class: "notice-title", text: "Check before pasting" }),
+        el("ul", {}, warnings.map((w) => el("li", { text: w }))))
+      : null);
+    byId("export-team-numbers").value = this.teamNumbers;
+    clearError(byId("export-team-status"));
+    show(byId("export-team-wrap"), Boolean(this.teamNumbers));
+    show(byId("export-notes"), Boolean(warnings.length || this.teamNumbers));
   }
 
   async copy() {
     const status = byId("export-status");
     if (this.loadedSide !== byId("export-side").value) await this.loadBlock();
     if (!this.text) return;
-    const result = await copyBlock(this.text, byId("export-preview"));
+    const result = await copyBlock(this.text, byId("export-preview"), tsvToHtml(this.text));
     const team = this.teamNames[byId("export-side").value] || "Team";
     setChildren(status, result === "copied"
       ? notice("success", "Copied", `In FastScout: Stats > Edit Stats Database > Box Score > Paste ${team} Data.`)
       : notice("info", "Press Ctrl+C (Cmd+C on a Mac) to copy", "The paste block is selected below. Automatic copying needs the site to be opened over HTTPS."));
+  }
+
+  async copyTeamNumbers() {
+    if (!this.teamNumbers) return;
+    const result = await copyBlock(this.teamNumbers, byId("export-team-numbers"));
+    setChildren(byId("export-team-status"), result === "copied"
+      ? notice("success", "Copied", "Type these into FastScout by hand; they are not part of the paste.")
+      : notice("info", "Press Ctrl+C (Cmd+C on a Mac) to copy", "The team numbers are selected above. Automatic copying needs the site to be opened over HTTPS."));
   }
 }

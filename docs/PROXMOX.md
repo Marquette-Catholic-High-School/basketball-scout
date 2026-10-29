@@ -336,7 +336,13 @@ Local runs go one at a time, and a film being processed is lost if the worker re
 - **Reverse proxy.** `install.sh --with-nginx` sets up nginx in the VM. If the school
   already has a reverse proxy, point it at the VM and copy the settings that matter from
   `deploy/nginx/basketball-scout.conf`: `client_max_body_size 64m`,
-  `proxy_request_buffering off`, long timeouts, and Range headers passed through.
+  `proxy_request_buffering off`, long timeouts, and Range headers passed through. It
+  must also pass the original `Host` header (or set `X-Forwarded-Host`; otherwise
+  changes from older browsers are refused as cross-site) and `X-Forwarded-For`. The
+  app trusts `X-Forwarded-For` only from nginx on the VM itself, so the sign-in lockout
+  sees every coach as the school proxy's address unless the VM's nginx site trusts that
+  proxy: add `set_real_ip_from <proxy address>;` and `real_ip_header X-Forwarded-For;`
+  to it.
 - **Tailscale** (remote access without opening ports): in the VM run
   `curl -fsSL https://tailscale.com/install.sh | sh`, `sudo tailscale up`, then
   `sudo tailscale serve --bg 8000`. Coaches on your tailnet open

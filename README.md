@@ -19,9 +19,11 @@ Repository: <https://github.com/Marquette-Catholic-High-School/basketball-scout.
 
 - [What it does](#what-it-does)
 - [How it works](#how-it-works)
+- [What is not verified yet](#what-is-not-verified-yet)
 - [Try it in 5 minutes (demo, no GPU)](#try-it-in-5-minutes-demo-no-gpu)
 - [Setup](#setup)
   - [What you need](#what-you-need)
+  - [Proxmox VM](#proxmox-vm)
   - [Install on an Ubuntu server](#install-on-an-ubuntu-server)
   - [Modal (the GPU)](#modal-the-gpu)
   - [Anthropic API key (the report)](#anthropic-api-key-the-report)
@@ -119,6 +121,25 @@ fix takes about a minute and no GPU. Details, job states and the HTTP API:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). What the GPU returns:
 [docs/TRACKING_SCHEMA.md](docs/TRACKING_SCHEMA.md).
 
+## What is not verified yet
+
+This is a new system. Every part has automated tests (with stand-ins for the GPU, Modal
+and Claude), and the whole app was clicked through in a browser with the demo processor.
+What has not been tried yet:
+
+- **No run on a real GPU or on real game film.** The Modal app and the OpenHoopVision
+  pipeline have only run against test data, so the time and cost per game and the
+  accuracy on high school film are estimates. Before the first real game, run
+  `make warmup-modal` (or `modal run modal_app/app.py::warmup`) and analyse one short clip.
+- **The FastScout formats come from archived FastScout documentation** and screenshots,
+  not from a live FastScout account. Paste one game into a spare schedule entry first
+  ([docs/FASTSCOUT.md](docs/FASTSCOUT.md#caveats-and-what-is-unverified)).
+- **The install, update and uninstall scripts** were run with stand-ins for apt, systemd
+  and nginx, not yet on a real Ubuntu 24.04 server. Take a VM snapshot before the first
+  install.
+- **Left and right on the court** as OpenHoopVision reports them are not confirmed on real
+  film. Paint, mid-range, three and 2-vs-3 calls do not depend on it.
+
 ## Try it in 5 minutes (demo, no GPU)
 
 The **mock processor** (`SCOUT_PROCESSOR=mock`) skips the GPU and turns any upload into
@@ -150,10 +171,19 @@ together. Ctrl-C stops both.
 | What | Notes |
 |---|---|
 | A server or VM | Ubuntu Server 24.04 LTS (Debian 12 also works). Recommended: 8 vCPUs, 32 GB RAM, 200 GB disk. No GPU needed. [docs/PROXMOX.md](docs/PROXMOX.md) has a ready-made Proxmox VM. |
-| Internet access | Outbound HTTPS to github.com, pypi.org, modal.com and api.anthropic.com. |
+| Internet access | Outbound HTTPS to github.com, pypi.org and files.pythonhosted.org (Python packages), modal.com and api.anthropic.com. |
 | A Modal account | <https://modal.com>. The Starter plan includes $30 of credit each month. |
 | An Anthropic API key | <https://console.anthropic.com>, only for the written report. |
 | Game film | MP4 from Hudl or a camera; a wide angle that shows the whole court, 720p or better. |
+
+### Proxmox VM
+
+On a Proxmox VE host, [docs/PROXMOX.md](docs/PROXMOX.md) has the complete `qm create`
+command and the reasons behind each setting. In short: machine type `q35`, OVMF (UEFI)
+firmware with an EFI disk, CPU type `host` (1 socket, 8 cores), 32 GB RAM with
+ballooning off, a 200 GB disk on VirtIO SCSI single (`iothread=1,discard=on,ssd=1`), a
+VirtIO network card, the QEMU guest agent, and Ubuntu Server 24.04 LTS inside. With
+Modal (the default) the VM needs no GPU.
 
 ### Install on an Ubuntu server
 
@@ -269,9 +299,12 @@ sudo -u scout -H .venv/bin/python -m dotenv -f .env run -- .venv/bin/modal run m
 Deploy-time options (read by `modal_app/app.py` during `modal deploy`, so redeploy
 after changing them): `SCOUT_MODAL_GPU` (default `A10G`), `SCOUT_MODAL_TIMEOUT_S`
 (default 21600 = 6 hours per film) and `SCOUT_MODAL_MAX_CONTAINERS` (default 2 GPUs at
-once). Put them in `.env`, so `update.sh` keeps using them on later deploys. To stop
-the GPU app: `modal app stop basketball-scout -y` (redeploy to bring it back); to
-delete the Volume and what is on it: `modal volume delete basketball-scout-data -y`.
+once). Put them in `.env`, so `update.sh` keeps using them on later deploys. If you
+raise `SCOUT_MODAL_TIMEOUT_S` above 8 hours, also raise `SCOUT_MODAL_MAX_WAIT_HOURS`
+(default 8): the worker stops waiting after that many hours, counted from the start of
+the job, and cancels the GPU call. To stop the GPU app:
+`modal app stop basketball-scout -y` (redeploy to bring it back); to delete the Volume
+and what is on it: `modal volume delete basketball-scout-data -y`.
 
 ### Anthropic API key (the report)
 
@@ -339,15 +372,18 @@ the real GPU from your computer, run `.venv/bin/modal token new`, set
 sudo /opt/basketball-scout/scripts/update.sh
 ```
 
-It refuses to run over local code changes (`--force` saves them in `git stash` and a
-`.patch` file first), remembers the current version, pulls from GitHub
-(`git fetch` + fast-forward, as the `scout` user), installs the Python requirements,
-runs the database migrations, redeploys the GPU app when `modal_app/` changed (and
-Modal credentials exist; force it with `--deploy-modal`, skip it with
-`--no-deploy-modal`), restarts both services, checks that the app answers and lists
-the new commits. If something fails it prints the commands that go back to the
-previous version (`git reset --hard <old commit>`, reinstall requirements, restart).
-Or fix the problem and run `update.sh` again: it remembers which version the services
+It refuses to run over local code changes, such as edited `config/*.yaml` files
+(`--force` saves them in `git stash` and a `.patch` file, updates, and puts them back
+on top; if the new version changed the same lines, it keeps the new version, says so
+and leaves your changes in the stash and the patch). It remembers the current
+version, pulls from GitHub (`git fetch` + fast-forward, as the `scout` user), installs
+the Python requirements, runs the database migrations, redeploys the GPU app when
+`modal_app/` changed (and Modal credentials exist; force it with `--deploy-modal`, skip
+it with `--no-deploy-modal`), restarts both services, checks that the app answers and
+lists the new commits. At the end, and when a step fails, it prints the commands that go
+back to the previous version (`git reset --hard <old commit>`, reinstall requirements,
+redeploy the GPU app if this update redeployed it, restart). After a failure you can
+also fix the problem and run `update.sh` again: it remembers which version the services
 and Modal really run, so it finishes the restart and redeploy even though the code is
 already pulled. Other options: `--branch NAME`, `--skip-restart`, `--dir DIR`.
 
@@ -481,11 +517,11 @@ reads the same file).
 
 | Variable | Default | What it does |
 |---|---|---|
-| `SCOUT_HOST` | `0.0.0.0` | Listen address for `scout-web` / `make run-web` (the systemd unit passes its own: 127.0.0.1 behind nginx) |
-| `SCOUT_PORT` | `8000` | Listen port (change it on a server with `install.sh --port N`) |
+| `SCOUT_HOST` | `0.0.0.0` | Listen address for `scout-web` (`make run-web` and `scripts/dev.sh` use their own `HOST`, 127.0.0.1; the systemd unit passes its own: 127.0.0.1 behind nginx) |
+| `SCOUT_PORT` | `8000` | Listen port for `scout-web` (`make run-web` / `scripts/dev.sh`: `PORT=...`; on a server change it with `install.sh --port N`) |
 | `SCOUT_LOG_LEVEL` | `info` | `debug`, `info`, `warning` or `error` |
 | `SCOUT_DATA_DIR` | `data` | Games, film and database (relative to the repo). install.sh: `/var/lib/basketball-scout` |
-| `SCOUT_DB_PATH` | `<data dir>/scout.db` | SQLite database file |
+| `SCOUT_DB_PATH` | `<data dir>/scout.db` | SQLite database file. On a server keep it inside the data folder: the services may write nowhere else |
 | `SCOUT_PUBLIC_BASE_URL` | (none) | The address coaches use; for log messages only |
 | `SCOUT_ENV_FILE` | `<repo>/.env` | Environment variable only: read settings from another file |
 
@@ -529,12 +565,12 @@ reads the same file).
 | `SCOUT_MODAL_VOLUME_NAME` | `basketball-scout-data` | Modal Volume for film and results in transit |
 | `SCOUT_MODAL_PROGRESS_DICT` | `basketball-scout-progress` | Modal Dict for progress |
 | `SCOUT_MODAL_ENVIRONMENT` | (workspace default) | Modal environment the app runs in |
-| `MODAL_ENVIRONMENT` | (workspace default) | The same for the Modal CLI (`modal deploy`); set both together |
+| `MODAL_ENVIRONMENT` | (workspace default) | The same for Modal commands you run yourself (`make deploy-modal`, `modal run`); `install.sh` / `update.sh` deploy into `SCOUT_MODAL_ENVIRONMENT` anyway. Set both together |
 | `SCOUT_MODAL_POLL_SECONDS` | `10` | How often the worker checks a GPU job |
 | `SCOUT_MODAL_MAX_WAIT_HOURS` | `8` | Give up waiting for a GPU job after this long (`MODAL_TIMEOUT`) |
 | `SCOUT_MODAL_CLEANUP` | `true` | Delete film and results from the Modal Volume after download |
 | `SCOUT_MODAL_GPU` | `A10G` | Deploy time: GPU type (redeploy after changing) |
-| `SCOUT_MODAL_TIMEOUT_S` | `21600` | Deploy time: GPU time limit per film in seconds (max 86400) |
+| `SCOUT_MODAL_TIMEOUT_S` | `21600` | Deploy time: GPU time limit per film in seconds (max 86400). Above 8 hours also raise `SCOUT_MODAL_MAX_WAIT_HOURS` |
 | `SCOUT_MODAL_MAX_CONTAINERS` | `2` | Deploy time: most GPU containers at once (cost cap) |
 | `SCOUT_ANALYSIS_FPS` | `15` | Frames per second analysed (lower = cheaper, may miss quick plays) |
 | `SCOUT_ANALYSIS_MAX_SIDE` | `1280` | Frames scaled so the longer side is at most this (320-3840) |
@@ -567,7 +603,10 @@ reads the same file).
 
 ## Config files
 
-All three are plain YAML (indent with spaces, not tabs) and documented inside.
+All three are plain YAML (indent with spaces, not tabs) and documented inside. They
+are part of the code checkout, so once you have edited one, update with
+`sudo /opt/basketball-scout/scripts/update.sh --force`: it keeps your edits (see
+[Update](#update)).
 
 - **`config/court.yaml`**: court geometry in feet, NFHS defaults (84 x 50 ft,
   three-point line 19 ft 9 in). Many high school gyms are shorter (74-80 ft): set
@@ -627,7 +666,7 @@ Every error shown in the app has a code. Find it here:
 | `MODAL_AUTH_FAILED` | Modal rejected the token. | Create a new token in the Modal dashboard, update `.env`, restart the worker. |
 | `MODAL_APP_NOT_DEPLOYED` | The GPU app or function was not found. | `sudo /opt/basketball-scout/scripts/update.sh --deploy-modal`. Check that `SCOUT_MODAL_APP_NAME` and the Modal environment match the deployment. |
 | `MODAL_UPLOAD_FAILED` | The film could not be copied to the Modal Volume. | Check the internet connection. School firewalls that inspect TLS traffic must let modal.com through untouched. Retry. |
-| `MODAL_TIMEOUT` | The GPU job ran longer than `SCOUT_MODAL_TIMEOUT_S` (6 hours) or the worker waited longer than `SCOUT_MODAL_MAX_WAIT_HOURS`. | Retry. For very long films raise `SCOUT_MODAL_TIMEOUT_S` (max 86400) and redeploy, or split the film. |
+| `MODAL_TIMEOUT` | The GPU job ran longer than `SCOUT_MODAL_TIMEOUT_S` (6 hours) or the worker waited longer than `SCOUT_MODAL_MAX_WAIT_HOURS` (8 hours). | Retry. For very long films raise `SCOUT_MODAL_TIMEOUT_S` (max 86400) and redeploy; above 8 hours also raise `SCOUT_MODAL_MAX_WAIT_HOURS` and restart the worker. Or split the film. |
 | `MODAL_REMOTE_ERROR` | The GPU job crashed. | Retry; details in `modal app logs basketball-scout`. |
 | `MODAL_RESULT_EXPIRED` | The GPU result is no longer available. | Re-run the analysis. |
 | `VIDEO_INVALID` | The file is not an MP4, MOV or M4V video. | Export the film as H.264 MP4 and upload again. |
@@ -644,7 +683,7 @@ Every error shown in the app has a code. Find it here:
 | `ANALYSIS_FAILED` | Building the box score or plays failed. | Click **Re-run analysis**. If it repeats, send the job id and `journalctl -u basketball-scout-worker -n 200` to IT. |
 | `ANALYSIS_NOT_READY` | The game has not been analysed yet. | Wait for the job to finish. |
 | `CALIBRATION_INVALID` | The clicked points do not give a usable court mapping. | Click at least 4 landmarks spread over the court, not all on one line. |
-| `CONFIG_INVALID` | A settings file in `config/` (`play_rules.yaml`, `fastscout_columns.yaml`) has a typo or a wrong value type. | The message names the setting. Fix it, or restore the shipped file with `git checkout config/`. |
+| `CONFIG_INVALID` | A settings file in `config/` (`play_rules.yaml`, `fastscout_columns.yaml`) has a typo or a wrong value type. | The message names the setting. Fix it, or restore the shipped file: `sudo -u scout git -C /opt/basketball-scout checkout -- config/<file>`. |
 | `ROSTER_PARSE_FAILED` | No players could be read from the roster file. | Use a header row with a number column (#, No, Number) and a name column, or start from the roster template. |
 | `ROSTER_UNSUPPORTED_FILE` | Not a `.csv`, `.tsv`, `.txt` or `.xlsx` file. | In Excel use File > Save As > Excel Workbook (.xlsx) or CSV. |
 | `REPORT_NOT_CONFIGURED` | No Anthropic API key. | Add `ANTHROPIC_API_KEY` to `.env` and restart the worker. |
@@ -665,9 +704,11 @@ Every error shown in the app has a code. Find it here:
 
 Sign-in problems: **"Sign-in is not set up"** (HTTP 503, `AUTH_NOT_CONFIGURED`) means
 `.env` has no `SCOUT_AUTH_PASSWORD` or hash; **"Too many sign-in attempts"** (429)
-clears itself after 5 minutes (or restart the web app). Forgot the password?
-`sudo grep SCOUT_AUTH_PASSWORD /opt/basketball-scout/.env`, or set a new one and
-`sudo systemctl restart basketball-scout-web`.
+clears itself after 5 minutes (or restart the web app); **"Request blocked"** (403,
+`CROSS_SITE_REQUEST`) means a change was sent from a page on another website: open
+Basketball Scout directly (type its address or use a bookmark) and try again. Forgot
+the password? `sudo grep SCOUT_AUTH_PASSWORD /opt/basketball-scout/.env`, or set a new
+one and `sudo systemctl restart basketball-scout-web`.
 
 **Uploads fail with "413 Request Entity Too Large".** That page comes from nginx (or
 another proxy), not from the app: the body limit is smaller than one upload chunk. In
@@ -690,6 +731,11 @@ Games page shows when it was last seen. Check
 data folder or the service user's home is missing, or `SCOUT_DATA_DIR` was changed by
 hand. Run `sudo scripts/install.sh --data-dir <the folder>` again; it recreates the
 folders and the units.
+
+**The services do not start after a reboot ("Dependency failed").** The disk that holds
+the data folder is not mounted: check `findmnt /var/lib/basketball-scout` and
+`/etc/fstab`. The services wait for that mount instead of starting an empty database on
+the system disk.
 
 **Video does not seek.** The app answers HTTP Range requests; a proxy in front must
 pass them through (the nginx template does). Try the address without the proxy.
@@ -738,10 +784,12 @@ district's data-privacy policy.
   [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#tls-https).
 - **Strong password.** install.sh generates a random one. To change it, edit
   `SCOUT_AUTH_PASSWORD` in `.env` (or store a hash from
-  `/opt/basketball-scout/.venv/bin/python -m scout.auth hash-password` in
-  `SCOUT_AUTH_PASSWORD_HASH`) and restart the web app. Ten wrong passwords from one
-  address within 5 minutes lock that address out for 5 minutes. Only use
-  `SCOUT_AUTH_DISABLED=true` on a network you fully trust.
+  `cd /opt/basketball-scout && .venv/bin/python -m scout.auth hash-password` in
+  `SCOUT_AUTH_PASSWORD_HASH`, in single quotes; run it from the code folder as shown,
+  the only place Python finds the app) and restart the web app. Ten wrong passwords
+  from one address within 5 minutes lock that address out for 5 minutes (thirty from
+  one IPv6 /64 network lock out that network). Changes sent from another website's
+  pages are refused. Only use `SCOUT_AUTH_DISABLED=true` on a network you fully trust.
 - **Secrets** live in `.env` (mode 600, readable by root and `scout`). Never commit it
   (it is in `.gitignore`). The Modal token can run GPU jobs on your bill and the
   Anthropic key can spend money: revoke and replace them if they leak.

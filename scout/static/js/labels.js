@@ -90,6 +90,7 @@ export const ZONE_LABELS = {
   unknown: "Unknown",
 };
 
+/** Play.players roles (scout/analysis/plays.py). */
 export const ROLE_LABELS = {
   ball_handler: "Ball handler",
   screener: "Screener",
@@ -97,6 +98,8 @@ export const ROLE_LABELS = {
   cutter: "Cutter",
   shooter: "Shooter",
   passer: "Passer",
+  receiver: "Receiver",
+  defender: "Defender",
   rebounder: "Rebounder",
 };
 

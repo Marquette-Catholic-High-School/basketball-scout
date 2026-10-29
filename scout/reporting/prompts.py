@@ -161,7 +161,8 @@ situations (e.g. "3v2") for both teams.
 shooter...), and free-throw shooting by player.
 - turnovers: committed and forced by the scouted team. scoring_runs: stretches where one \
 team scored 8 or more points in a row. play_log: the scouted team's recognised plays in \
-order.
+order (a long film gets an evenly spaced selection, so count plays with \
+scouted_offense.play_types, not with the log).
 - data_quality: how reliable the computer vision was for this film.
 A section is missing when the film had nothing to report for it."""
 

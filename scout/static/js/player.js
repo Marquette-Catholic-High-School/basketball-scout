@@ -3,7 +3,7 @@
 
 import { gamePath } from "./api.js";
 import { CATEGORY_LABELS, EVENT_CATEGORY, NOISY_EVENT_TYPES, PLAY_TYPE_LABELS, shortTeamName } from "./labels.js";
-import { byId, el, formatClock, isTypingTarget, notice, prepareCanvas, setChildren } from "./ui.js";
+import { byId, el, formatClock, isTypingTarget, notice, placeTip, prepareCanvas, setChildren } from "./ui.js";
 
 export const PREROLL_S = 3;
 const CAPTION_S = 3.5;
@@ -62,10 +62,12 @@ export class Player {
     this.teamNames = {};
     this.duration = 0;
     this.variant = null;
+    this.hasOriginal = false;
     this.hasAnnotated = false;
     this.rate = 1;
     this.captions = true;
     this.calibrating = false;
+    this.clickedButton = null;
     this.listeners = new Set();
     this.raf = null;
     this.lastPlayheadX = -1;
@@ -104,6 +106,11 @@ export class Player {
     this.strip.addEventListener("mouseleave", () => {
       this.tip.hidden = true;
     });
+    // A button clicked with the mouse keeps focus (an event time, "Event ▶"...); Space would
+    // click it again instead of playing. Shortcuts win on that button until Tab moves on.
+    document.addEventListener("mousedown", (e) => {
+      this.clickedButton = e.target instanceof Element ? e.target.closest("button") : null;
+    });
     document.addEventListener("keydown", (e) => this.onKey(e));
     new ResizeObserver(() => this.redraw()).observe(this.stage);
     window.addEventListener("resize", () => this.redraw());
@@ -116,13 +123,20 @@ export class Player {
     this.redraw();
   }
 
-  /** Point the player at the game's film (annotated when available). */
+  /**
+   * Point the player at the game's film (annotated when available). A film added as a
+   * link has no original on this server, but the annotated copy made by the GPU plays.
+   */
   load({ hasVideo, hasAnnotated }) {
+    this.hasOriginal = Boolean(hasVideo);
     this.hasAnnotated = Boolean(hasAnnotated);
     const annotatedBtn = byId("variant-annotated");
     annotatedBtn.disabled = !this.hasAnnotated;
     annotatedBtn.title = this.hasAnnotated ? "Film with tracking overlays" : "No annotated video for this game";
-    if (!hasVideo) return Promise.resolve(false);
+    const originalBtn = byId("variant-original");
+    originalBtn.disabled = !this.hasOriginal;
+    originalBtn.title = this.hasOriginal ? "" : "The original film isn't stored on this server (it was added as a link)";
+    if (!this.hasOriginal && !this.hasAnnotated) return Promise.resolve(false);
     if (this.variant) return Promise.resolve(true);
     return this.setVariant(this.hasAnnotated ? "annotated" : "original", { keepTime: false });
   }
@@ -155,7 +169,7 @@ export class Player {
 
   // ------------------------------------------------------------- playback
   setVariant(variant, { keepTime = true } = {}) {
-    const target = variant === "annotated" && this.hasAnnotated ? "annotated" : "original";
+    const target = (variant === "annotated" && this.hasAnnotated) || !this.hasOriginal ? "annotated" : "original";
     byId("variant-annotated").setAttribute("aria-pressed", String(target === "annotated"));
     byId("variant-original").setAttribute("aria-pressed", String(target === "original"));
     if (target === this.variant && this.video.currentSrc) return Promise.resolve(true);
@@ -183,11 +197,19 @@ export class Player {
   }
 
   onVideoError() {
-    if (this.variant === "annotated") {
+    if (this.variant === "annotated" && this.hasOriginal) {
       this.hasAnnotated = false;
       byId("variant-annotated").disabled = true;
       this.setVariant("original");
       setChildren(this.errorBox, notice("info", null, "The annotated video isn't available, so the original film is shown."));
+      return;
+    }
+    if (this.variant === "original" && this.hasAnnotated) {
+      // The annotated copy is always H.264, so it plays where an HEVC/MOV original can't.
+      this.hasOriginal = false;
+      byId("variant-original").disabled = true;
+      this.setVariant("annotated");
+      setChildren(this.errorBox, notice("info", null, "The original film can't be played in this browser (MOV and HEVC files often can't), so the annotated copy is shown."));
       return;
     }
     setChildren(this.errorBox, notice("warning", "The film can't be played in this browser",
@@ -231,12 +253,14 @@ export class Player {
 
   toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
-    else this.stage.requestFullscreen?.().catch(() => {});
+    else if (this.stage.requestFullscreen) this.stage.requestFullscreen().catch(() => {});
+    else this.video.webkitEnterFullscreen?.(); // iPhone: the film alone, without the captions overlay
   }
 
   onKey(e) {
-    if (e.ctrlKey || e.metaKey || e.altKey || !this.video.currentSrc) return;
-    if (e.target !== this.video && isTypingTarget(e.target)) return;
+    if (e.key === "Tab") this.clickedButton = null;
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || !this.video.currentSrc) return; // e.g. arrows in the tab list
+    if (e.target !== this.video && e.target !== this.clickedButton && isTypingTarget(e.target)) return;
     const step = e.shiftKey ? 1 : 5;
     const actions = {
       " ": () => this.togglePlay(),
@@ -453,9 +477,9 @@ export class Player {
   onStripHover(e) {
     const { time, marker, x } = this.nearestMarker(e.clientX);
     this.tip.hidden = false;
-    this.tip.style.left = `${x}px`;
     this.tip.textContent = marker
       ? `${formatClock(marker.t)} ${marker.label}${marker.player?.label ? ` · ${marker.player.label}` : ""}`
       : formatClock(time);
+    placeTip(this.tip, x, this.strip.clientWidth);
   }
 }

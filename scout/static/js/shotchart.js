@@ -6,7 +6,7 @@ import { courtConfig, drawLines, halfCourtLines } from "./court.js";
 import { ZONE_LABELS } from "./labels.js";
 import { PREROLL_S } from "./player.js";
 import { humanize, playerKey } from "./timeline.js";
-import { byId, el, formatClock, formatPct, notice, setChildren } from "./ui.js";
+import { byId, el, formatClock, formatPct, notice, placeTip, setChildren } from "./ui.js";
 
 const ZONES = ["paint", "mid", "three", "unknown"];
 /** Depth (feet from the baseline) of each zone's FG% label, centred across the court. */
@@ -175,8 +175,8 @@ export class ShotChart {
     const kind = `${shot.is_three ? "3PT" : "2PT"} ${shot.made ? "make" : "miss"}`;
     const extras = [shot.subzone ? humanize(shot.subzone) : ZONE_LABELS[shot.zone], shot.assisted ? "assisted" : null, shot.blocked ? "blocked" : null];
     this.tip.textContent = [shot.player?.label || "Unknown player", kind, formatClock(shot.t), ...extras].filter(Boolean).join(" · ");
-    this.tip.style.left = `${dot.left + dot.width / 2 - wrap.left}px`;
-    this.tip.style.top = `${dot.top - wrap.top}px`;
     this.tip.hidden = false;
+    placeTip(this.tip, dot.left + dot.width / 2 - wrap.left, wrap.width);
+    this.tip.style.top = `${dot.top - wrap.top}px`;
   }
 }

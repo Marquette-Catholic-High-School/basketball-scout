@@ -536,9 +536,15 @@ resolve_settings() {  # fill in options left empty from an earlier install, else
 }
 
 resolve_data_dir() {
-  local current
+  local current relative
   current=$(env_get "$ENV_FILE" SCOUT_DATA_DIR)
   current=$(strip_trailing_slashes "$current")
+  relative=${current#./}
+  if [[ -f $ENV_FILE && $current != /* && -e $INSTALL_DIR/${relative:-data}/scout.db ]]; then
+    # The app reads a relative (or unset, i.e. "data") SCOUT_DATA_DIR from the code folder and
+    # its games are there: never switch away from them silently.
+    current="$INSTALL_DIR/${relative:-data}"
+  fi
   if [[ -z $DATA_DIR ]]; then
     if [[ $current == /* ]]; then
       DATA_DIR=$current
@@ -554,7 +560,7 @@ resolve_data_dir() {
     confirm "Use the new data folder $DATA_DIR anyway?" n || die "Nothing was changed. Leave out --data-dir to keep $current."
   fi
   if paths_overlap "$INSTALL_DIR" "$DATA_DIR"; then
-    die "Keep the data folder ($DATA_DIR) outside the code folder ($INSTALL_DIR), so updates and uninstalls never touch your games."
+    die "Keep the data folder ($DATA_DIR) outside the code folder ($INSTALL_DIR), so updates and uninstalls never touch your games. To move existing games out first, see docs/DEPLOYMENT.md > Moving the data folder."
   fi
 }
 
@@ -1081,6 +1087,7 @@ wait_for_health() {
 }
 
 run_modal_deploy() {
+  local modal_env
   step "Deploying the GPU app to Modal"
   if ! modal_credentials_present; then
     warn "No Modal credentials, so the GPU app was not deployed (see the next steps below)."
@@ -1088,7 +1095,9 @@ run_modal_deploy() {
     return 0
   fi
   info "The first deploy builds the GPU image (about 10-20 minutes); later deploys are quicker."
-  if as_user_with_env "$INSTALL_DIR/.venv/bin/modal" deploy modal_app/app.py; then
+  # --env: deploy into the environment the worker looks in, even if MODAL_ENVIRONMENT is not set.
+  modal_env=$(env_get "$ENV_FILE" SCOUT_MODAL_ENVIRONMENT)
+  if as_user_with_env "$INSTALL_DIR/.venv/bin/modal" deploy ${modal_env:+--env "$modal_env"} modal_app/app.py; then
     record_state modal
     MODAL_DEPLOY_RESULT=deployed
     ok "GPU app deployed"

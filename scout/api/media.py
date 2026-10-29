@@ -35,11 +35,14 @@ def get_video(
         raise _video_missing(game, variant)
     filename = f"{game.id}_{variant}{path.suffix}"
     # Served as video/mp4 even for .mov: browsers play H.264 QuickTime files that way.
+    # no-cache: the URL stays the same when the film is replaced or re-analysed, so the
+    # browser must check the ETag (If-Range) instead of replaying a cached old film.
     return FileResponse(
         path,
         media_type="video/mp4",
         filename=filename if download else None,
         content_disposition_type="attachment",
+        headers={"Cache-Control": "no-cache"},
     )
 
 

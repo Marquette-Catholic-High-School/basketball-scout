@@ -24,13 +24,18 @@ from scout import db
 from scout.config import Settings
 from scout.errors import ErrorCode, ScoutError
 from scout.jobs.queue import JobQueue
-from scout.schemas import Job
+from scout.schemas import Job, JobStatus
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 DEAD_WORKER_SECONDS = 300.0  # no heartbeat for this long: the worker's taken ids go back to the queue
+# Socket read timeout. redis-py >= 6 defaults to 5 s, exactly the worker's idle claim: Redis answers an
+# expired BLMOVE a little after its timeout, so the read timed out and every idle claim looked like an
+# outage (QUEUE_UNAVAILABLE). Each BLMOVE therefore waits at most _MAX_BLOCK_SECONDS, well inside it.
+SOCKET_TIMEOUT_SECONDS = 15.0
+_MAX_BLOCK_SECONDS = 5.0
 _MIN_BLOCK_SECONDS = 0.05  # BLMOVE with timeout 0 would block forever
 
 
@@ -38,8 +43,8 @@ class RedisJobQueue(JobQueue):
     """Reliable-queue pattern: ``LPUSH <prefix>:queue`` / ``BLMOVE`` to a per-worker
     ``<prefix>:processing:<worker_id>`` list, ``LREM`` on ack. Job state still lives in
     SQLite; ``claim`` calls ``db.claim_job(..., job_id=...)`` for the popped id and skips
-    ids that are no longer runnable. ``requeue_stale`` re-pushes jobs with expired leases
-    (``db.requeue_expired_jobs``) and drains processing lists of dead workers.
+    ids that are no longer runnable. ``requeue_stale`` re-pushes running jobs whose lease
+    expired and drains processing lists of dead workers.
     Raises ``ScoutError(QUEUE_UNAVAILABLE)`` when Redis is unreachable."""
 
     name = "redis"
@@ -48,7 +53,10 @@ class RedisJobQueue(JobQueue):
         super().__init__(settings)
         # The connection opens lazily on the first command, so constructing never fails.
         self.client = client if client is not None else redis.Redis.from_url(
-            self.settings.redis_url, decode_responses=True, socket_connect_timeout=5
+            self.settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=SOCKET_TIMEOUT_SECONDS,
         )
         prefix = self.settings.redis_prefix
         self.queue_key = f"{prefix}:queue"
@@ -67,17 +75,16 @@ class RedisJobQueue(JobQueue):
         deadline = time.monotonic() + max(0.0, timeout)
         self.heartbeat(worker_id)
         while True:
-            block = max(deadline - time.monotonic(), _MIN_BLOCK_SECONDS)
+            block = min(max(deadline - time.monotonic(), _MIN_BLOCK_SECONDS), _MAX_BLOCK_SECONDS)
             job_id = self._redis(self.client.blmove, self.queue_key, processing, block, "RIGHT", "LEFT")
-            if job_id is None:
-                break
-            job = db.claim_job(worker_id, lease, job_id=job_id)
-            if job is not None:
-                return job
-            logger.debug("Dropping job id %s from Redis: it is no longer runnable", job_id)
-            # count=1 removes only the copy BLMOVE just put at the head: if the id is a duplicate of a
-            # job this worker is already running, the original entry must stay until that job's ack.
-            self._redis(self.client.lrem, processing, 1, job_id)
+            if job_id is not None:
+                job = db.claim_job(worker_id, lease, job_id=job_id)
+                if job is not None:
+                    return job
+                logger.debug("Dropping job id %s from Redis: it is no longer runnable", job_id)
+                # count=1 removes only the copy BLMOVE just put at the head: if the id is a duplicate of a
+                # job this worker is already running, the original entry must stay until that job's ack.
+                self._redis(self.client.lrem, processing, 1, job_id)
             if time.monotonic() >= deadline:
                 break
         # Runnable jobs Redis does not know about: expired leases of dead workers, or jobs
@@ -95,12 +102,23 @@ class RedisJobQueue(JobQueue):
         self._redis(self.client.hset, self.workers_key, worker_id, time.time())
 
     def requeue_stale(self) -> int:
-        expired = db.requeue_expired_jobs()
-        for job_id in expired:
+        # The rows stay `running` with their expired lease, as with the SQLite queue: db.claim_job
+        # takes them, and a cancel is flagged for the worker that does, which then stops the GPU
+        # call. Turned back into `queued` rows, a cancel was final at once: nobody stopped the GPU
+        # call or cleared the Modal volume, and the game stayed "processing".
+        now = time.time()
+        expired = [
+            job.id
+            for job in db.list_jobs(statuses=[JobStatus.RUNNING], limit=1000)
+            if job.lease_expires_at is not None and job.lease_expires_at < now
+        ]
+        waiting = set(self._redis(self.client.lrange, self.queue_key, 0, -1)) if expired else set()
+        requeued = [job_id for job_id in reversed(expired) if job_id not in waiting]  # oldest first
+        for job_id in requeued:
             self._redis(self.client.lpush, self.queue_key, job_id)
-        if expired:
-            logger.warning("Requeued %d job(s) whose worker lease expired: %s", len(expired), ", ".join(expired))
-        return len(expired) + self._drain_dead_workers()
+        if requeued:
+            logger.warning("Requeued %d job(s) whose worker lease expired: %s", len(requeued), ", ".join(requeued))
+        return len(requeued) + self._drain_dead_workers()
 
     def ping(self) -> bool:
         try:

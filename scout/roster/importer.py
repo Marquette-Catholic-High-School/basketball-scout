@@ -98,7 +98,10 @@ _POSITION_WORDS = frozenset({
 _JERSEY_CELL = re.compile(r"#?\s*(\d{1,2})(?:\.0+)?")  # "#5", "05", "00", "5.0" (Excel float)
 _HEIGHT_VALUE = re.compile(r"\d\s*['’-]\s*\d{1,2}\s*(?:\"|”|'')?|\d{2}")  # 6-2, 6'2", 6’ 2”, 74
 _EXCEL_DATE_HEIGHT = re.compile(r"(\d{1,2})-([a-z]{3})|([a-z]{3})-(\d{1,2})", re.IGNORECASE)  # "2-Jun" = 6-2
+_EXCEL_TEXT_CELL = re.compile(r'\s*="(.*)"\s*')  # ="05": how some exports stop Excel dropping a leading zero
 _HEIGHT_MONTHS = {"apr": 4, "may": 5, "jun": 6, "jul": 7}  # plausible feet values only
+# Zero-width spaces / joiners and stray byte-order marks that rosters copied from web pages carry.
+_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
 
 _Row = tuple[int, list[str]]  # (1-based row number in the file, tidied cell texts)
 
@@ -284,7 +287,7 @@ def _read_delimited(text: str, delimiter: str) -> list[_Row]:
             if number > MAX_TABLE_ROWS:
                 logger.warning("Roster file has more than %d rows; ignoring the rest", MAX_TABLE_ROWS)
                 break
-            tidy = _tidy(cells)
+            tidy = _tidy(_unwrap_excel_text(cell) for cell in cells)
             if tidy:
                 rows.append((number, tidy))
     except csv.Error as exc:
@@ -292,6 +295,12 @@ def _read_delimited(text: str, delimiter: str) -> list[_Row]:
             ErrorCode.ROSTER_PARSE_FAILED, "The roster file is not a readable CSV file.", detail=str(exc)
         ) from exc
     return rows
+
+
+def _unwrap_excel_text(cell: str) -> str:
+    """'="05"' -> '05' (a CSV cell written as an Excel text formula keeps "05" and "00" as typed)."""
+    match = _EXCEL_TEXT_CELL.fullmatch(cell)
+    return match.group(1) if match else cell
 
 
 def _workbook_tables(content: bytes) -> list[list[_Row]]:
@@ -346,8 +355,8 @@ def _excel_text(value: Any, number_format: str | None) -> str:
 
 
 def _tidy(cells: Iterable[Any]) -> list[str]:
-    """Collapse whitespace inside every cell and drop trailing empty cells."""
-    tidy = [" ".join(str(cell).split()) for cell in cells][:MAX_COLUMNS]
+    """Collapse whitespace inside every cell (dropping invisible characters) and drop trailing empty cells."""
+    tidy = [" ".join(str(cell).translate(_INVISIBLE).split()) for cell in cells][:MAX_COLUMNS]
     while tidy and not tidy[-1]:
         tidy.pop()
     return tidy

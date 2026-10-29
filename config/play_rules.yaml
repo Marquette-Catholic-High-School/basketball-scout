@@ -2,8 +2,8 @@
 #
 # Every value here overrides a built-in default, so you can delete a line to go back
 # to the default, or set `enabled: false` to switch a detector off. Distances are in
-# feet, speeds in feet per second, times in seconds. "Half-court" positions are
-# [feet from the attacked baseline, feet from the offense's LEFT sideline].
+# feet, speeds in feet per second, times in seconds; no number may be negative. "Half-court"
+# positions are [feet from the attacked baseline, feet from the offense's LEFT sideline].
 #
 # After editing, click "Re-run analysis" on a game; no restart is needed.
 
@@ -41,7 +41,7 @@ handoff:                         # dribble handoff (DHO)
 isolation:
   enabled: true
   min_hold_s: 3.0                # handler keeps the ball at least this long
-  min_basket_distance_ft: 15.0   # starts on the perimeter / wing
+  min_basket_distance_ft: 15.0   # starts on the perimeter / wing (and a drive ends inside this distance)
   defender_distance_ft: 6.0      # exactly one defender this close
   spacing_ft: 12.0               # nearest teammate farther than this
   min_share: 0.7                 # share of the hold that must meet the conditions above
@@ -88,7 +88,7 @@ putback:
 
 fast_break:                      # FastScout "transition": ends within the first 10 s, not after a stoppage
   enabled: true
-  start_reasons: [def_rebound, steal, turnover]
+  start_reasons: [def_rebound, steal, turnover]  # turnover: live ball only (travel / out of bounds = inbound)
   shot_within_s: 8.0             # the shot comes this soon after the possession starts
   cross_half_within_s: 5.0       # the ball crosses half court this soon (court mapping needed)
   ahead_margin_ft: 3.0           # attackers level with the ball count as "ahead" for numbers like 3v2
@@ -98,7 +98,7 @@ fast_break:                      # FastScout "transition": ends within the first
 defense:                         # shared by man_defense / zone_defense (one label per half-court possession)
   settle_s: 1.5                  # start judging this long after the ball and all five defenders are in the half court
   min_window_s: 4.0              # need at least this much half-court time to judge
-  sample_hz: 2.0
+  sample_hz: 2.0                 # positions per second used for the judgement (above 0)
   min_move_ft: 1.5               # attacker movement smaller than this is ignored
   man_min_follow: 0.5            # 0..1: how closely defenders copy their man's movement; above = man
   zone_max_follow: 0.3           # below = zone (they hold spots while attackers move through)
@@ -121,6 +121,7 @@ zone_defense:
 
 press:                           # full-court pressure after a made basket / inbound
   enabled: true
+  # (inbounds after a travel / out-of-bounds / offensive-foul turnover are always checked)
   start_reasons: [made_basket, made_ft, free_throws, free_throw, inbound, out_of_bounds, period_start, timeout]
   min_delay_s: 1.0               # judge from the inbound catch (at least this long after the possession starts)
   pickup_within_s: 3.0           # defenders must be picking up within this long of the inbound

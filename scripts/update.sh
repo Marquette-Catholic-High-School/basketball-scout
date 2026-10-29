@@ -3,12 +3,12 @@
 #
 #   sudo /opt/basketball-scout/scripts/update.sh [options]
 #
-# Steps: check the checkout, stop if the code has local changes (--force saves them
-# first), git fetch + fast-forward (git runs as the service user), install the Python
-# requirements, run the database migrations, redeploy the GPU app to Modal when
-# modal_app/ changed, restart both services, check that the web app answers and show
-# what changed. If a step fails it prints the commands that go back to the previous
-# version.
+# Steps: check the checkout, stop if the code has local changes (--force saves them,
+# updates and puts them back on top), git fetch + fast-forward (git runs as the service
+# user), install the Python requirements, run the database migrations, redeploy the GPU
+# app to Modal when modal_app/ changed, restart both services, check that the web app
+# answers and show what changed. It prints the commands that go back to the previous
+# version at the end, and when a step fails.
 #
 # The steps run inside main(), called on the last line: git may replace this file while
 # it runs, and bash has already read all of it by then.
@@ -40,6 +40,10 @@ MODAL_HEAD=""    # what was last deployed to Modal by install.sh / update.sh (""
 CODE_CHANGED=0
 MODAL_DEPLOYED=0
 MODAL_SUMMARY="not needed"
+MODAL_ENV=""     # SCOUT_MODAL_ENVIRONMENT: the Modal environment the worker looks in ("" = default)
+SAVE_CHANGES=0   # --force and the checkout has local changes
+STASH_COMMIT=""  # the stash holding them while the code is updated ("" = nothing saved)
+LOCAL_PATCH=""   # the same changes as a .patch file in <data>/backups/
 
 C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_BOLD="" C_OFF=""
 
@@ -55,7 +59,9 @@ Usage: sudo scripts/update.sh [options]
   --no-deploy-modal   never redeploy the GPU app
                       (default: redeploy when modal_app/ changed, SCOUT_PROCESSOR=modal
                       and Modal credentials exist)
-  --force             save local code changes (git stash + a .patch file) and update anyway
+  --force             update although the code has local changes (e.g. edited
+                      config/*.yaml): save them (git stash + a .patch file), update,
+                      then put them back
   --skip-restart      update the files only; restart the services yourself later
   -h, --help          show this help
 
@@ -102,11 +108,27 @@ print_rollback_help() {
   printf '\n  The code was already updated. Running update.sh again finishes the update; the\n'
   printf '  services keep running the old version until they are restarted.\n'
   printf '  To go back to the version that ran before this update (%s) instead:\n' "${RUNNING_HEAD:0:12}"
+  print_rollback_commands
+}
+
+print_rollback_commands() {  # the commands that return the code, packages, GPU app and services to RUNNING_HEAD
+  local forget
   printf '    sudo -u %s git -C %s reset --hard %s\n' "$SERVICE_USER" "$INSTALL_DIR" "$RUNNING_HEAD"
-  printf '    sudo -u %s -H %s/.venv/bin/python -m pip install -r %s/requirements.txt\n' "$SERVICE_USER" "$INSTALL_DIR" "$INSTALL_DIR"
-  if [[ $MODAL_DEPLOYED -eq 1 ]]; then
-    printf '    cd %s && sudo -u %s -H .venv/bin/python -m dotenv -f .env run -- .venv/bin/modal deploy modal_app/app.py\n' "$INSTALL_DIR" "$SERVICE_USER"
+  if [[ -n $STASH_COMMIT ]]; then
+    printf '    sudo -u %s git -C %s stash apply %s   # your local changes (also in %s)\n' \
+      "$SERVICE_USER" "$INSTALL_DIR" "${STASH_COMMIT:0:12}" "$LOCAL_PATCH"
   fi
+  printf '    sudo -u %s -H %s/.venv/bin/python -m pip install -r %s/requirements.txt\n' "$SERVICE_USER" "$INSTALL_DIR" "$INSTALL_DIR"
+  forget=$(state_file running)
+  if [[ $MODAL_DEPLOYED -eq 1 ]]; then
+    printf '    cd %s && sudo -u %s -H .venv/bin/python -m dotenv -f .env run -- .venv/bin/modal deploy%s modal_app/app.py\n' \
+      "$INSTALL_DIR" "$SERVICE_USER" "${MODAL_ENV:+ --env $MODAL_ENV}"
+    forget="$forget $(state_file modal)"
+  fi
+  # The records of what the services and Modal run would be wrong after going back by hand: the
+  # next update would then skip the restart or the GPU redeploy. Without them it compares with
+  # the version checked out.
+  printf '    sudo rm -f %s\n' "$forget"
   printf '    sudo systemctl restart basketball-scout-web basketball-scout-worker\n'
 }
 
@@ -319,23 +341,44 @@ check_local_changes() {
   fi
   if [[ $FORCE -eq 0 ]]; then
     printf '%s\n' "$changes" >&2
-    die "The code in $INSTALL_DIR has local changes (listed above). Undo them, or run update.sh --force to save them (git stash) and update anyway."
+    die "The code in $INSTALL_DIR has local changes (listed above). Undo them, or run update.sh --force: it saves them (git stash and a .patch file), updates and puts them back."
   fi
-  save_local_changes
+  SAVE_CHANGES=1  # saved by pull_code right before the update, so a failed fetch changes nothing
 }
 
 save_local_changes() {
-  local stamp backup_dir patch
+  local stamp backup_dir before
   stamp=$(date +%Y%m%d-%H%M%S)
   backup_dir="$(data_dir)/backups"
-  patch="$backup_dir/local-changes-$stamp.patch"
+  LOCAL_PATCH="$backup_dir/local-changes-$stamp.patch"
   install -d -m 700 "$backup_dir"
-  git_user diff HEAD >"$patch"
-  chmod 600 "$patch"
+  git_user diff HEAD >"$LOCAL_PATCH"
+  chmod 600 "$LOCAL_PATCH"
   # Only changes to tracked files (what blocked the update); untracked files stay put.
+  before=$(git_user rev-parse --verify --quiet refs/stash || true)
   git_user -c user.name="update.sh" -c user.email="update.sh@localhost" stash push --quiet -m "update.sh $stamp"
-  warn "Local changes saved: git stash 'update.sh $stamp' and $patch"
+  STASH_COMMIT=$(git_user rev-parse --verify --quiet refs/stash || true)
+  if [[ $STASH_COMMIT == "$before" ]]; then
+    STASH_COMMIT=""  # nothing was stashed: never re-apply an older stash
+  fi
+  warn "Local changes saved: git stash 'update.sh $stamp' and $LOCAL_PATCH"
   info "See them with: sudo -u $SERVICE_USER git -C $INSTALL_DIR stash show -p"
+}
+
+restore_local_changes() {  # put the changes saved by --force back on top of the checked-out code
+  local output
+  if [[ -z $STASH_COMMIT ]]; then
+    return 0
+  fi
+  if output=$(git_user stash apply "$STASH_COMMIT" 2>&1); then
+    ok "Put your local changes back (a copy stays in git stash and $LOCAL_PATCH)"
+  else
+    printf '%s\n' "$output" | grep -E '^(CONFLICT|error|fatal)' >&2 || true  # which files clash
+    # A clash leaves half-merged files behind: go back to the clean new version (the stash keeps the changes).
+    git_user reset --quiet --hard HEAD
+    warn "Your local changes clash with the new version, so they are NOT in use now (for example edits to config/*.yaml)."
+    warn "Make them again by hand; they are kept in git stash and in $LOCAL_PATCH."
+  fi
 }
 
 pull_code() {
@@ -347,6 +390,9 @@ pull_code() {
   if ! git_user rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" >/dev/null; then
     die "There is no branch '$BRANCH' on origin."
   fi
+  if [[ $SAVE_CHANGES -eq 1 ]]; then
+    save_local_changes
+  fi
   current=$(git_user rev-parse --abbrev-ref HEAD)
   if [[ $current != "$BRANCH" ]]; then
     info "Switching from $current to $BRANCH"
@@ -357,10 +403,13 @@ pull_code() {
     fi
   fi
   if ! git_user merge --quiet --ff-only "origin/$BRANCH"; then
+    restore_local_changes
     die "Cannot fast-forward to origin/$BRANCH: this checkout has commits that GitHub does not have. Look at: sudo -u $SERVICE_USER git -C $INSTALL_DIR log origin/$BRANCH..HEAD"
   fi
   NEW_HEAD=$(git_user rev-parse HEAD)
-  if [[ $NEW_HEAD != "$RUNNING_HEAD" ]]; then
+  # The files on disk changed (OLD_HEAD), or the services run another version (RUNNING_HEAD):
+  # either way they need a restart.
+  if [[ $NEW_HEAD != "$RUNNING_HEAD" || $NEW_HEAD != "$OLD_HEAD" ]]; then
     CODE_CHANGED=1
   fi
   if [[ $OLD_HEAD != "$NEW_HEAD" ]]; then
@@ -370,6 +419,7 @@ pull_code() {
   else
     ok "Already up to date (${NEW_HEAD:0:12})"
   fi
+  restore_local_changes
 }
 
 install_requirements() {
@@ -425,7 +475,9 @@ deploy_modal() {
   esac
   step "Deploying the GPU app to Modal"
   info "A rebuilt GPU image can take 10-20 minutes; otherwise this takes a minute or two."
-  as_user_with_env "$INSTALL_DIR/.venv/bin/modal" deploy modal_app/app.py
+  # --env: deploy into the environment the worker looks in, even if MODAL_ENVIRONMENT is not set.
+  MODAL_ENV=$(env_get "$ENV_FILE" SCOUT_MODAL_ENVIRONMENT)
+  as_user_with_env "$INSTALL_DIR/.venv/bin/modal" deploy ${MODAL_ENV:+--env "$MODAL_ENV"} modal_app/app.py
   record_state modal
   MODAL_DEPLOYED=1
   MODAL_SUMMARY="deployed"
@@ -475,11 +527,14 @@ wait_for_health() {
   fi
 }
 
-print_notices() {
-  local key key_re='^[[:space:]]*#?[[:space:]]*([A-Z][A-Z0-9_]*)=' line new_keys=""
+check_deploy_templates() {  # said before the restart, so the hint is there even when the restart fails
   if changed_since "$RUNNING_HEAD" deploy/; then
     warn "The systemd/nginx templates in deploy/ changed. Apply them with: sudo $INSTALL_DIR/scripts/install.sh (keeps your settings and data)."
   fi
+}
+
+print_notices() {
+  local key key_re='^[[:space:]]*#?[[:space:]]*([A-Z][A-Z0-9_]*)=' line new_keys=""
   while IFS= read -r line || [[ -n $line ]]; do
     if [[ $line =~ $key_re ]]; then
       key=${BASH_REMATCH[1]}
@@ -506,6 +561,8 @@ print_summary() {
   if [[ $RUNNING_HEAD != "$NEW_HEAD" ]]; then
     printf '\n  Changes since the version that was running (%s):\n' "${RUNNING_HEAD:0:12}"
     git_user log --no-decorate --format='    %h %s (%an, %cs)' --max-count=40 "$RUNNING_HEAD..$NEW_HEAD"
+    printf '\n  Problems with the new version? To go back to %s:\n' "${RUNNING_HEAD:0:12}"
+    print_rollback_commands
   fi
   printf '\n  Logs: journalctl -u basketball-scout-web -u basketball-scout-worker -f\n\n'
 }
@@ -521,6 +578,7 @@ main() {
   install_requirements
   run_migrations
   deploy_modal
+  check_deploy_templates
   restart_services
   print_notices
   print_summary

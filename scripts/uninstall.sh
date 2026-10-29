@@ -38,6 +38,7 @@ QUEUE_BACKEND=sqlite
 MODAL_APP=basketball-scout
 MODAL_VOLUME=basketball-scout-data
 MODAL_DICT=basketball-scout-progress
+MODAL_ENV=""  # SCOUT_MODAL_ENVIRONMENT ("" = the workspace default)
 
 C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_BOLD="" C_OFF=""
 
@@ -221,9 +222,10 @@ check_removable() {  # check_removable PATH WHAT: never delete a system folder
   fi
 }
 
-modal_cli() {  # the Modal CLI as the service user, with .env loaded (credentials)
+modal_cli() {  # the Modal CLI as the service user, with .env loaded (credentials), in the app's environment
   runuser -u "$SERVICE_USER" -- env -C "$INSTALL_DIR" HOME="$SERVICE_HOME" \
-    "$INSTALL_DIR/.venv/bin/python" -m dotenv -f "$ENV_FILE" run -- "$INSTALL_DIR/.venv/bin/modal" "$@"
+    "$INSTALL_DIR/.venv/bin/python" -m dotenv -f "$ENV_FILE" run -- "$INSTALL_DIR/.venv/bin/modal" "$@" \
+    ${MODAL_ENV:+--env "$MODAL_ENV"}
 }
 
 # --- Steps ------------------------------------------------------------------------------
@@ -234,7 +236,13 @@ resolve() {
   ENV_FILE="$INSTALL_DIR/.env"
   if [[ -z $DATA_DIR ]]; then
     DATA_DIR=$(env_get "$ENV_FILE" SCOUT_DATA_DIR)
-    if [[ $DATA_DIR != /* ]]; then
+    value=${DATA_DIR#./}
+    value="$INSTALL_DIR/${value:-data}"
+    if [[ -f $ENV_FILE && $DATA_DIR != /* ]] && [[ -e $value/scout.db || -d $value/games ]]; then
+      # The app reads a relative (or unset, i.e. "data") SCOUT_DATA_DIR from the code folder,
+      # and games are there.
+      DATA_DIR=$value
+    elif [[ $DATA_DIR != /* ]]; then
       DATA_DIR=$DEFAULT_DATA_DIR
     fi
   fi
@@ -255,6 +263,7 @@ resolve() {
   MODAL_VOLUME=${value:-$MODAL_VOLUME}
   value=$(env_get "$ENV_FILE" SCOUT_MODAL_PROGRESS_DICT)
   MODAL_DICT=${value:-$MODAL_DICT}
+  MODAL_ENV=$(env_get "$ENV_FILE" SCOUT_MODAL_ENVIRONMENT)
 
   check_removable "$INSTALL_DIR" "--dir"
   if [[ -d $INSTALL_DIR && ! -f $INSTALL_DIR/scout/main.py && ! -f $INSTALL_DIR/deploy/systemd/$WEB_UNIT ]]; then
@@ -262,6 +271,16 @@ resolve() {
   fi
   if [[ $DATA_DIR == "$INSTALL_DIR" || $DATA_DIR == "$INSTALL_DIR"/* ]] && [[ $PURGE -eq 0 ]]; then
     die "The data folder $DATA_DIR is inside $INSTALL_DIR, so removing the code would delete the games. Move the data first, or use --purge."
+  fi
+  # The app's default folder <code>/data (SCOUT_DATA_DIR unset, no .env, or an earlier
+  # relative setting) may still hold games although .env now points elsewhere.
+  if [[ $PURGE -eq 0 ]] && [[ -e $INSTALL_DIR/data/scout.db || -d $INSTALL_DIR/data/games ]]; then
+    die "$INSTALL_DIR/data holds games (scout.db or games/), so removing the code would delete them. Move or delete them first (docs/DEPLOYMENT.md > Moving the data folder), or use --purge."
+  fi
+  # userdel --remove deletes the home folder, and with it a data folder kept inside it.
+  if [[ $REMOVE_USER -eq 1 && $PURGE -eq 0 && -n $SERVICE_HOME ]] &&
+    [[ $DATA_DIR == "$SERVICE_HOME" || $DATA_DIR == "$SERVICE_HOME"/* ]]; then
+    die "The data folder $DATA_DIR is inside $SERVICE_HOME, the home folder that --remove-user deletes. Move the data first, leave out --remove-user, or use --purge."
   fi
   if [[ $PURGE -eq 1 ]]; then
     check_removable "$DATA_DIR" "--data-dir"
@@ -314,9 +333,9 @@ remove_modal() {
   step "Modal"
   if [[ ! -x $INSTALL_DIR/.venv/bin/modal || ! -f $ENV_FILE || -z $SERVICE_HOME ]]; then
     warn "The Modal tool is not available here any more. From any computer with Modal set up, run:"
-    info "modal app stop $MODAL_APP -y"
-    info "modal volume delete $MODAL_VOLUME -y"
-    info "modal dict delete $MODAL_DICT -y"
+    info "modal app stop $MODAL_APP -y${MODAL_ENV:+ --env $MODAL_ENV}"
+    info "modal volume delete $MODAL_VOLUME -y${MODAL_ENV:+ --env $MODAL_ENV}"
+    info "modal dict delete $MODAL_DICT -y${MODAL_ENV:+ --env $MODAL_ENV}"
     return 0
   fi
   if modal_cli app stop "$MODAL_APP" -y; then
@@ -336,7 +355,7 @@ remove_modal() {
       warn "Could not delete the Modal dict $MODAL_DICT (maybe it does not exist)."
     fi
   else
-    info "Kept the Modal volume. Delete it later with: modal volume delete $MODAL_VOLUME -y"
+    info "Kept the Modal volume. Delete it later with: modal volume delete $MODAL_VOLUME -y${MODAL_ENV:+ --env $MODAL_ENV}"
   fi
 }
 
@@ -422,6 +441,7 @@ remove_code() {
 }
 
 remove_data() {
+  local entry
   step "Data"
   if [[ ! -e $DATA_DIR ]]; then
     ok "$DATA_DIR is already gone"
@@ -430,8 +450,19 @@ remove_data() {
   if [[ -n $(ls -A "$DATA_DIR") && ! -e $DATA_DIR/scout.db && ! -d $DATA_DIR/games && ! -d $DATA_DIR/backups ]]; then
     die "$DATA_DIR does not look like a Basketball Scout data folder (no scout.db or games/); not deleting it."
   fi
-  rm -rf --one-file-system "$DATA_DIR"
-  ok "Deleted $DATA_DIR (games, film, database, settings backups)"
+  if mountpoint -q "$DATA_DIR" 2>/dev/null; then
+    # A disk of its own (docs/PROXMOX.md > Storage sizing): a mount point cannot be deleted
+    # ("Device or resource busy"), so empty it and leave the disk mounted.
+    for entry in "$DATA_DIR"/* "$DATA_DIR"/.[!.]* "$DATA_DIR"/..?*; do
+      if [[ -e $entry || -L $entry ]]; then
+        rm -rf --one-file-system "$entry"
+      fi
+    done
+    ok "Emptied $DATA_DIR (games, film, database, settings backups); the disk mounted there stays"
+  else
+    rm -rf --one-file-system "$DATA_DIR"
+    ok "Deleted $DATA_DIR (games, film, database, settings backups)"
+  fi
   if [[ $QUEUE_BACKEND == redis ]]; then
     info "Redis still holds a few queue keys. Remove them with:"
     info "redis-cli --scan --pattern 'scout:*' | xargs -r redis-cli del"
@@ -472,7 +503,8 @@ print_summary() {
   printf '  System packages (nginx, redis-server, ffmpeg, python3) were left installed.\n'
   printf '  Remove the ones nothing else needs with: sudo apt-get purge nginx redis-server\n'
   if [[ $REMOVE_MODAL -eq 0 ]]; then
-    printf '  The GPU app is still deployed on Modal. Remove it with: modal app stop %s -y\n' "$MODAL_APP"
+    printf '  The GPU app is still deployed on Modal. Remove it with: modal app stop %s -y%s\n' \
+      "$MODAL_APP" "${MODAL_ENV:+ --env $MODAL_ENV}"
   fi
   printf '  No longer needed? Revoke the Modal token (Modal dashboard) and the Anthropic API key\n'
   printf '  (console.anthropic.com) that this server used.\n\n'

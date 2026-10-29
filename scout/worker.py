@@ -18,7 +18,9 @@ already has one resumes polling instead of resubmitting. On SIGTERM the worker s
 claiming, jobs waiting on the GPU leave their polling loop without failing and their
 lease is expired on the spot, so the next worker picks them up at once. A worker that
 dies without warning is covered by the lease: it runs out and another worker re-claims
-the job (after ``max_attempts`` such losses the job fails with ``WORKER_LOST``).
+the job (after ``max_attempts`` such losses the job fails with ``WORKER_LOST``). A lease
+can also lapse while its worker is alive (the machine slept): if our own claim hands the
+job back we keep running it once, and if another worker took it over we step aside.
 """
 
 from __future__ import annotations
@@ -96,6 +98,10 @@ class _Paused(Exception):
     """The worker is shutting down: hand the job back without failing it."""
 
 
+class _LeaseLost(Exception):
+    """Our lease ran out (the machine slept, the database stalled) and another worker took the job over."""
+
+
 @dataclass
 class _Run:
     """State shared by the steps of one job run."""
@@ -166,10 +172,13 @@ class Worker:
                         continue
                     if job is None:
                         continue
-                    if self._stop.is_set():  # the stop arrived while we waited for this job
+                    if self._stop.is_set():  # the stop arrived while we waited (maybe for a job just handed back)
                         self._release(job)
                         self._ack(job.id)
                         break
+                    if self._is_running(job.id):  # our lease lapsed (the machine slept): the claim gave it back to us
+                        self._undo_reclaim(job)
+                        continue
                     self._track(job.id)
                     pool.submit(self._run_claimed, job)
                 logger.info("Worker %s stopping; %d job(s) still running", self.worker_id, self._running_count())
@@ -220,6 +229,8 @@ class Worker:
             steps[job.kind](run)
         except _Paused:
             self._release(job)
+        except _LeaseLost:  # the new owner resumes the GPU call: no cancel, no cleanup, no final state from us
+            logger.warning("Job %s: another worker took it over after our lease ran out; leaving it to them", job.id)
         except _Cancelled:
             self._finish_cancelled(run)
         except ScoutError as exc:
@@ -229,6 +240,8 @@ class Worker:
             self._finish_failed(run, ScoutError(ErrorCode.INTERNAL_ERROR, detail=_short_traceback(exc)))
         else:
             self._finish_succeeded(run)
+        if db.get_game(job.game_id) is None:  # deleted while we ran: files we wrote after the API cleaned up go too
+            storage.remove_game_files(job.game_id)
         return db.get_job(job.id) or job
 
     def _run_analyze(self, run: _Run) -> None:
@@ -403,7 +416,7 @@ class Worker:
         """Optional report after an analysis: a failure becomes a job warning, never a failed job."""
         try:
             self._write_report(run, analysis, progress)
-        except (_Cancelled, _Paused):
+        except (_Cancelled, _Paused, _LeaseLost):
             raise
         except ScoutError as exc:
             logger.warning("Job %s: scouting report not generated: %s", run.job.id, exc)
@@ -494,7 +507,7 @@ class Worker:
         """Hand a job back without failing it; the next worker resumes from its ``external_id``."""
         try:
             current = db.get_job(job.id)
-            if current is None:
+            if current is None or current.worker_id not in (None, self.worker_id):  # gone, or taken over
                 return
             # A planned hand-off is not a lost attempt, so it must not count towards WORKER_LOST.
             # worker_id=None also stops our heartbeat from renewing the lease we expire here.
@@ -550,7 +563,11 @@ class Worker:
 
     def _check_cancel(self, job_id: str) -> None:
         current = db.get_job(job_id)
-        if current is None or current.cancel_requested:
+        if current is None:  # deleted with its game
+            raise _Cancelled
+        if current.worker_id not in (None, self.worker_id):  # None: handed back; we may claim it back ourselves
+            raise _LeaseLost
+        if current.cancel_requested:
             raise _Cancelled
 
     def _check_stop(self) -> None:
@@ -591,6 +608,18 @@ class Worker:
     def _track(self, job_id: str) -> None:
         with self._lock:
             self._running.add(job_id)
+
+    def _is_running(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._running
+
+    def _undo_reclaim(self, job: Job) -> None:
+        """We claimed a job one of our threads is still running: keep the fresh lease, give back the attempt."""
+        logger.warning("Job %s: its lease ran out while it ran here (did the machine sleep?); carrying on", job.id)
+        try:
+            db.update_job(job.id, attempts=max(0, job.attempts - 1))
+        except Exception as exc:
+            logger.warning("Could not correct the attempt count of job %s: %s", job.id, exc)
 
     def _running_count(self) -> int:
         with self._lock:

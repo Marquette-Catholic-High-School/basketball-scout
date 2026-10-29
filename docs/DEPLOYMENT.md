@@ -110,7 +110,9 @@ find "$DEST/db" "$DEST/env" -type f -mtime +30 -delete      # keep 30 days
 ```
 
 The backups hold film and names of students: keep them encrypted and access-controlled
-like the server, and let old copies expire.
+like the server, and let old copies expire. The `data/` copy is a mirror (`--delete`):
+film of a game deleted on the server is gone from it the next night, while the database
+copies go back 30 days. Use whole-VM backups (Option A) if you need older film back.
 
 ## Restoring from a backup
 
@@ -219,6 +221,10 @@ passwords.
 
 The web app is light; the heavy computer vision runs on Modal.
 
+- **One web process.** Keep the web unit's single uvicorn process (no `--workers`): the
+  sign-in lockout, remembered logins, the per-upload locks that keep resumed upload
+  chunks in order and the lock that stops a double click from starting two analyses
+  live in that process's memory.
 - **More films at once:** raise `SCOUT_WORKER_CONCURRENCY` (default 2, max 16; restart
   the worker) together with `SCOUT_MODAL_MAX_CONTAINERS` (default 2; redeploy). A
   running job mostly waits on the GPU, but the analysis step after it runs on this
@@ -245,7 +251,10 @@ The web app is light; the heavy computer vision runs on Modal.
   `process_video` function. Put it in `.env` and redeploy
   (`sudo /opt/basketball-scout/scripts/update.sh --deploy-modal`).
 - **Time per film:** `SCOUT_MODAL_TIMEOUT_S` (default 6 hours) stops a runaway job;
-  `SCOUT_MODAL_MAX_WAIT_HOURS` (default 8) is the worker's own limit.
+  `SCOUT_MODAL_MAX_WAIT_HOURS` (default 8) is the worker's own limit, counted from the
+  start of the job (upload included); when it runs out the worker cancels the GPU call.
+  Raising `SCOUT_MODAL_TIMEOUT_S` above 8 hours therefore also needs a higher
+  `SCOUT_MODAL_MAX_WAIT_HOURS`.
 - **Less GPU time per film:** lower `SCOUT_ANALYSIS_FPS` (default 15), set
   `SCOUT_RENDER_ANNOTATED_VIDEO=false`, and keep `SCOUT_MAX_VIDEO_MINUTES` tight so
   over-long uploads are refused before they reach the GPU. Changing these needs only a

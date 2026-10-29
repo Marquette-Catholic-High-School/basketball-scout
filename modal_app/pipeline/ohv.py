@@ -47,15 +47,17 @@ OHV_REPO_URL = "https://github.com/feifeifei85/OpenHoopVision.git"
 OHV_COMMIT = "ec969037b2c02b983a77b260c50cb9eb36fe9fc1"  # 2026-10-26; pinned, OHV is 2 weeks old
 DEFAULT_OHV_HOME = "/opt/openhoopvision"
 
-# The GPU stack validated by OHV's requirements.lock (CUDA 13.0). Headless OpenCV replaces
-# opencv-python: nothing here needs a display and it avoids pulling in X11 libraries.
+# The GPU stack validated by OHV's requirements.lock (CUDA 13.0), exactly. OpenCV stays the
+# GUI build the lock names: supervision / rfdetr depend on opencv-python themselves, so a
+# headless swap would install two cv2 builds over each other. Its cv2 needs libGL.so.1
+# (libgl1 in the Modal image).
 TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu130"
 TORCH_REQUIREMENTS = ("torch==2.12.1+cu130", "torchvision==0.27.1+cu130")
 OHV_REQUIREMENTS = (
     "rfdetr==1.10.1",
     "supervision==0.30.1",
     "numpy==2.3.5",
-    "opencv-python-headless==5.0.0.93",
+    "opencv-python==5.0.0.93",
     "scipy==1.18.1",
     "pillow==10.2.0",
     "tqdm==4.70.0",
@@ -314,6 +316,9 @@ def write_launch_files(work_dir: Path, court: CourtSpec) -> tuple[Path, Path]:
 
 
 _TQDM_LINE = re.compile(r"^\s*Processing\b.*%\|")
+# tqdm redraws its bar as "\r<bar>" with no newline, so the next line OHV prints mid-run is
+# glued onto the bar: "Processing x.mp4:  12%|█▏ | 120/1000 [00:10<01:15, 11.70frame/s]warning: ...".
+_TQDM_BAR = re.compile(r"^\s*Processing\b.*?(?:\d%\|[^|]*\|[^\[]*|\d[\d.]*[kMG]?frames?\s*)\[[^\]]*\]\s*")
 _TEAM_COLORS = re.compile(r"team colors \(BGR\): \[(.*?)\]")
 _RGB_TRIPLE = re.compile(r"\((\d+),\s*(\d+),\s*(\d+)\)")
 _FRAMES_LINE = re.compile(r"^frames: (\d+), processing: [\d.]+s, fps: ([\d.]+)")
@@ -352,8 +357,8 @@ def parse_summary(lines: list[str]) -> OhvSummary:
             summary.frames, summary.processing_fps = int(match.group(1)), float(match.group(2))
         elif line.startswith("warning: jersey-number OCR is unavailable"):
             summary.ocr_error = line.split(":", 2)[-1].strip()
-        elif line.startswith("warning: OSNet ReID is unavailable"):
-            summary.reid_error = line.split(":", 2)[-1].strip()
+        elif line.startswith(("warning: OSNet ReID is unavailable", "warning: OSNet ReID inference failed")):
+            summary.reid_error = line.split(":", 2)[-1].strip()  # a failed batch disables ReID for the rest
     return summary
 
 
@@ -387,9 +392,14 @@ def is_oom_text(text: str) -> bool:
 
 
 def classify_failure(returncode: int, lines: list[str], frames_written: int) -> PipelineError:
-    """Map a failed OHV run to the PipelineError the coach will see."""
+    """Map a failed OHV run to the PipelineError the coach will see.
+
+    OHV's ``warning:`` lines report problems it carried on after (e.g. the jersey OCR model
+    failing to load with a CUDA OOM); they never explain the crash itself, so they are not
+    searched (a recovered OOM must not make a disk-full crash rerun the film as GPU_OOM).
+    """
     tail = "\n".join(lines[-40:])[-6000:]
-    text = "\n".join(lines).lower()
+    text = "\n".join(line for line in lines if not line.startswith("warning:")).lower()
     if returncode == NO_CUDA_EXIT_CODE:
         message = "The GPU worker could not use its GPU (PyTorch sees no CUDA device)."
         return PipelineError(errors.PIPELINE_FAILED, message, tail)
@@ -428,7 +438,9 @@ class _OutputCollector(threading.Thread):
 
     def _add(self, raw: bytes) -> None:
         line = raw.decode("utf-8", "replace").rstrip()
-        if not line or _TQDM_LINE.match(line):  # tqdm bars: progress comes from the JSONL instead
+        if bar := _TQDM_BAR.match(line):  # tqdm bars: progress comes from the JSONL instead
+            line = line[bar.end() :]  # keep what OHV printed after it (OCR / ReID / OOM warnings)
+        if not line or _TQDM_LINE.match(line):
             return
         self.lines.append(line)
         logger.info("ohv: %s", line)

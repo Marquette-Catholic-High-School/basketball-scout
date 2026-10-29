@@ -215,7 +215,7 @@ def test_throttle_window_lockout_and_reset():
 
     for _ in range(9):
         throttle.record_failure("other")
-    throttle.reset("other")  # a successful sign-in clears the count
+    throttle.reset("other")  # reset() clears the count (the middleware lets failures expire instead)
     assert not throttle.record_failure("other")
 
 

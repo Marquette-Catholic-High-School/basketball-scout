@@ -9,14 +9,15 @@ const gameId = gameIdFromPath();
 const SIDE_TITLES = { scouted: "Scouted team", other: "Their opponent in this film" };
 const FIELDS = [
   { key: "jersey", label: "#", width: "jersey-input", maxlength: 3 },
-  { key: "first_name", label: "First name" },
-  { key: "last_name", label: "Last name" },
-  { key: "fastscout_name", label: "FastScout name" },
-  { key: "position", label: "Pos" },
-  { key: "grade", label: "Gr" },
-  { key: "height", label: "Ht" },
-  { key: "notes", label: "Notes" },
+  { key: "first_name", label: "First name", width: "name-input" },
+  { key: "last_name", label: "Last name", width: "name-input" },
+  { key: "fastscout_name", label: "FastScout name", width: "name-input" },
+  { key: "position", label: "Pos", width: "short-input" },
+  { key: "grade", label: "Gr", width: "short-input" },
+  { key: "height", label: "Ht", width: "short-input" },
+  { key: "notes", label: "Notes", width: "name-input" },
 ];
+const JERSEY_RE = /^\d{1,2}$/; // RosterPlayer.jersey on the server
 const COLUMN_NAMES = {
   jersey: "Jersey", name: "Name", first_name: "First name", last_name: "Last name", position: "Position",
   grade: "Grade", height: "Height", notes: "Notes", fastscout_name: "FastScout name",
@@ -158,12 +159,14 @@ class RosterEditor {
     for (const [i, row] of this.rows.entries()) {
       const values = Object.fromEntries(FIELDS.map((f) => [f.key, text(row[f.key])]));
       if (!Object.values(values).some(Boolean)) continue;
-      if (!values.jersey) return { problem: `Row ${i + 1} needs a jersey number.`, index: i };
-      if (seen.has(values.jersey)) return { problem: `Jersey #${values.jersey} is listed twice (rows ${seen.get(values.jersey) + 1} and ${i + 1}).`, index: i };
-      seen.set(values.jersey, i);
+      const jersey = values.jersey.replace(/^#\s*/, "");
+      if (!jersey) return { problem: `Row ${i + 1} needs a jersey number.`, index: i };
+      if (!JERSEY_RE.test(jersey)) return { problem: `Row ${i + 1}: a jersey number is one or two digits (0-99), not "${values.jersey}".`, index: i };
+      if (seen.has(jersey)) return { problem: `Jersey #${jersey} is listed twice (rows ${seen.get(jersey) + 1} and ${i + 1}).`, index: i };
+      seen.set(jersey, i);
       players.push({
         ...(row.id ? { id: row.id } : {}),
-        jersey: values.jersey,
+        jersey,
         first_name: values.first_name,
         last_name: values.last_name,
         fastscout_name: values.fastscout_name || null,
@@ -369,7 +372,8 @@ async function saveTracksAndRerun() {
     for (const [trackId, value] of state.pending) {
       const path = gamePath(gameId, `/tracks/${trackId}`);
       if (value === "") {
-        if (state.overrides.has(trackId)) await api.del(path);
+        // 404: saving the roster above already dropped it (its player was removed).
+        if (state.overrides.has(trackId)) await api.del(path).catch((err) => { if (err.status !== 404) throw err; });
         state.overrides.delete(trackId);
       } else {
         state.overrides.set(trackId, await api.put(path, overrideBody(trackId, value)));

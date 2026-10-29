@@ -36,6 +36,12 @@ const COLUMNS = [
 
 const cellText = (column, line) => String(column.show ? column.show(line) : column.value(line));
 
+/** Same rule as the FastScout paste, which leaves these players out: no stats and under a minute on the floor. */
+export function didNotPlay(line) {
+  const stats = [line.pts, line.fga, line.fta, line.oreb, line.dreb, line.ast, line.stl, line.blk, line.tov, line.pf];
+  return !stats.some(Boolean) && (line.minutes_est || 0) < 1;
+}
+
 /** Players sorted by a column (null key keeps the server order). */
 export function sortLines(lines, key, direction) {
   const column = COLUMNS.find((c) => c.key === key);
@@ -101,7 +107,7 @@ export class BoxScore {
         title: column.title || null,
       }, el("button", { type: "button", text: column.label, onClick: () => this.sortBy(column) }));
     }));
-    const rows = sortLines(box.players, this.sort.key, this.sort.direction).map((line) => this.line(line));
+    const rows = sortLines(box.players, this.sort.key, this.sort.direction).map((line) => this.line(line, null, didNotPlay(line)));
     const team = this.line({ ...box.team_unattributed, player: { ...box.team_unattributed.player, jersey: "", name: "Team / unidentified" } }, "team-row");
     const totals = this.line({ ...box.totals, player: { ...box.totals.player, jersey: "", name: "Totals" } }, "total-row");
     return el("table", { class: "boxscore-table" },
@@ -111,12 +117,13 @@ export class BoxScore {
       el("tfoot", {}, totals));
   }
 
-  line(line, className = null) {
-    return el("tr", { class: className }, COLUMNS.map((column) =>
+  /** One table row; a roster player who did not play is dimmed with "DNP" for minutes. */
+  line(line, className = null, dnp = false) {
+    return el("tr", { class: dnp ? "dnp" : className, title: dnp ? "Did not play" : null }, COLUMNS.map((column) =>
       el(column.key === "player" ? "th" : "td", {
         scope: column.key === "player" ? "row" : null,
         class: column.text || column.key === "jersey" ? null : "num",
-        text: cellText(column, line),
+        text: dnp && column.key === "min" ? "DNP" : cellText(column, line),
       })));
   }
 
@@ -135,7 +142,8 @@ export class BoxScore {
     return el("table", { class: "table-compact" },
       el("caption", { class: "visually-hidden", text: `${box.team_name} shooting by zone` }),
       el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "Player" }), zones.map(([, label]) => el("th", { scope: "col", class: "num", text: label })))),
-      el("tbody", {}, box.players.map((line) => row(line, line.player.label)), row(box.team_unattributed, "Team / unidentified", "team-row")),
+      el("tbody", {}, box.players.filter((line) => !didNotPlay(line)).map((line) => row(line, line.player.label)),
+        row(box.team_unattributed, "Team / unidentified", "team-row")),
       el("tfoot", {}, row(box.totals, "Totals", "total-row")));
   }
 }

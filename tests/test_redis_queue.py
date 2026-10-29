@@ -189,8 +189,9 @@ def test_requeue_stale_returns_expired_leases_to_the_queue(rq, fake_redis, game)
     db.update_job(job.id, lease_expires_at=time.time() - 1)
 
     assert rq.requeue_stale() >= 1
-    assert db.get_job(job.id).status == JobStatus.QUEUED
-    assert job.id in fake_redis.lists["scout:queue"]
+    assert db.get_job(job.id).status == JobStatus.RUNNING  # stays running, like with SQLite: a cancel is still seen
+    assert fake_redis.lists["scout:queue"] == [job.id]
+    assert rq.requeue_stale() == 0 and fake_redis.lists["scout:queue"] == [job.id]  # already waiting: no duplicate
     assert rq.claim("w2", timeout=0.2).id == job.id
 
 

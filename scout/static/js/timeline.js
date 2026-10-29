@@ -177,7 +177,8 @@ export class Timeline {
     this.rows = new Array(this.filtered.length);
     this.currentIndex = -1;
     if (!this.filtered.length) {
-      this.body.append(el("tr", {}, el("td", { colspan: "6", class: "muted", text: "No events match these filters." })));
+      const text = this.events.length ? "No events match these filters." : "No events were detected in this film. The Data quality tab lists what the analysis could not do.";
+      this.body.append(el("tr", {}, el("td", { colspan: "6", class: "muted", text })));
       return;
     }
     let start = 0;

@@ -6,8 +6,10 @@ the screener moving?" -- so they share this index.
 
 Coordinate modes
 ----------------
-* ``court``: positions are court feet. Used when samples carry ``court_xy`` or a
-  homography is available (from the pipeline, or a manual calibration passed in).
+* ``court``: positions are court feet. Used when a homography is available (from the
+  pipeline, or a manual calibration passed in) or at least ``COURT_MODE_MIN_SHARE`` of
+  the player (non-referee) samples carry ``court_xy``; samples that cannot be placed are
+  left out.
 * ``pixel``: positions are image pixels (bbox foot points). Distances can still be
   converted to approximate feet with :meth:`TrackingIndex.scale_ft`, which uses the
   player's bounding-box height (``AVG_PLAYER_HEIGHT_FT``) as a ruler.
@@ -25,6 +27,10 @@ from scout.analysis.geometry import CourtConfig, apply_homography, bbox_foot_poi
 from scout.schemas import BallSample, Homography, Point, TrackingResult
 
 AVG_PLAYER_HEIGHT_FT = 6.0
+# Without a homography, court mode needs court positions on at least this share of the
+# player samples (as the GPU pipeline's event detection): feet for a few seconds of the film
+# would leave every track nearly empty, since unplaceable samples are dropped.
+COURT_MODE_MIN_SHARE = 0.5
 
 
 @dataclass(frozen=True)
@@ -64,7 +70,11 @@ class TrackingIndex:
         self._homographies: list[Homography] = list(tracking.court.homographies)
         if not self._homographies and homography is not None:
             self._homographies = [Homography(frame_start=0, frame_end=None, matrix=homography, source="manual")]
-        has_court_samples = any(s.court_xy is not None for t in tracking.tracks for s in t.samples[:50])
+        # Players only, as on the GPU: the court model never places referees.
+        players = [t for t in tracking.tracks if t.role != "referee"]
+        total = sum(len(t.samples) for t in players)
+        mapped = sum(1 for t in players for s in t.samples if s.court_xy is not None)
+        has_court_samples = total > 0 and mapped >= COURT_MODE_MIN_SHARE * total
         self.coord_mode: Literal["court", "pixel"] = "court" if (has_court_samples or self._homographies) else "pixel"
 
         self.roles: dict[int, str] = {}
@@ -151,6 +161,16 @@ class TrackingIndex:
     def track_sample_count(self, track_id: int) -> int:
         arr = self._tracks.get(track_id)
         return int(len(arr.frames)) if arr is not None else 0
+
+    def placed_samples(self, track_id: int) -> tuple[np.ndarray, np.ndarray]:
+        """(frames, (N, 2) positions) of the track's samples this index could place.
+
+        In court mode a sample with no court position and no homography for its frame is
+        left out, so a frame missing here means "position unknown", not "absent"."""
+        arr = self._tracks.get(track_id)
+        if arr is None:
+            return np.zeros(0, dtype=np.int64), np.zeros((0, 2))
+        return arr.frames, np.column_stack([arr.xs, arr.ys])
 
     def position(self, track_id: int, frame: int, max_gap_frames: int | None = None) -> Point | None:
         """Interpolated position at ``frame`` (None outside the track or across a long gap)."""

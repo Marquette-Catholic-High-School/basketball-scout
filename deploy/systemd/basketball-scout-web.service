@@ -14,6 +14,9 @@ Description=Basketball Scout web app
 Documentation=https://github.com/Marquette-Catholic-High-School/basketball-scout
 After=network-online.target
 Wants=network-online.target
+# A data folder on its own disk (docs/PROXMOX.md > Storage sizing) must be mounted first;
+# otherwise the app would start an empty database on the system disk underneath it.
+RequiresMountsFor=@DATA_DIR@ @HOME@
 # Keep retrying for a while (e.g. while the network comes up) before giving up.
 StartLimitIntervalSec=300
 StartLimitBurst=10

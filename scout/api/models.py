@@ -71,3 +71,10 @@ class TrackOverrideBody(BaseModel):
 class TrackState(BaseModel):
     assignments: list[TrackAssignment]
     overrides: list[TrackOverride]
+
+
+class FastScoutNotes(BaseModel):
+    """``GET /export/fastscout-notes``: what to check before pasting, and the team numbers typed in by hand."""
+
+    warnings: list[str]
+    team_numbers: str

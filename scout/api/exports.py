@@ -1,7 +1,8 @@
 """Downloads: FastScout paste block and custom-table CSV, timeline CSV, analysis JSON.
 
 All of them need a finished analysis (409 ANALYSIS_NOT_READY otherwise) and accept
-``?download=1`` to be saved as a file instead of shown in the browser.
+``?download=1`` to be saved as a file instead of shown in the browser. The FastScout
+notes (warnings + hand-typed team numbers) shown next to the paste block are JSON.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from scout.api.deps import CurrentGame, export_filename, require_analysis, slugify, text_download
+from scout.api.models import FastScoutNotes
 from scout.errors import ErrorCode, ScoutError
 from scout.export import fastscout
 from scout.schemas import TeamSide
@@ -22,6 +24,16 @@ def fastscout_paste_block(game: CurrentGame, side: TeamSide = TeamSide.SCOUTED, 
     """Tab-separated box score to paste into the FastScout Stats Database."""
     text = fastscout.build_paste_block(require_analysis(game.id), game, side)
     return text_download(text, "text/plain", export_filename("fastscout", game, side, "txt"), download)
+
+
+@router.get("/games/{game_id}/export/fastscout-notes", response_model=FastScoutNotes)
+def fastscout_notes(game: CurrentGame, side: TeamSide = TeamSide.SCOUTED) -> FastScoutNotes:
+    """What to check before pasting that side's block, and the team numbers typed in by hand."""
+    analysis = require_analysis(game.id)
+    return FastScoutNotes(
+        warnings=fastscout.paste_block_warnings(analysis, game, side),
+        team_numbers=fastscout.team_helper_block(analysis, side),
+    )
 
 
 @router.get("/games/{game_id}/export/fastscout.csv")

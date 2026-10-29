@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import gc
 import logging
 import traceback
 import zlib
@@ -15,7 +16,7 @@ from pydantic import ValidationError
 from scout import storage
 from scout.analysis import boxscore, events, teams
 from scout.analysis import plays as play_rec
-from scout.analysis.geometry import CourtConfig, load_court_config
+from scout.analysis.geometry import CourtConfig, apply_homography_many, bbox_foot_point, load_court_config
 from scout.analysis.plays import PlayRules
 from scout.analysis.tracking_index import TrackingIndex
 from scout.errors import ErrorCode, ScoutError
@@ -26,8 +27,11 @@ from scout.schemas import (
     EventType,
     Game,
     GameAnalysis,
+    Homography,
     PipelineWarning,
+    Point,
     Roster,
+    ShotZone,
     TeamSide,
     TeamSummary,
     TrackAssignment,
@@ -40,6 +44,11 @@ logger = logging.getLogger(__name__)
 SUPPORTED_SCHEMA_MAJOR = TRACKING_SCHEMA_VERSION.split(".")[0]
 MAX_LISTED_ERRORS = 5
 LOW_MATCH_RATE = 0.5
+# Pipeline warnings about a missing / sparse court mapping that a manual calibration answers.
+COURT_MAPPING_WARNINGS = frozenset({"NO_COURT_HOMOGRAPHY", "COURT_MAPPING_SPARSE"})
+# A stored court position this close (feet, each axis) to a calibration's projection of the
+# pixel position came from that calibration (the GPU result rounds both to 0.01).
+PROJECTED_TOLERANCE_FT = 0.05
 _SIDES = (TeamSide.SCOUTED, TeamSide.OTHER)
 _TRACKING_HINT = (
     "Re-run the full analysis. If it keeps failing, redeploy the GPU app (`scripts/update.sh --deploy-modal`)."
@@ -96,7 +105,8 @@ def analyze_game(
     beyond the court / play-rule config files when ``court`` / ``rules`` are not given).
 
     Steps: team map (``teams.resolve_team_map``) -> ``TrackingIndex`` (using
-    ``game.calibration.matrix`` when the pipeline produced no homography) -> roster
+    ``game.calibration.matrix`` when the pipeline produced no homography, see
+    ``_court_mapping``) -> roster
     matching (``scout.roster.matcher.assign_tracks``) -> timeline/possessions/shots
     (``events.build_timeline``) -> plays (``plays.detect_plays`` + ``link_plays``) -> box
     scores (``boxscore.build_box_scores``) -> play summary -> ``DataQuality``.
@@ -153,8 +163,8 @@ def _analyze(
     court: CourtConfig,
     rules: PlayRules,
 ) -> GameAnalysis:
+    tracking, calibration = _court_mapping(game, tracking)
     team_map = teams.resolve_team_map(tracking, game)
-    calibration = _calibration_matrix(game, tracking)
     index = TrackingIndex(tracking, court, homography=calibration)
     assignments = assign_tracks(tracking, team_map, rosters, overrides)
     built = events.build_timeline(tracking, index, team_map, assignments, rosters, court)
@@ -210,17 +220,94 @@ def _complete_rosters(rosters: dict[TeamSide, Roster], game: Game) -> dict[TeamS
     return complete
 
 
+def _court_mapping(game: Game, tracking: TrackingResult) -> tuple[TrackingResult, list[list[float]] | None]:
+    """(tracking to analyse, the coach's calibration matrix to apply to it).
+
+    The calibration is only used when the pipeline produced no homography of its own. A GPU
+    run that was given a calibration bakes it in (a ``manual`` homography plus the court
+    positions projected with it); when the coach has re-calibrated or removed it since, that
+    old mapping is dropped so the current calibration (or none) is what the analysis uses.
+    """
+    current = _calibration_matrix(game, tracking)
+    homographies = tracking.court.homographies
+    if not homographies:
+        return tracking, current
+    if any(h.source != "manual" for h in homographies):
+        return tracking, None  # the pipeline mapped the court itself
+    if current is not None and all(np.allclose(h.matrix, current) for h in homographies):
+        return tracking, None  # the GPU run already used this calibration
+    logger.info("Court calibration changed since the GPU run; re-mapping the court positions")
+    return _without_baked_calibration(tracking), current
+
+
 def _calibration_matrix(game: Game, tracking: TrackingResult) -> list[list[float]] | None:
-    """The coach's manual court calibration, rescaled to the tracking resolution; only
-    used when the pipeline produced no homography of its own."""
+    """The coach's manual court calibration, rescaled to the tracking resolution."""
     cal = game.calibration
-    if cal is None or tracking.court.homography_available:
+    if cal is None:
         return None
     sx = cal.video_width / tracking.video.width if cal.video_width else 1.0
     sy = cal.video_height / tracking.video.height if cal.video_height else 1.0
     if sx == 1.0 and sy == 1.0:
         return cal.matrix
     return (np.asarray(cal.matrix, dtype=float) @ np.diag([sx, sy, 1.0])).tolist()
+
+
+def _without_baked_calibration(tracking: TrackingResult) -> TrackingResult:
+    """``tracking`` minus its manual homographies and the court positions projected with them
+    (positions from the pipeline's court model are kept). The input is not modified."""
+    baked = tracking.court.homographies
+    stale_by_track: dict[int, dict[int, Point]] = {}  # track -> {frame: dropped court_xy}
+    tracks, ball = [], []
+    # Up to ~1M replacement samples: the cyclic GC would rescan the whole result many times
+    # over while they are built, and none of them form reference cycles.
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for track in tracking.tracks:
+            feet = [bbox_foot_point(s.bbox) for s in track.samples]
+            stale = _projected_by(baked, [s.f for s in track.samples], feet, [s.court_xy for s in track.samples])
+            if stale.any():
+                hits = list(zip(track.samples, stale.tolist(), strict=True))
+                stale_by_track[track.track_id] = {s.f: s.court_xy for s, hit in hits if hit}
+                samples = [s.model_copy(update={"court_xy": None}) if hit else s for s, hit in hits]
+                track = track.model_copy(update={"samples": samples})
+            tracks.append(track)
+        stale = _projected_by(baked, [b.f for b in tracking.ball], [b.xy for b in tracking.ball],
+                              [b.court_xy for b in tracking.ball])
+        for b, hit in zip(tracking.ball, stale.tolist(), strict=True):
+            held = stale_by_track.get(b.holder_track_id, {}).get(b.f) if b.holder_track_id is not None else None
+            if hit or (held is not None and b.court_xy is not None and _same_point(held, b.court_xy)):
+                b = b.model_copy(update={"court_xy": None})  # the ball took its holder's (projected) position
+            ball.append(b)
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+    court = tracking.court.model_copy(update={"homographies": []})
+    return tracking.model_copy(update={"court": court, "tracks": tracks, "ball": ball})
+
+
+def _same_point(a: Point, b: Point) -> bool:
+    return abs(a[0] - b[0]) <= PROJECTED_TOLERANCE_FT and abs(a[1] - b[1]) <= PROJECTED_TOLERANCE_FT
+
+
+def _projected_by(
+    homographies: list[Homography], frames: list[int], px: list[Point], court_xy: list[Point | None]
+) -> np.ndarray:
+    """Per sample: True when its court position is the projection of its pixel position by the
+    homography covering its frame."""
+    stale = np.zeros(len(frames), dtype=bool)
+    if not len(frames):
+        return stale
+    frames = np.asarray(frames)
+    px = np.asarray(px, dtype=float).reshape(-1, 2)
+    court = np.asarray([xy if xy is not None else (np.nan, np.nan) for xy in court_xy], dtype=float)
+    for h in homographies:
+        covered = (frames >= h.frame_start) & (frames <= (h.frame_end if h.frame_end is not None else frames.max()))
+        rows = np.flatnonzero(covered)
+        if len(rows):
+            close = np.abs(apply_homography_many(h.matrix, px[rows]) - court[rows]) <= PROJECTED_TOLERANCE_FT
+            stale[rows[close.all(axis=1)]] = True  # NaN (no position / horizon) never matches
+    return stale
 
 
 def _team_summary(
@@ -266,9 +353,14 @@ def _data_quality(
         key=lambda k: (_SIDES.index(k[0]), boxscore.jersey_sort_key(k[1])),
     )
     primary = [r.confidence for r in built.timeline if r.source_event_id is not None and r.id == r.source_event_id]
-    warnings = list(tracking.warnings) + _analysis_warnings(rosters, index, match_rate if total else None)
+    # After the coach calibrated, "the court could not be mapped: calibrate it" no longer applies.
+    pipeline_warnings = [w for w in tracking.warnings if not (homography and w.code in COURT_MAPPING_WARNINGS)]
+    zones_known = any(s.zone != ShotZone.UNKNOWN for s in built.shots)
+    warnings = pipeline_warnings + _analysis_warnings(rosters, index, match_rate if total else None, zones_known)
     return DataQuality(
-        homography_available=tracking.court.homography_available or homography,
+        # "Court mapped" on the Data tab and in the report: court feet from a homography, the coach's
+        # calibration or the pipeline's court model (OpenHoopVision sends positions, never matrices).
+        homography_available=index.coord_mode == "court",
         coord_mode=index.coord_mode,
         ball_coverage=round(index.ball_coverage, 3),
         jersey_match_rate=match_rate,
@@ -281,7 +373,7 @@ def _data_quality(
 
 
 def _analysis_warnings(
-    rosters: dict[TeamSide, Roster], index: TrackingIndex, match_rate: float | None
+    rosters: dict[TeamSide, Roster], index: TrackingIndex, match_rate: float | None, zones_known: bool = False
 ) -> list[PipelineWarning]:
     """Coach-facing notes about what the analysis could not do."""
     notes = []
@@ -293,10 +385,13 @@ def _analysis_warnings(
                 severity="warning" if side == TeamSide.SCOUTED else "info",
             ))
     if index.coord_mode == "pixel":
+        what = (
+            "Court mapped for only part of the film: shots without a court position have no zone"
+            if zones_known else "Court not mapped: shot zones are unknown"
+        )
         notes.append(PipelineWarning(
             code="COURT_NOT_MAPPED",
-            message="Court not mapped: shot zones are unknown. For a fixed camera, calibrate the court on the "
-            "game page and re-run the analysis.",
+            message=f"{what}. For a fixed camera, calibrate the court on the game page and re-run the analysis.",
         ))
     if match_rate is not None and match_rate < LOW_MATCH_RATE:
         notes.append(PipelineWarning(

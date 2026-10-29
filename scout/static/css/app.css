@@ -94,6 +94,7 @@ body {
   line-height: 1.5;
   color: var(--text);
   background: var(--bg);
+  overflow-wrap: break-word; /* long film names, team names and links never widen the page */
 }
 h1, h2, h3, h4 { line-height: 1.25; margin: 0 0 0.5rem; }
 h1 { font-size: 1.6rem; }
@@ -104,6 +105,7 @@ a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
 img, svg, video, canvas { max-width: 100%; }
 code, kbd, pre, .mono { font-family: var(--mono); font-size: 0.9em; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; } /* a server error detail can be one 1000 px line */
 kbd {
   padding: 0 0.35em;
   border: 1px solid var(--border);
@@ -120,6 +122,12 @@ kbd {
   overflow: hidden; clip: rect(0 0 0 0);
   white-space: nowrap; border: 0;
 }
+.skip-link {
+  position: absolute; left: 0.75rem; top: -4rem; z-index: 60;
+  padding: 0.5rem 0.9rem; border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow);
+}
+.skip-link:focus { top: 0.75rem; } /* hidden until a keyboard user tabs onto it */
 .muted { color: var(--text-muted); }
 .small { font-size: 0.85rem; }
 .nowrap { white-space: nowrap; }
@@ -231,6 +239,7 @@ legend { font-weight: 500; padding: 0 0.3rem; }
   white-space: pre; overflow: auto;
   background: var(--surface-2);
 }
+.mono-box-short { min-height: 11rem; white-space: pre-wrap; }
 
 /* ------------------------------------------------------------------ notices */
 .notice {
@@ -320,6 +329,7 @@ thead th { background: var(--surface-2); font-weight: 600; white-space: nowrap; 
 tbody tr:hover { background: var(--surface-2); }
 tfoot td, tr.total-row td { font-weight: 700; background: var(--surface-2); }
 tr.team-row td, tr.team-row th { font-style: italic; color: var(--text-muted); }
+tr.dnp td, tr.dnp th { color: var(--text-muted); font-weight: 400; }
 tr.low-conf td { opacity: 0.55; }
 th.sortable { padding: 0; }
 th.sortable button {
@@ -334,6 +344,8 @@ th.num button { justify-content: flex-end; }
 .table-compact th, .table-compact td { padding: 0.25rem 0.45rem; }
 table input, table select { width: 100%; min-width: 4rem; min-height: 2rem; padding: 0.2rem 0.4rem; }
 table input.jersey-input { width: 4rem; min-width: 3.5rem; }
+table input.name-input { min-width: 8rem; } /* "Anderson", "Christopher" stay readable */
+table input.short-input { min-width: 3.5rem; }
 
 /* ------------------------------------------------------------------ tabs */
 .tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
@@ -354,6 +366,7 @@ table input.jersey-input { width: 4rem; min-width: 3.5rem; }
 .game-card h3 a { color: var(--text); text-decoration: none; }
 .game-card h3 a:hover { text-decoration: underline; }
 .game-meta { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; color: var(--text-muted); font-size: 0.88rem; }
+.game-meta > span { overflow-wrap: anywhere; min-width: 0; } /* "Team_vs_Team_20260109_Full_1080p.mp4" */
 .game-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; }
 .game-progress { grid-column: 1 / -1; }
 .game-progress .progress-text { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.2rem; }
@@ -405,8 +418,9 @@ h2[tabindex="-1"]:focus { outline: none; }
 .marker-strip canvas { display: block; width: 100%; height: 34px; border-radius: var(--radius-sm); background: var(--surface-2); cursor: pointer; }
 .marker-tip {
   position: absolute; bottom: 40px; transform: translateX(-50%);
+  width: max-content; max-width: 100%; /* JS keeps it inside the strip; long text wraps on phones */
   padding: 0.2rem 0.5rem; border-radius: var(--radius-sm);
-  background: var(--text); color: var(--bg); font-size: 0.8rem; white-space: nowrap;
+  background: var(--text); color: var(--bg); font-size: 0.8rem;
   pointer-events: none; z-index: 3;
 }
 .legend { display: flex; flex-wrap: wrap; gap: 0.25rem 0.8rem; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem; }
@@ -491,8 +505,9 @@ h2[tabindex="-1"]:focus { outline: none; }
 .zone-label text { font-size: 1.6px; font-weight: 700; fill: var(--text); text-anchor: middle; dominant-baseline: middle; }
 .chart-tip {
   position: absolute; z-index: 4; pointer-events: none;
+  width: max-content; max-width: 100%; /* JS keeps it inside the chart; long text wraps on phones */
   padding: 0.25rem 0.5rem; border-radius: var(--radius-sm);
-  background: var(--text); color: var(--bg); font-size: 0.8rem; white-space: nowrap;
+  background: var(--text); color: var(--bg); font-size: 0.8rem;
   transform: translate(-50%, -120%);
 }
 
@@ -516,7 +531,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 .points-list li { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; font-size: 0.88rem; background: var(--surface-2); border-radius: var(--radius-sm); padding: 0.2rem 0.5rem; }
 
 /* roster */
-.roster-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr)); gap: 1rem; }
+/* One roster per row: a roster table needs about 55rem before its name inputs fit. */
+.roster-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
 .roster-dropzone { min-height: 6rem; padding: 0.9rem; cursor: default; }
 label.btn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
 .import-result { font-size: 0.88rem; }
@@ -539,6 +555,8 @@ label.btn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
   .game-actions { justify-content: flex-start; }
   .calibration-grid { grid-template-columns: minmax(0, 1fr); }
   h1 { font-size: 1.35rem; }
+  /* The type filter sits in the right-hand column: open its list leftwards, inside the page. */
+  .type-filter[open] .type-options { left: auto; right: 0; }
 }
 
 /* ------------------------------------------------------------------ print */

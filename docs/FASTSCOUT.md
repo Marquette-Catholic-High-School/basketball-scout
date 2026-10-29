@@ -50,7 +50,9 @@ pastes have to match the names on that team's roster in FastScout.
    the players who did not start; the film analysis does not know the starters.
 6. Type the **Team numbers** block from the Exports panel into the game's team fields:
    final score, fast-break points, points in the paint, second-chance points and
-   points off turnovers. They are not part of the paste.
+   points off turnovers. They are not part of the paste. Points in the paint shows
+   as **unknown** when the court was not mapped (no shot has a location); leave that
+   field empty rather than typing 0.
 7. Save the game.
 
 ### What is in the paste
@@ -72,6 +74,9 @@ pastes have to match the names on that team's roster in FastScout.
 * Stats that could not be credited to a player (for example a basket by a player
   whose number was never readable) are not in the paste, so FastScout's team totals
   will be a little lower than the film's. The warnings tell you how much is missing.
+* If only the first part of the film could be read, the warnings and the Team numbers
+  say "Not the whole game": the numbers then cover that part only, so do not save them
+  as the full game. Re-export the film and analyse it again.
 
 ## Path 2: FastScout Web (Custom Table tile)
 
@@ -94,8 +99,11 @@ pastes have to match the names on that team's roster in FastScout.
 
 The file is a standard CSV: commas, UTF-8 without a byte-order mark, Windows (CRLF)
 line endings, the first row holds the column labels and every value is already
-formatted (`5-11`, `45.5%`). Player names never contain commas. FastScout Web tables
-are easiest to read with about 12-18 columns.
+formatted (`5-11`, `45.5%`). Player names never contain commas. A text cell that
+starts with `=`, `+`, `-` or `@` (for example a name typed that way in an imported
+roster) gets a leading `'` so a spreadsheet shows it as text instead of running it as
+a formula; numbers such as `-3` or `+5` are left alone. FastScout Web tables are
+easiest to read with about 12-18 columns.
 
 ## The timeline spreadsheet
 
@@ -114,6 +122,7 @@ Everything above is controlled by `config/fastscout_columns.yaml` (IT staff can 
 format you can use at the top. Changes apply the next time you click an export, with no
 restart. If something in the file is wrong, the export shows an error that names the
 exact setting, for example `'paste_block.columns[3].field' is an unknown field 'fgx'`.
+A section left empty (every line under it commented out) uses the built-in defaults.
 Delete the file to go back to the built-in defaults.
 
 Common edits:

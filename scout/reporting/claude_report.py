@@ -20,6 +20,7 @@ from itertools import groupby
 from typing import Any
 
 import anthropic
+import httpx2
 from pydantic import ValidationError
 
 from scout.config import Settings, get_settings
@@ -58,6 +59,10 @@ _MAX_SHOT_LOCATIONS = 12
 _MAX_FOCUS_CHARS = 2000
 _USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 _SERVER_ERROR_TYPES = frozenset({"overloaded_error", "api_error"})
+_FINISHED_STOP_REASONS = frozenset({"end_turn", "stop_sequence"})
+_TIMED_OUT = "The request to Claude timed out."
+_TIMEOUT_HINT = "Try again. If it keeps timing out, raise SCOUT_CLAUDE_TIMEOUT_S in .env."
+_CONNECTION_HINT = "Check the server's internet connection and try again."
 
 # ---------------------------------------------------------------------------
 # Payload
@@ -389,8 +394,10 @@ def _play_log(analysis: GameAnalysis, roster: Roster | None) -> list[dict[str, A
         (p for p in analysis.plays if p.side == TeamSide.SCOUTED and p.category == "offense"),
         key=lambda p: (p.start_t, p.id),
     )
+    if len(plays) > _PLAY_LOG_LIMIT:  # a long film: an even spread, so the late game is not simply missing
+        plays = [plays[i * len(plays) // _PLAY_LOG_LIMIT] for i in range(_PLAY_LOG_LIMIT)]
     log = []
-    for play in plays[:_PLAY_LOG_LIMIT]:
+    for play in plays:
         players = ", ".join(f"{role} {_player_label(ref, roster)}" for role, ref in sorted(play.players.items()))
         log.append(
             _drop_none(
@@ -511,7 +518,20 @@ def _build_request(settings: Settings, payload_json: str, task_text: str) -> dic
 
 def _stream(client: Any, request: dict[str, Any]) -> Any:
     with client.beta.messages.stream(**request) as stream:
-        return stream.get_final_message()
+        try:
+            return stream.get_final_message()
+        except AssertionError as exc:  # the SDK asserts when the body held no message at all
+            response = getattr(stream, "response", None)
+            content_type = response.headers.get("content-type") if response is not None else None
+            raise ScoutError(
+                ErrorCode.REPORT_FAILED,
+                "The answer to the report request was not a message from Claude "
+                "(a web filter or proxy may have answered instead of the Anthropic API).",
+                hint="Make sure this server can reach https://api.anthropic.com (school web filters and proxies "
+                "sometimes block it), then click 'Generate report' again.",
+                retryable=True,
+                detail=f"No message in the response (content-type {content_type!r}).",
+            ) from exc
 
 
 def _api_message(exc: anthropic.APIError) -> str:
@@ -561,6 +581,15 @@ def _scout_error(exc: anthropic.APIError, model: str) -> ScoutError:
             detail=detail,
         )
     status_error = exc if isinstance(exc, anthropic.APIStatusError) else None
+    if status_error is not None and (status_error.status_code == 402 or status_error.type == "billing_error"):
+        return ScoutError(
+            ErrorCode.REPORT_FAILED,
+            f"The Anthropic account has a billing problem: {_api_message(exc)}",
+            hint="Check the account's billing (credit balance, payment method) in the Anthropic Console, "
+            "then click 'Generate report' again.",
+            retryable=False,
+            detail=detail,
+        )
     rate_limited = status_error is not None and status_error.type == "rate_limit_error"
     if isinstance(exc, anthropic.RateLimitError) or rate_limited:
         retry_after = status_error.response.headers.get("retry-after") if status_error is not None else None
@@ -574,18 +603,12 @@ def _scout_error(exc: anthropic.APIError, model: str) -> ScoutError:
         message = f"The Anthropic API rejected the request: {_api_message(exc)}"
         return ScoutError(ErrorCode.REPORT_FAILED, message, retryable=False, detail=detail)
     if isinstance(exc, anthropic.APITimeoutError):
-        return ScoutError(
-            ErrorCode.REPORT_FAILED,
-            "The request to Claude timed out.",
-            hint="Try again. If it keeps timing out, raise SCOUT_CLAUDE_TIMEOUT_S in .env.",
-            retryable=True,
-            detail=detail,
-        )
+        return ScoutError(ErrorCode.REPORT_FAILED, _TIMED_OUT, hint=_TIMEOUT_HINT, retryable=True, detail=detail)
     if isinstance(exc, anthropic.APIConnectionError):
         return ScoutError(
             ErrorCode.REPORT_FAILED,
             "Could not reach the Anthropic API.",
-            hint="Check the server's internet connection and try again.",
+            hint=_CONNECTION_HINT,
             retryable=True,
             detail=detail,
         )
@@ -593,11 +616,27 @@ def _scout_error(exc: anthropic.APIError, model: str) -> ScoutError:
     return ScoutError(ErrorCode.REPORT_FAILED, message, detail=detail)
 
 
+def _broken_stream_error(exc: httpx2.TransportError) -> ScoutError:
+    """The connection failed while the answer was streaming in (the SDK only wraps errors while sending)."""
+    detail = f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, httpx2.TimeoutException):
+        return ScoutError(ErrorCode.REPORT_FAILED, _TIMED_OUT, hint=_TIMEOUT_HINT, retryable=True, detail=detail)
+    return ScoutError(
+        ErrorCode.REPORT_FAILED,
+        "The connection to the Anthropic API dropped while Claude was writing the report.",
+        hint=_CONNECTION_HINT,
+        retryable=True,
+        detail=detail,
+    )
+
+
 def _call_claude(client: Any, request: dict[str, Any]) -> Any:
     try:
         return _stream_with_fallback_retry(client, request)
     except anthropic.APIError as exc:
         raise _scout_error(exc, request["model"]) from exc
+    except httpx2.TransportError as exc:
+        raise _broken_stream_error(exc) from exc
 
 
 def _report_text(final: Any) -> str:
@@ -627,11 +666,36 @@ def _parse_report(final: Any, settings: Settings) -> ScoutingReport:
             ErrorCode.REPORT_TRUNCATED,
             f"The report hit the output limit of {settings.claude_max_tokens} tokens before it finished.",
         )
+    if stop_reason == "model_context_window_exceeded":
+        raise ScoutError(
+            ErrorCode.REPORT_TRUNCATED,
+            "The report filled the model's context window before it finished.",
+            hint="Choose a model with a larger context window in SCOUT_CLAUDE_MODEL (.env) and regenerate.",
+        )
+    if stop_reason is None:  # a stream that ran to the end always carries a stop reason
+        raise ScoutError(
+            ErrorCode.REPORT_FAILED,
+            "The connection to Claude closed before the report was finished.",
+            hint=_CONNECTION_HINT,
+            retryable=True,
+        )
+    if stop_reason not in _FINISHED_STOP_REASONS:  # pause_turn, tool_use...: the answer is not complete
+        raise ScoutError(ErrorCode.REPORT_FAILED, f"Claude stopped before finishing the report ({stop_reason}).")
     try:
         return ScoutingReport.model_validate_json(_report_text(final))
     except ValidationError as exc:
         message = "Claude's answer did not match the report format."
-        raise ScoutError(ErrorCode.REPORT_FAILED, message, detail=str(exc)[:2000]) from exc
+        raise ScoutError(ErrorCode.REPORT_FAILED, message, detail=_format_problems(exc)) from exc
+
+
+def _format_problems(exc: ValidationError) -> str:
+    """Where the answer broke the report format, without quoting it: the text names players
+    (minors), and this detail is logged when a report job fails."""
+    problems = (
+        f"{'.'.join(str(part) for part in error['loc']) or 'answer'}: {error['msg']}"
+        for error in exc.errors(include_url=False, include_input=False)
+    )
+    return "; ".join(problems)[:2000]
 
 
 def _usage(final: Any) -> dict[str, int]:

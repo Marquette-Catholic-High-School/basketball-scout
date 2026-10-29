@@ -12,12 +12,14 @@ How it works
 Detectors run one possession at a time. For each possession a ``_Window`` samples
 everyone's position at the analysis rate (court feet, or pixels converted to feet),
 the ball holder and the speeds once, so every rule below is a few numpy comparisons
-instead of pairwise checks on every frame of the game.
+instead of pairwise checks on every frame of the game. With a court mapping, people
+mapped off the floor (benches, coaches) are left out.
 
 * Offensive detectors emit ``_Candidate`` plays. Their outcome/points come from the
   first timeline event that ends the action (shot, turnover, defensive foul + free
   throws). When two candidates end on the same event, ``dedupe.priority`` decides
-  which one is kept (the other is listed in ``attrs["also"]``).
+  which one is kept (the other is listed in ``attrs["also"]``); the same action found
+  twice (a ball-tracking dropout splitting one dribble) is kept once.
 * Defense: one man/zone label per half-court possession, from how defenders move
   (man: copy their man's movement; zone: stay near their spots), plus a press check
   after made baskets / inbounds.
@@ -41,6 +43,7 @@ from typing import Any, Literal
 import numpy as np
 import yaml
 
+from scout.analysis.events import DEAD_BALL_TURNOVERS
 from scout.analysis.geometry import BasketSide, CourtConfig, nearest_basket
 from scout.analysis.tracking_index import TrackingIndex
 from scout.errors import ErrorCode, ScoutError
@@ -184,6 +187,7 @@ _YAML_HINT = (
     "Fix the setting in config/play_rules.yaml (or delete the line to use the built-in default) "
     "and re-run the analysis."
 )
+_ABOVE_ZERO = frozenset({("defense", "sample_hz")})  # divided by: 0 is not a usable value
 
 
 @dataclass
@@ -248,6 +252,14 @@ def _read_rules_file(path: Path) -> dict[str, Any]:
         return {}
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except UnicodeDecodeError as exc:
+        raise ScoutError(
+            ErrorCode.CONFIG_INVALID,
+            "config/play_rules.yaml is not saved as UTF-8 text.",
+            hint="Save the file as UTF-8 (most editors offer it under 'Save As' / 'Encoding'), or delete it to "
+            "use the built-in defaults.",
+            retryable=False,
+        ) from exc
     except (OSError, yaml.YAMLError) as exc:
         raise ScoutError(
             ErrorCode.CONFIG_INVALID,
@@ -262,18 +274,22 @@ def _read_rules_file(path: Path) -> dict[str, Any]:
 
 
 def _coerce(section: str, key: str, value: Any, default: Any) -> Any:
-    """Check a YAML value against the default's type (numbers may be ints or floats)."""
+    """Check a YAML value against the default's type (numbers may be ints or floats, never negative)."""
+    want = repr(default)
     if isinstance(default, bool):
         ok = isinstance(value, bool)
     elif isinstance(default, (int, float)):
+        above_zero = (section, key) in _ABOVE_ZERO
+        want += " (a number above 0)" if above_zero else " (a number, not negative)"
         ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+        ok = ok and (value > 0 if above_zero else value >= 0)
         value = float(value) if ok and isinstance(default, float) else value
     else:
         ok = isinstance(value, type(default))
     if not ok:
         raise ScoutError(
             ErrorCode.CONFIG_INVALID,
-            f"play_rules.yaml: {section}.{key} should be like {default!r}, got {value!r}.",
+            f"play_rules.yaml: {section}.{key} should be like {want}, got {value!r}.",
             hint=_YAML_HINT,
             retryable=False,
         )
@@ -285,6 +301,8 @@ def _coerce(section: str, key: str, value: Any, default: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 _SHOTS = frozenset({EventType.SHOT_MADE, EventType.SHOT_MISSED})
+_ATTEMPTS = _SHOTS | {EventType.FT_MADE, EventType.FT_MISSED}  # the ball goes to the rim
+OFF_FLOOR_MARGIN_FT = 3.0  # inbounders stand just out of bounds; benches, coaches and fans are further out
 # Timeline rows whose ``player`` is the raw event's primary actor (``RawEvent.track_id``).
 _PRIMARY_ROWS = _SHOTS | {
     EventType.FT_MADE, EventType.FT_MISSED, EventType.OREB, EventType.DREB, EventType.TURNOVER,
@@ -372,7 +390,9 @@ def _possession_baskets(ctx: _Ctx, possessions: list[Possession]) -> dict[int, B
     """Basket each possession attacks, from shot locations.
 
     A possession's own shot decides; otherwise the nearest (in time) shots by the same
-    side in the same period vote, since teams only switch baskets between periods.
+    side in the same period vote, since teams only switch baskets between periods. When
+    the side's last shot before and first shot after disagree, the teams switched ends in
+    between (film without period breaks): no vote, the window uses where the offense plays.
     """
     period_starts = sorted(r.t for r in ctx.rows if r.type == EventType.PERIOD_START)
     shots: dict[tuple[int, TeamSide], list[tuple[float, BasketSide]]] = defaultdict(list)
@@ -387,6 +407,10 @@ def _possession_baskets(ctx: _Ctx, possessions: list[Possession]) -> dict[int, B
         own = [b for t, b in candidates if p.start_t <= t <= p.end_t]
         if own:
             out[p.id] = own[0]
+            continue
+        before = [b for t, b in candidates if t < p.start_t]
+        after = [b for t, b in candidates if t > p.end_t]
+        if before and after and before[-1] != after[0]:
             continue
         mid = (p.start_t + p.end_t) / 2
         nearest = sorted(candidates, key=lambda tb: abs(tb[0] - mid))[:3]
@@ -468,10 +492,18 @@ class _Window:
             if span is None or span[1] < self.start_frame or span[0] > self.end_frame:
                 continue
             arr = np.full((n, 2), np.nan)
-            for k, f in enumerate(frames):
-                p = idx.position(tid, f)
+            # Only where the track exists (a position is known up to one step past either end):
+            # with fragmented tracks and a long possession, most tracks cover a few seconds of it.
+            k_lo = int(np.searchsorted(self.frames, span[0] - idx.step))
+            k_hi = int(np.searchsorted(self.frames, span[1] + idx.step, side="right"))
+            for k in range(k_lo, k_hi):
+                p = idx.position(tid, frames[k])
                 if p is not None:
                     arr[k] = p
+            if ctx.has_court:  # people mapped off the floor (bench players...) are not in the play
+                c, m = ctx.court, OFF_FLOOR_MARGIN_FT
+                off = (arr[:, 0] < -m) | (arr[:, 0] > c.length_ft + m) | (arr[:, 1] < -m) | (arr[:, 1] > c.width_ft + m)
+                arr[off] = np.nan
             if np.isfinite(arr[:, 0]).any():
                 self.pos[tid] = arr
                 self.scale[tid] = idx.scale_ft(tid, (self.start_frame + self.end_frame) // 2)
@@ -523,14 +555,22 @@ class _Window:
         return holds
 
     def is_catch(self, hold: _Hold) -> bool:
-        """The hold started with a pass from a teammate."""
+        """The hold started with a pass from a teammate (not a rebound, not an ID switch)."""
         prev = hold.prev
         return (
             prev is not None
             and prev.side == hold.side
             and prev.track_id != hold.track_id
             and (hold.k0 - prev.k1) * self.ctx.dt <= self.ctx.rule("general", "max_pass_flight_s")
+            and self.two_players(prev, hold)
+            and not any(r.type in _ATTEMPTS for r in self.ctx.rows_between(self.frame(prev.k0), self.frame(hold.k0)))
         )
+
+    def two_players(self, giver: _Hold, taker: _Hold) -> bool:
+        """The taker was tracked before the giver let go of the ball. A track that only starts
+        when the ball changes hands is the same player picked up under a new id (ID switch)."""
+        span = self.ctx.index.track_span(taker.track_id)
+        return span is not None and span[0] < self.frame(giver.k1)
 
     def offense_holds(self) -> list[_Hold]:
         return [h for h in self.holds if h.side == self.side and h.track_id in self.pos]
@@ -634,13 +674,16 @@ class _Window:
         return _Finish(outcome, points, row.frame, shooter, row)
 
     def _free_throw_points(self, after: TimelineEvent) -> int:
+        """Free throws made after ``after`` until the next action: a shot / turnover, or a new defensive foul."""
         points = 0
+        and_one = after.frame + self.ctx.index.frames_for_seconds(0.5)  # the foul logged with this shot
         for row in self.ctx.rows_between(after.frame, self.end_frame):
-            if row is after or row.side != self.side:
+            if row is after:
                 continue
-            if row.frame > after.frame and (row.type in _SHOTS or row.type == EventType.TURNOVER):
-                break
-            if row.type == EventType.FT_MADE:
+            same_foul = row.type == EventType.FOUL and row.frame <= and_one
+            if row.frame > after.frame and self._ends_action(row) and not same_foul:
+                break  # e.g. offensive rebound, then a new foul: those free throws are not this play's
+            if row.type == EventType.FT_MADE and row.side == self.side:
                 points += row.points or 1
         return points
 
@@ -760,7 +803,7 @@ def _handoffs(w: _Window) -> list[_Candidate]:
         prev = hold.prev
         if prev is None or prev.side != w.side or prev.track_id == hold.track_id or prev.track_id not in w.pos:
             continue
-        if (hold.k0 - prev.k1) * ctx.dt > ctx.rule(rule, "max_gap_s"):
+        if (hold.k0 - prev.k1) * ctx.dt > ctx.rule(rule, "max_gap_s") or not w.two_players(prev, hold):
             continue
         giver, receiver = prev.track_id, hold.track_id
         if not _finite_min(w.dist(giver, receiver)[prev.k1 : hold.k0 + 1]) <= ctx.rule(rule, "max_distance_ft"):
@@ -785,8 +828,8 @@ def _isolations(w: _Window) -> list[_Candidate]:
         if (hold.k1 - hold.k0 + 1) * ctx.dt < ctx.rule(rule, "min_hold_s"):
             continue
         handler, sl = hold.track_id, slice(hold.k0, hold.k1 + 1)
-        to_basket = w.basket_dist(handler)[sl]
-        if not to_basket[0] >= ctx.rule(rule, "min_basket_distance_ft"):
+        to_basket, perimeter = w.basket_dist(handler)[sl], ctx.rule(rule, "min_basket_distance_ft")
+        if not to_basket[0] >= perimeter:
             continue
         gaps = np.vstack([w.dist(handler, d)[sl] for d in w.defense])
         guarded = gaps <= ctx.rule(rule, "defender_distance_ft")
@@ -796,7 +839,9 @@ def _isolations(w: _Window) -> list[_Candidate]:
             continue
         if np.any(mates <= ctx.rule("pick_and_roll", "screen_distance_ft")):
             continue  # someone came to screen: not an isolation
-        drive = to_basket[0] - _finite_min(to_basket) >= ctx.rule(rule, "drive_min_gain_ft")
+        # A drive ends inside the perimeter; bringing the ball up to the top of the key is not one.
+        closest = _finite_min(to_basket)
+        drive = to_basket[0] - closest >= ctx.rule(rule, "drive_min_gain_ft") and closest < perimeter
         f_shot = w.frame(hold.k1) + ctx.index.frames_for_seconds(ctx.rule(rule, "shot_after_hold_s"))
         shot = _shot_by(w, handler, w.frame(hold.k0), f_shot)
         if not drive and shot is None:
@@ -971,10 +1016,23 @@ def _pipeline_putback(ctx: _Ctx, shot: TimelineEvent) -> bool:
     return bool(raw is not None and raw.attrs.get("putback"))
 
 
+def _dead_ball_turnover(w: _Window) -> bool:
+    """The possession began with a travel / out-of-bounds / offensive-foul turnover: an inbound, not a live ball.
+
+    ``scout.analysis.events`` gives every non-steal turnover the start reason "turnover";
+    the raw turnover's ``kind`` tells the two apart (same rule as ``Possession.transition``).
+    """
+    if w.possession.start_reason != "turnover":
+        return False
+    rows = w.ctx.rows_between(w.start_frame - w.ctx.index.frames_for_seconds(1.0), w.start_frame)
+    lost = [r for r in rows if r.type == EventType.TURNOVER and r.side is not None and r.side != w.side]
+    return bool(lost) and _raw_kind(w.ctx, lost[-1]) in DEAD_BALL_TURNOVERS
+
+
 def _fast_break(w: _Window) -> list[_Candidate]:
     """Live-ball start, ball over half court fast, shot within seconds, no stoppage (FastScout transition)."""
     ctx, rule, p = w.ctx, "fast_break", w.possession
-    if p.start_reason not in ctx.rule(rule, "start_reasons"):
+    if p.start_reason not in ctx.rule(rule, "start_reasons") or _dead_ball_turnover(w):
         return []
     fin = w.finish(w.start_frame, w.start_frame + ctx.index.frames_for_seconds(ctx.rule(rule, "shot_within_s")))
     if fin.frame is None or (fin.outcome == PlayOutcome.TURNOVER and not ctx.rule(rule, "count_turnovers")):
@@ -1049,7 +1107,7 @@ def _coverage(w: _Window, defenders: list[int], attackers: list[int], ks: np.nda
             continue
         theirs, own = theirs[ok], own[ok]
         their_wander = _rms_spread(theirs) * w.scale[best]
-        if their_wander < min_move:
+        if their_wander < min_move or their_wander <= 0.0:  # (min_move_ft may be 0) nothing to follow
             continue
         pair_scale = (w.scale[d] + w.scale[best]) / 2
         follows.append(max(0.0, 1.0 - _rms_spread(own - theirs) * pair_scale / their_wander))
@@ -1166,7 +1224,7 @@ def _half_court_defense(w: _Window) -> list[_Candidate]:
 def _dead_ball_start(w: _Window) -> bool:
     """The possession began with an inbound (made basket, free throw, out of bounds...)."""
     ctx, reason = w.ctx, w.possession.start_reason
-    if reason in ctx.rule("press", "start_reasons"):
+    if reason in ctx.rule("press", "start_reasons") or _dead_ball_turnover(w):
         return True
     if reason in ctx.rule("fast_break", "start_reasons"):
         return False
@@ -1338,14 +1396,22 @@ def _resolve(ctx: _Ctx, candidates: list[_Candidate]) -> list[_Candidate]:
 
 
 def _dedupe(ctx: _Ctx, candidates: list[_Candidate]) -> list[_Candidate]:
-    """One play per shot/turnover: keep the highest-priority type, note the others in ``attrs["also"]``."""
+    """One play per shot/turnover: keep the highest-priority type, note the others in ``attrs["also"]``.
+
+    An offensive play that ends on no event is dropped when a kept play is the same action (same
+    kind, same players, overlapping in time): e.g. one ball screen found twice because the ball
+    was not detected for a moment in the middle of it.
+    """
     rank = {name: i for i, name in enumerate(ctx.rule("dedupe", "priority"))}
     kept: list[_Candidate] = []
+    open_ended: list[_Candidate] = []
     by_end: dict[str, list[_Candidate]] = defaultdict(list)
     for c in candidates:
         end_row = c.finish.row if c.finish is not None and c.category == "offense" else None
         if end_row is not None:
             by_end[end_row.id].append(c)
+        elif c.category == "offense":
+            open_ended.append(c)
         else:
             kept.append(c)
     for group in by_end.values():
@@ -1355,7 +1421,29 @@ def _dedupe(ctx: _Ctx, candidates: list[_Candidate]) -> list[_Candidate]:
         if also:
             best.attrs["also"] = also
         kept.append(best)
+    by_window: dict[int, list[_Candidate]] = defaultdict(list)
+    for c in kept:
+        by_window[id(c.window)].append(c)
+    for c in open_ended:  # in detection order: the earlier of two copies stays
+        same = by_window[id(c.window)]
+        if not any(_same_action(c, k) for k in same):
+            same.append(c)
+            kept.append(c)
     return kept
+
+
+_ACTION_KIND = {PlayType.PICK_AND_POP: PlayType.PICK_AND_ROLL}  # one ball screen, however it ended
+
+
+def _same_action(a: _Candidate, b: _Candidate) -> bool:
+    """Same kind of offensive play by the same players, overlapping in time (one window)."""
+    return (
+        b.category == "offense"
+        and _ACTION_KIND.get(a.type, a.type) == _ACTION_KIND.get(b.type, b.type)
+        and a.players == b.players
+        and a.k0 <= b.k1
+        and b.k0 <= a.k1
+    )
 
 
 def _to_plays(ctx: _Ctx, candidates: list[_Candidate]) -> list[Play]:

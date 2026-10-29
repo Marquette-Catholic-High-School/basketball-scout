@@ -42,6 +42,7 @@ BALL_MISSING_COVERAGE = 0.02
 COURT_SPARSE_COVERAGE = 0.30
 OCR_SPARSE_SHARE = 0.25  # share of longer player tracks with at least one jersey read
 OCR_MIN_TRACK_S = 2.0
+PARTIAL_FILM_SHARE = 0.9  # fewer analysed frames than this share of the film: OHV stopped early
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,9 @@ def _process(
     perception = adapted.perception
     for warning in warnings:
         perception.warn(warning["code"], warning["message"], warning.get("severity", "warning"))
-    check_quality(adapted)
+    # The video stream's own frame count: the container duration can include a longer audio track.
+    whole_film = None if opts.max_frames is not None else round(plan.meta.frame_count / plan.step)
+    check_quality(adapted, expected_frames=whole_film)
     events = merge_events(perception, adapted.events)
     tracker.update("events", 1.0, f"Found {len(events)} game events")
 
@@ -317,8 +320,12 @@ def _process(
 # ---------------------------------------------------------------------------
 
 
-def check_quality(adapted: AdapterResult) -> None:
-    """Fail on unusable film (DETECTION_FAILED / BALL_NOT_DETECTED); warn on weak data."""
+def check_quality(adapted: AdapterResult, expected_frames: int | None = None) -> None:
+    """Fail on unusable film (DETECTION_FAILED / BALL_NOT_DETECTED); warn on weak data.
+
+    ``expected_frames``: analysed frames the whole film should give. OHV stops at the first
+    frame it cannot decode, so a corrupt or cut-off film yields a partial analysis.
+    """
     stats, perception = adapted.stats, adapted.perception
     if stats.frames == 0:
         raise PipelineError(errors.VIDEO_DECODE_FAILED, "No frames of the film could be analysed.")
@@ -358,6 +365,22 @@ def check_quality(adapted: AdapterResult) -> None:
     if stats.bad_lines:
         message = f"{stats.bad_lines} unreadable frame record(s) were skipped."
         perception.warn("TRACKING_DATA_TRUNCATED", message, "info")
+    if expected_frames and stats.frames < PARTIAL_FILM_SHARE * expected_frames:
+        fps = perception.video.analysis_fps
+        analysed, total = _clock(stats.frames / fps), _clock(expected_frames / fps)
+        message = (
+            f"Only the first {analysed} of the {total} film could be analysed "
+            "(the rest could not be read), so stats and plays cover that part only. "
+            "Export the film again and re-upload it to analyse all of it."
+        )
+        perception.warn("FILM_PARTIALLY_ANALYSED", message)
+
+
+def _clock(seconds: float) -> str:
+    """``75`` -> ``"1:15"``, ``3725`` -> ``"1:02:05"``."""
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 def merge_events(perception: Perception, ohv_events: list[dict[str, Any]]) -> list[dict[str, Any]]:

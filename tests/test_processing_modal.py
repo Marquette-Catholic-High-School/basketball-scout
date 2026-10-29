@@ -26,6 +26,8 @@ ERROR_SUBCLASSES = (
     "PermissionDeniedError",
     "ConnectionError",
     "ServiceError",
+    "InternalError",
+    "ResourceExhaustedError",
     "RemoteError",
     "ExecutionError",
 )
@@ -508,3 +510,6 @@ def test_real_sdk_exception_hierarchy_matches_our_assumptions():
     assert issubclass(errors.InputCancellation, BaseException) and not issubclass(errors.InputCancellation, Exception)
     for name in ERROR_SUBCLASSES:
         assert issubclass(getattr(errors, name), errors.Error)
+    # InternalError is the API's gRPC INTERNAL status (poll keeps waiting); InternalFailure is the
+    # GPU call's own final result and must still fail the job.
+    assert not issubclass(errors.InternalFailure, (errors.InternalError, errors.ServiceError, errors.TimeoutError))

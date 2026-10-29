@@ -13,11 +13,13 @@
 torch==2.12.1+cu130
 torchvision==0.27.1+cu130
 
-# OpenHoopVision (commit ec969037b2c0) dependencies. Headless OpenCV replaces opencv-python.
+# OpenHoopVision (commit ec969037b2c0) dependencies, as in its requirements.lock. OpenCV is the
+# GUI build (supervision / rfdetr depend on it); on a server without a desktop, its cv2 needs
+# libGL.so.1: sudo apt-get install libgl1
 rfdetr==1.10.1
 supervision==0.30.1
 numpy==2.3.5
-opencv-python-headless==5.0.0.93
+opencv-python==5.0.0.93
 scipy==1.18.1
 pillow==10.2.0
 tqdm==4.70.0

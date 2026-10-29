@@ -267,6 +267,15 @@ export function isTypingTarget(target) {
   return Boolean(target.closest("input, textarea, select, button, a[href], summary, [role=tab], [role=slider], dialog"));
 }
 
+/**
+ * Centre a tooltip (CSS: translateX(-50%)) on x, in px from its container's left edge,
+ * but keep it inside the container so it can't widen the page on a phone.
+ */
+export function placeTip(tip, x, containerWidth) {
+  const half = Math.min(tip.offsetWidth, containerWidth) / 2;
+  tip.style.left = `${Math.round(Math.max(half, Math.min(containerWidth - half, x)))}px`;
+}
+
 /** Size a canvas to its CSS box at device resolution; returns a cleared context in CSS pixels. */
 export function prepareCanvas(canvas) {
   const ratio = window.devicePixelRatio || 1;

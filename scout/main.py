@@ -18,7 +18,7 @@ from scout.api import build_api_router
 from scout.api.errors import install_error_handlers
 from scout.api.pages import mount_static
 from scout.api.pages import router as pages_router
-from scout.auth import BasicAuthMiddleware, log_auth_status
+from scout.auth import BasicAuthMiddleware, SameOriginMiddleware, log_auth_status
 from scout.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pages_router)
     mount_static(app)
     app.add_middleware(BasicAuthMiddleware, settings=settings)
+    # Added last = runs first: a cross-site change is refused before sign-in is checked.
+    app.add_middleware(SameOriginMiddleware)
     return app
 
 

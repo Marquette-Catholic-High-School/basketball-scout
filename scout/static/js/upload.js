@@ -4,7 +4,7 @@
 // PUT /api/uploads/{uid}/chunk?offset=N for each slice; 409 means "resume from
 // upload.received"; POST .../complete starts the analysis.
 
-import { api, gamePath, putChunk } from "./api.js";
+import { ApiError, api, gamePath, putChunk } from "./api.js";
 import {
   byId, el, setChildren, show, showError, clearError, notice, formatBytes, formatDuration,
   sleep, storageGet, storageSet, withBusy,
@@ -13,6 +13,13 @@ import {
 const VIDEO_EXTENSIONS = [".mp4", ".mov", ".m4v"];
 const MAX_RETRIES = 8;
 const SPEED_WINDOW_MS = 8000;
+/**
+ * Errors after which this upload session can't go on: the server refused the film itself...
+ * (not UPLOAD_TOO_LARGE: on a chunk that is a proxy limit, and the upload resumes once it is raised)
+ */
+const FILM_REFUSED = new Set(["VIDEO_INVALID", "VIDEO_DECODE_FAILED", "VIDEO_TOO_LONG"]);
+/** ...or no longer has the part already sent (the same file can be sent again from the start). */
+const SESSION_GONE = new Set(["UPLOAD_NOT_FOUND"]);
 
 const state = {
   game: null,
@@ -175,12 +182,14 @@ async function chooseFile(file) {
   byId("upload-filesize").textContent = formatBytes(file.size);
   setStatus("Starting upload…");
   try {
-    state.session = await openSession(file);
-    state.received = state.session.received || 0;
+    const session = await openSession(file);
+    if (state.file !== file) return await discardSession(session); // cancelled while it was starting
+    state.session = session;
+    state.received = session.received || 0;
     renderProgress();
     await runUpload();
   } catch (err) {
-    failUpload(err);
+    if (state.file === file) failUpload(err);
   }
 }
 
@@ -212,7 +221,7 @@ function conflictOffset(err) {
 
 async function runUpload() {
   state.running = true;
-  setPausedUI(false);
+  setPausedUI(state.paused); // Pause pressed while the upload was starting: offer Resume
   let failures = 0;
   try {
     while (state.received < state.file.size) {
@@ -277,14 +286,32 @@ async function completeUpload() {
 function failUpload(err) {
   if (err.name === "AbortError") return; // paused or cancelled on purpose
   setStatus("Stopped");
-  const actions = state.session
-    ? [el("button", { type: "button", class: "btn-primary", text: "Resume upload", onClick: resumeUpload })]
-    : [el("button", { type: "button", text: "Choose another file", onClick: resetUpload })];
+  const code = err.info?.code;
+  if (FILM_REFUSED.has(code) || SESSION_GONE.has(code)) forgetSession();
+  const anotherFile = el("button", { type: "button", text: "Choose another file", onClick: resetUpload });
+  let actions = [anotherFile];
+  if (state.session) actions = [el("button", { type: "button", class: "btn-primary", text: "Resume upload", onClick: resumeUpload })];
+  else if (SESSION_GONE.has(code) && state.file) actions = [el("button", { type: "button", class: "btn-primary", text: "Upload this file again", onClick: uploadAgain }), anotherFile];
   showError(byId("upload-error"), err, actions);
   if (state.session) {
     state.paused = true;
     setPausedUI(true);
+  } else {
+    for (const id of ["pause-btn", "resume-btn"]) show(byId(id), false);
   }
+}
+
+/** The server can't continue this session: don't offer to resume it (here or after a reload). */
+function forgetSession() {
+  state.session = null;
+  storageSet(storageKey(state.game.id), null);
+}
+
+/** Send the same file again in a new session. */
+function uploadAgain() {
+  const file = state.file;
+  resetUpload();
+  chooseFile(file);
 }
 
 function pauseUpload() {
@@ -296,17 +323,28 @@ function pauseUpload() {
 
 async function resumeUpload() {
   if (state.running || !state.session) return;
+  const current = state.session;
   clearError(byId("upload-error"));
   state.paused = false;
   state.samples = [];
   setStatus("Checking what the server already has…");
   try {
-    const session = await api.get(`/api/uploads/${encodeURIComponent(state.session.id)}`);
+    const session = await api.get(`/api/uploads/${encodeURIComponent(current.id)}`);
+    if (state.session !== current) return; // cancelled while checking
+    if (session.status === "aborted") {
+      // E.g. the film was refused while the connection was down: this session is over.
+      throw new ApiError({
+        code: "UPLOAD_NOT_FOUND",
+        title: "This upload can't be resumed",
+        message: "The server stopped this upload, so it has to start again from the beginning.",
+        hint: "Upload the file again, or choose another file.",
+      }, 409);
+    }
     state.received = session.received;
     renderProgress();
     await runUpload();
   } catch (err) {
-    failUpload(err);
+    if (state.session === current) failUpload(err);
   }
 }
 
@@ -317,14 +355,19 @@ async function cancelUpload() {
   state.controller?.abort();
   state.session = null;
   storageSet(storageKey(state.game.id), null);
-  if (session) {
-    try {
-      await api.del(`/api/uploads/${encodeURIComponent(session.id)}`);
-    } catch {
-      // Already gone; nothing else to clean up.
-    }
-  }
+  if (session) await discardSession(session);
   resetUpload();
+}
+
+/** Delete an upload session on the server; forget it here too if it is the stored one. */
+async function discardSession(session) {
+  const key = storageKey(state.game.id);
+  if (storageGet(key)?.uploadId === session.id) storageSet(key, null);
+  try {
+    await api.del(`/api/uploads/${encodeURIComponent(session.id)}`);
+  } catch {
+    // Already gone; nothing else to clean up.
+  }
 }
 
 function resetUpload() {
@@ -344,8 +387,10 @@ function setPausedUI(paused) {
   show(byId("resume-btn"), paused);
 }
 
+/** Status line (a live region: only real changes are written, so they are read out once). */
 function setStatus(text) {
-  byId("upload-state").textContent = text;
+  const status = byId("upload-state");
+  if (status.textContent !== text) status.textContent = text;
 }
 
 function currentSpeed(total) {

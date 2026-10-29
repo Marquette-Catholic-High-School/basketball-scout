@@ -5,7 +5,7 @@
 import { api, gamePath, isJobActive, jobPath } from "./api.js";
 import { BoxScore } from "./boxscore.js";
 import { Calibration } from "./calibrate.js";
-import { applyTeamColors, isLight, teamColor } from "./colors.js";
+import { applyTeamColors, isLight, luminance, teamColor } from "./colors.js";
 import { Exports } from "./exports.js";
 import { JobPanel } from "./jobpanel.js";
 import { STATUS_LABELS } from "./labels.js";
@@ -24,6 +24,7 @@ const TAB_KEY = "scout.gameTab";
 const gameId = gameIdFromPath();
 const state = { game: null, analysis: null, court: null, health: null };
 const parts = {};
+let refreshes = 0; // only the newest refresh() may draw the page
 
 function teamNames(game, analysis) {
   const name = (side) => analysis?.teams?.find((t) => t.side === side)?.name;
@@ -66,16 +67,21 @@ async function loadOnce(key, path) {
 }
 
 async function refresh() {
+  // A slow refresh (a big analysis.json) must not repaint the page after a newer one,
+  // e.g. "Queued" after the job it was started for has already finished.
+  const token = ++refreshes;
   let game;
   try {
     game = await api.get(gamePath(gameId));
   } catch (err) {
+    if (token !== refreshes) return;
     showError(byId("page-error"), err, [
       err.info?.retryable ? el("button", { type: "button", text: "Try again", onClick: refresh }) : null,
       el("a", { class: "btn", href: "/", text: "Back to games" }),
     ].filter(Boolean));
     return;
   }
+  if (token !== refreshes) return;
   clearError(byId("page-error"));
   state.game = game;
   const [analysis, jobs, court, health] = await Promise.all([
@@ -84,12 +90,14 @@ async function refresh() {
     loadOnce("court", "/api/court/landmarks"),
     loadOnce("health", "/api/health"),
   ]);
+  if (token !== refreshes) return;
   state.analysis = analysis;
   applyTeamColors(game, analysis?.teams || []);
   const names = teamNames(game, analysis);
 
   renderHeader(game, names);
   parts.jobPanel.show(jobs.analysis);
+  if (jobs.analysis) showJobStatus(jobs.analysis);
   renderTeamBanner(game, analysis);
   renderPending(game, analysis);
   renderFilmState(game, analysis);
@@ -121,14 +129,18 @@ function renderAnalysis(game, analysis, names, court) {
   renderQuality({ analysis, game, teamNames: names, onCalibrate: () => parts.calibration.open() });
 }
 
-/** Film present -> player; analysed from a link / film removed -> explain why it can't play. */
+/**
+ * Film present -> player (a film added as a link still has the annotated copy the GPU
+ * made); nothing stored on this server -> explain why it can't play.
+ */
 function renderFilmState(game, analysis) {
+  const playable = game.has_video || game.has_annotated_video;
   show(byId("no-film"), !game.has_video && !analysis && !game.video_url);
-  show(byId("game-layout"), game.has_video || Boolean(analysis));
-  show(byId("player-main"), game.has_video);
+  show(byId("game-layout"), playable || Boolean(analysis));
+  show(byId("player-main"), playable);
   const missing = byId("player-missing");
-  show(missing, !game.has_video && Boolean(analysis));
-  if (game.has_video || !analysis) return;
+  show(missing, !playable && Boolean(analysis));
+  if (playable || !analysis) return;
   const why = game.video_url ? "It was analyzed from a video link and isn't stored on this server" : "The film isn't stored on this server";
   setChildren(missing, notice("info", "Film not available", `${why}, so it can't be played here. The stats below still work.`),
     el("a", { class: "btn", href: `/upload?game=${encodeURIComponent(game.id)}`, text: "Upload the film" }));
@@ -172,7 +184,7 @@ function renderHeader(game, names) {
     game.game_date ? el("span", { text: formatDate(game.game_date) }) : null,
     game.level ? el("span", { text: game.level }) : null,
     game.location ? el("span", { text: game.location }) : null,
-    el("span", { class: `badge badge-${game.status}`, text: STATUS_LABELS[game.status] || game.status }));
+    el("span", { id: "game-status", class: `badge badge-${game.status}`, text: STATUS_LABELS[game.status] || game.status }));
   const rosterUrl = `/games/${encodeURIComponent(game.id)}/roster`;
   byId("roster-link").href = rosterUrl;
   byId("nav-roster").href = rosterUrl;
@@ -185,6 +197,19 @@ function renderHeader(game, names) {
   rerun.textContent = game.has_analysis ? "Re-run analysis" : "Analyze film";
   rerun.disabled = busy || !(game.has_video || game.video_url || game.has_analysis);
   rerun.title = busy ? "An analysis is already running" : "";
+}
+
+/** Header badge while the analysis job runs (the whole page reloads when it ends). */
+function showJobStatus(job) {
+  const badge = document.getElementById("game-status");
+  if (!badge || !isJobActive(job)) return;
+  const status = job.status === "running" ? "processing" : "queued";
+  const pct = Math.round(job.progress || 0);
+  badge.className = `badge badge-${status}`;
+  badge.textContent = status === "processing" && pct ? `${STATUS_LABELS.processing} · ${pct}%` : STATUS_LABELS[status];
+  const rerun = byId("reanalyze-btn");
+  rerun.disabled = true;
+  rerun.title = "An analysis is already running";
 }
 
 /** POST a new analyze / reanalyze job and start tracking it. */
@@ -205,20 +230,30 @@ function colorWord(team) {
   return isLight(teamColor(team, "")) ? "Light" : "Dark";
 }
 
+/** "Navy jerseys" / "White jerseys"; two teams with the same colour word get "(lighter)" / "(darker)". */
+function teamChoiceLabels(teams) {
+  const words = teams.map(colorWord);
+  if (words[0] !== words[1]) return words.map((word) => `${word} jerseys`);
+  const shade = teams.map((team) => luminance(teamColor(team, "")));
+  if (!(Math.abs(shade[0] - shade[1]) > 0.005)) return words.map((word, i) => `${word} jerseys (team ${i + 1})`);
+  return words.map((word, i) => `${word} jerseys (${shade[i] > shade[1 - i] ? "lighter" : "darker"})`);
+}
+
 function renderTeamBanner(game, analysis) {
   const banner = byId("team-banner");
   const teams = (analysis?.teams || []).filter((t) => t.team_id !== null && t.team_id !== undefined && (t.color_rgb || t.color_name));
   const needed = teams.length === 2 && !Object.keys(game.team_id_map || {}).length;
   show(banner, needed);
   if (!needed) return;
+  const labels = teamChoiceLabels(teams);
   setChildren(banner,
     el("h2", { text: `Which team is ${game.scouted_team}?` }),
     el("p", { class: "hint", text: "The analysis split the players by jersey colour. Pick the colour the scouted team wears in this film so every stat goes to the right team." }),
-    el("div", { class: "row" }, teams.map((team) => el("button", {
+    el("div", { class: "row" }, teams.map((team, i) => el("button", {
       type: "button",
       class: "team-choice",
       onClick: (e) => confirmTeam(team, teams, e.currentTarget),
-    }, el("span", { class: "swatch", style: { background: teamColor(team, "#888") }, "aria-hidden": "true" }), `${colorWord(team)} jerseys`))));
+    }, el("span", { class: "swatch", style: { background: teamColor(team, "#888") }, "aria-hidden": "true" }), labels[i]))));
 }
 
 async function confirmTeam(chosen, teams, button) {
@@ -267,7 +302,7 @@ function init() {
   parts.plays = new Plays({ player: parts.player });
   parts.report = new Report({ gameId });
   parts.exports = new Exports({ gameId });
-  parts.jobPanel = new JobPanel({ onChange: () => refresh() });
+  parts.jobPanel = new JobPanel({ onChange: () => refresh(), onUpdate: showJobStatus });
   parts.calibration = new Calibration({ player: parts.player, gameId, onReanalyze: () => startJob(rerunKind()) });
   byId("reanalyze-btn").addEventListener("click", (e) => {
     e.currentTarget.disabled = true; // refresh() re-enables it once the job state is known

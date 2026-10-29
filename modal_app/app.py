@@ -39,10 +39,17 @@ from modal_app.pipeline.video import DEFAULT_MAX_DOWNLOAD_BYTES, download_video
 
 logger = logging.getLogger(__name__)
 
-APP_NAME = os.environ.get("SCOUT_MODAL_APP_NAME", "basketball-scout")
-VOLUME_NAME = os.environ.get("SCOUT_MODAL_VOLUME_NAME", "basketball-scout-data")
-PROGRESS_DICT_NAME = os.environ.get("SCOUT_MODAL_PROGRESS_DICT", "basketball-scout-progress")
-GPU_TYPE = os.environ.get("SCOUT_MODAL_GPU", "A10G")  # 24 GB, about $1.10/h
+
+def _env(name: str, default: str) -> str:
+    """A deploy-time setting. Blank values count as unset: `dotenv run -- modal deploy` turns
+    a ``SCOUT_MODAL_GPU=`` line in .env into an empty string, like the server ignores them."""
+    return os.environ.get(name, "").strip() or default
+
+
+APP_NAME = _env("SCOUT_MODAL_APP_NAME", "basketball-scout")
+VOLUME_NAME = _env("SCOUT_MODAL_VOLUME_NAME", "basketball-scout-data")
+PROGRESS_DICT_NAME = _env("SCOUT_MODAL_PROGRESS_DICT", "basketball-scout-progress")
+GPU_TYPE = _env("SCOUT_MODAL_GPU", "A10G")  # 24 GB, about $1.10/h
 
 # Time budget per film. OpenHoopVision analyses every frame of the 15 fps analysis copy with
 # five networks plus per-player tracking, team-colour and OCR logic in Python. It publishes
@@ -63,12 +70,19 @@ def _timeout_from_env() -> int:
     return max(600, min(MAX_TIMEOUT_S, value))
 
 
+def _max_containers_from_env() -> int:
+    try:
+        return max(1, int(_env("SCOUT_MODAL_MAX_CONTAINERS", "2")))
+    except ValueError:
+        return 2
+
+
 PROCESS_TIMEOUT_S = _timeout_from_env()
 STARTUP_TIMEOUT_S = 20 * 60  # cold start pulls a ~10 GB image
 WARMUP_TIMEOUT_S = 30 * 60
 CPU_CORES = 8.0  # decoding, ffmpeg and OHV's per-player Python work are CPU-bound
 MEMORY_MB = 32768  # OHV keeps every frame's player records in RAM while finalising
-MAX_CONTAINERS = max(1, int(os.environ.get("SCOUT_MODAL_MAX_CONTAINERS", "2")))  # cost cap: GPU jobs at once
+MAX_CONTAINERS = _max_containers_from_env()  # cost cap: GPU jobs at once
 
 
 def build_image() -> modal.Image:
@@ -76,7 +90,8 @@ def build_image() -> modal.Image:
     home = ohv.DEFAULT_OHV_HOME
     return (
         modal.Image.debian_slim(python_version="3.12")
-        .apt_install("ffmpeg", "git", "git-lfs", "curl", "ca-certificates")
+        # libgl1: OpenCV's cv2 (opencv-python, as OHV's lock pins it) needs libGL.so.1 to import.
+        .apt_install("ffmpeg", "git", "git-lfs", "curl", "ca-certificates", "libgl1")
         # OpenCV needs glib; Debian trixie (image builder 2026.10) renamed the package.
         .run_commands(
             "apt-get update && (apt-get install -y --no-install-recommends libglib2.0-0t64"

@@ -17,6 +17,8 @@ Description=Basketball Scout worker (film analysis jobs)
 Documentation=https://github.com/Marquette-Catholic-High-School/basketball-scout
 After=network-online.target
 Wants=network-online.target
+# The data folder (and home) must be mounted first; see the web unit.
+RequiresMountsFor=@DATA_DIR@ @HOME@
 StartLimitIntervalSec=300
 StartLimitBurst=10
 

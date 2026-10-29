@@ -31,7 +31,9 @@ function rgbToCss(rgb) {
   return `#${rgb.slice(0, 3).map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("")}`;
 }
 
-function luminance(hex) {
+/** Relative luminance of "#rrggbb" (0 = black, 1 = white); NaN for anything else. */
+export function luminance(hex) {
+  if (!/^#[0-9a-f]{6}$/i.test(hex || "")) return NaN;
   const n = parseInt(hex.slice(1), 16);
   const channel = (c) => {
     const s = c / 255;

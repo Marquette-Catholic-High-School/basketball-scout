@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from modal_app.pipeline import runner
+from modal_app.pipeline import runner, video as pipeline_video
 from modal_app.pipeline.errors import PipelineError, is_cuda_oom
 from scout.config import Settings, get_settings
 from scout.errors import ErrorCode, ScoutError
@@ -74,13 +74,7 @@ class LocalProcessor(Processor):
         run = _LocalRun(output_dir=self._run_dir(job_id))
         run.output_dir.mkdir(parents=True, exist_ok=True)
         run.future = self._executor.submit(
-            runner.run_pipeline,
-            source,
-            dict(options),
-            output_dir=str(run.output_dir),
-            job_id=job_id,
-            progress=run.report,
-            filename=video.filename,
+            _run_pipeline, run, video.kind, source, dict(options), job_id, video.filename
         )
         with self._lock:
             self._runs[job_id] = run
@@ -142,6 +136,30 @@ class LocalProcessor(Processor):
         if video.kind == "file" and video.path is not None and video.path.exists():
             return str(video.path)
         raise ScoutError(ErrorCode.VIDEO_MISSING)
+
+
+def _run_pipeline(
+    run: _LocalRun, kind: str, source: str, options: dict[str, Any], job_id: str, filename: str
+) -> dict[str, Any]:
+    """Pipeline thread body. ``run_pipeline`` needs a local file, so a URL film is downloaded
+    first (as ``modal_app/app.py`` does on Modal) and deleted again afterwards."""
+    download_dir = run.output_dir / "download" if kind == "url" else None
+    try:
+        if download_dir is not None:
+            source = str(
+                pipeline_video.download_video(
+                    source,
+                    download_dir / "source.mp4",
+                    max_bytes=int(options.get("max_download_bytes") or pipeline_video.DEFAULT_MAX_DOWNLOAD_BYTES),
+                    progress=runner.PipelineProgress(run.report).reporter("download"),
+                )
+            )
+        return runner.run_pipeline(
+            source, options, output_dir=str(run.output_dir), job_id=job_id, progress=run.report, filename=filename
+        )
+    finally:
+        if download_dir is not None:
+            shutil.rmtree(download_dir, ignore_errors=True)
 
 
 def _job_id(handle: str) -> str:

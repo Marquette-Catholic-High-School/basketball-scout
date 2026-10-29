@@ -15,13 +15,15 @@ Upload protocol (the browser sends a multi-GB film in pieces):
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import shutil
 import subprocess
 from contextlib import suppress
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import unquote, urlparse
+from urllib.parse import ParseResult, unquote, urlparse
 
 import anyio
 from fastapi import APIRouter, Query, Request
@@ -32,7 +34,7 @@ from starlette.requests import ClientDisconnect
 from scout import db, storage
 from scout.api.deps import CurrentGame, SettingsDep, UploadId
 from scout.api.errors import error_response
-from scout.api.jobs import ensure_no_active_job, start_job
+from scout.api.jobs import ensure_no_active_job, start_job, start_lock
 from scout.api.models import FilmResult
 from scout.config import Settings
 from scout.errors import ErrorCode, ScoutError
@@ -44,6 +46,12 @@ logger = logging.getLogger(__name__)
 CONTAINER_BOXES = (b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip")
 DISK_HEADROOM_BYTES = 1024**3  # keep 1 GB free for the database, results and logs
 FFPROBE_TIMEOUT_S = 60
+# uvicorn has no request-body timeout, so a connection that died silently (school Wi-Fi
+# dropped) would hold the upload's lock, and hang every resume, until a restart.
+CHUNK_IDLE_TIMEOUT_S = 120.0
+# An unfinished upload of the same game with no data for this long was given up (the
+# browser only remembers its latest upload per game); its .part file is deleted.
+ABANDONED_UPLOAD_S = 3600.0
 
 router = APIRouter(tags=["uploads"])
 
@@ -71,6 +79,7 @@ def create_upload(body: UploadInit, game: CurrentGame, settings: SettingsDep) ->
             f"This file is {_human_size(body.size)}; the limit is {_human_size(settings.max_upload_bytes)}.",
         )
     ensure_no_active_job(game.id, JobKind.ANALYZE)
+    _discard_unfinished_uploads(game.id, idle_s=ABANDONED_UPLOAD_S)  # before the free-space check
     upload = UploadSession(game_id=game.id, filename=filename, size=body.size, chunk_size=settings.upload_chunk_bytes)
     part = storage.upload_part_path(upload.id)
     part.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +109,22 @@ async def upload_chunk(
         except ClientDisconnect:
             logger.info("Upload %s: browser disconnected during the chunk at offset %d", upload_id, offset)
             return Response(status_code=400)
+        except TimeoutError:  # before OSError: TimeoutError is one
+            logger.info("Upload %s: no data for %.0f s in the chunk at offset %d", upload_id, CHUNK_IDLE_TIMEOUT_S, offset)
+            error = ScoutError(
+                ErrorCode.UPLOAD_INCOMPLETE,
+                "The connection went quiet, so this piece of the film was dropped.",
+                hint="Check the network connection; the upload resumes where it stopped.",
+            )
+            return error_response(error.to_info(), 409, upload=upload.model_dump(mode="json"))
+        except OSError as exc:
+            if exc.errno not in (errno.ENOSPC, errno.EDQUOT):
+                raise
+            raise ScoutError(
+                ErrorCode.UPLOAD_TOO_LARGE,
+                "The server ran out of disk space while saving the film.",
+                hint="Delete old games to free up space (or ask the administrator to enlarge the disk), then resume.",
+            ) from exc
         return await run_in_threadpool(db.save_upload, upload.model_copy(update={"received": offset + written}))
 
 
@@ -173,15 +198,21 @@ def _chunk_too_big(upload: UploadSession, offset: int, length: int) -> ScoutErro
 async def _write_chunk(request: Request, upload: UploadSession, offset: int, limit: int) -> int:
     """Stream the request body into the .part file at ``offset``; returns bytes written.
 
-    On any failure the file is cut back to ``offset`` so the retry starts clean.
+    On any failure the file is cut back to ``offset`` so the retry starts clean. Raises
+    ``TimeoutError`` when no bytes arrive for ``CHUNK_IDLE_TIMEOUT_S``.
     """
     part = storage.upload_part_path(upload.id)
     written = 0
+    pieces = request.stream()
     try:
         async with await anyio.open_file(part, "r+b") as fh:
             await fh.truncate(offset)
             await fh.seek(offset)
-            async for piece in request.stream():
+            while True:
+                with anyio.fail_after(CHUNK_IDLE_TIMEOUT_S):
+                    piece = await anext(pieces, None)
+                if piece is None:
+                    break
                 written += len(piece)
                 if written > limit:
                     raise _chunk_too_big(upload, offset, written)
@@ -205,28 +236,32 @@ def _finish_upload(upload_id: str, settings: Settings, auto_start: bool) -> Film
     upload = _require_open_upload(upload_id)
     if upload.received != upload.size:
         raise ScoutError(ErrorCode.UPLOAD_INCOMPLETE, f"Only {upload.received} of {upload.size} bytes have arrived.")
-    ensure_no_active_job(game.id, JobKind.ANALYZE)
+    ensure_no_active_job(game.id, JobKind.ANALYZE)  # fail fast, before the slow checks
     part = storage.upload_part_path(upload.id)
     _check_container(part, upload)
     _check_duration(part, upload, settings)
 
-    storage.game_dir(game.id, create=True)
-    _discard_old_film(game.id)
-    shutil.move(part, storage.source_video_path(game.id, Path(upload.filename).suffix))
-    db.save_upload(upload.model_copy(update={"status": "complete"}))
-    logger.info("Upload %s complete: game %s now has %s", upload.id, game.id, upload.filename)
-    game = db.update_game(
-        game.id,
-        has_video=True,
-        video_filename=upload.filename,
-        video_size=upload.size,
-        video_url=None,
-        status=GameStatus.UPLOADED,
-        has_analysis=False,
-        has_annotated_video=False,
-        error=None,
-    )
-    return _maybe_start_analysis(game, settings, auto_start)
+    with start_lock:  # no job may start on the old film between this check and the swap
+        ensure_no_active_job(game.id, JobKind.ANALYZE)
+        storage.game_dir(game.id, create=True)
+        _discard_old_film(game.id)
+        shutil.move(part, storage.source_video_path(game.id, Path(upload.filename).suffix))
+        db.save_upload(upload.model_copy(update={"status": "complete"}))
+        _discard_unfinished_uploads(game.id)  # the film was just replaced: other attempts are moot
+        logger.info("Upload %s complete: game %s now has %s", upload.id, game.id, upload.filename)
+        game = db.update_game(
+            game.id,
+            has_video=True,
+            video_filename=upload.filename,
+            video_size=upload.size,
+            video_url=None,
+            status=GameStatus.UPLOADED,
+            has_analysis=False,
+            has_annotated_video=False,
+            error=None,
+            team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
+        )
+        return _maybe_start_analysis(game, settings, auto_start)
 
 
 def _check_container(part: Path, upload: UploadSession) -> None:
@@ -274,6 +309,15 @@ def _discard_upload(upload_id: str) -> None:
     db.delete_upload(upload_id)
 
 
+def _discard_unfinished_uploads(game_id: str, idle_s: float = 0.0) -> None:
+    """Abort the game's open uploads that got no data for ``idle_s`` (frees their disk space)."""
+    cutoff = db.utcnow() - timedelta(seconds=idle_s)
+    for upload in db.list_uploads(game_id):
+        if upload.status == "open" and (upload.updated_at is None or upload.updated_at <= cutoff):
+            _abort(upload)
+            logger.info("Upload %s for game %s was given up; its partial file was deleted", upload.id, game_id)
+
+
 def _check_free_space(directory: Path, size: int) -> None:
     free = shutil.disk_usage(directory).free
     if size + DISK_HEADROOM_BYTES > free:
@@ -296,29 +340,53 @@ def _human_size(size: int) -> str:
 @router.post("/games/{game_id}/video-url", response_model=FilmResult)
 def set_video_url(body: VideoUrlRequest, game: CurrentGame, settings: SettingsDep, auto_start: bool = True) -> FilmResult:
     """Use a direct MP4 link as the film; the GPU worker downloads it."""
-    url = body.url.strip()
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    url, parsed = _check_video_url(body.url)
+    filename = _clean_filename(body.filename or "") or _clean_filename(unquote(parsed.path)) or "film.mp4"
+    with start_lock:  # as in _finish_upload: no job may start on the old film meanwhile
+        ensure_no_active_job(game.id, JobKind.ANALYZE)
+        _discard_old_film(game.id)
+        _discard_unfinished_uploads(game.id)  # the link is the film now: free the space of half-sent files
+        game = db.update_game(
+            game.id,
+            has_video=False,
+            video_filename=filename,
+            video_size=None,
+            video_url=url,
+            status=GameStatus.UPLOADED,
+            has_analysis=False,
+            has_annotated_video=False,
+            error=None,
+            team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
+        )
+        return _maybe_start_analysis(game, settings, auto_start)
+
+
+def _check_video_url(raw: str) -> tuple[str, ParseResult]:
+    """The trimmed link and its parts, if it is one plain http(s) web address.
+
+    Only its shape is checked: the server never fetches it (the GPU worker does), and
+    the worker's downloader cannot send spaces, line breaks or non-ASCII characters.
+    """
+    url = raw.strip()
+    if any(not " " < char <= "~" for char in url):
         raise ScoutError(
             ErrorCode.VALIDATION_FAILED,
-            "The video link must start with http:// or https://.",
+            "The video link contains spaces, line breaks or other characters a web address cannot have.",
+            hint="Copy the link again from the browser's address bar (it shows a space as %20), or upload the file.",
+        )
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        parsed.port  # noqa: B018 - raises for a port that is not a number from 0 to 65535
+    except ValueError:  # e.g. an unclosed IPv6 address "http://[::1/film.mp4" or "http://host:99999/"
+        parsed, host = None, None
+    if parsed is None or parsed.scheme not in ("http", "https") or not host:
+        raise ScoutError(
+            ErrorCode.VALIDATION_FAILED,
+            "The video link must be a full web address starting with http:// or https://.",
             hint="Paste a direct link to an MP4 file, or upload the file instead.",
         )
-    ensure_no_active_job(game.id, JobKind.ANALYZE)
-    filename = _clean_filename(body.filename or "") or _clean_filename(unquote(parsed.path)) or "film.mp4"
-    _discard_old_film(game.id)
-    game = db.update_game(
-        game.id,
-        has_video=False,
-        video_filename=filename,
-        video_size=None,
-        video_url=url,
-        status=GameStatus.UPLOADED,
-        has_analysis=False,
-        has_annotated_video=False,
-        error=None,
-    )
-    return _maybe_start_analysis(game, settings, auto_start)
+    return url, parsed
 
 
 def _maybe_start_analysis(game: Game, settings: Settings, auto_start: bool) -> FilmResult:

@@ -13,22 +13,31 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from fastapi import APIRouter
 
 from scout import db, storage
 from scout.api.deps import CurrentGame, JobId, SettingsDep, has_analysis_file
+from scout.api.errors import validate_model
 from scout.config import Settings
 from scout.errors import ErrorCode, ScoutError
 from scout.jobs import queue as job_queue
-from scout.schemas import Game, GameStatus, Job, JobCreate, JobKind, JobStatus
+from scout.schemas import Game, GameStatus, Job, JobCreate, JobKind, JobStatus, ReportRequest
 
 logger = logging.getLogger(__name__)
 
 ANALYSIS_KINDS = frozenset({JobKind.ANALYZE, JobKind.REANALYZE})
 
 router = APIRouter(tags=["jobs"])
+
+# Routes run in a thread pool, so two requests (a double click, a second tab) could both
+# pass the "no active job" check before either job exists. One web process serves the
+# app, so a lock around check + submit is enough. A film change (uploads.py) holds it
+# from its own check until the new film is in place, so no job starts on the old film;
+# re-entrant because the film change then starts the analysis itself.
+start_lock = threading.RLock()
 
 
 # ---------------------------------------------------------------------------
@@ -38,20 +47,21 @@ router = APIRouter(tags=["jobs"])
 
 def start_job(game: Game, kind: JobKind, params: dict[str, Any], settings: Settings) -> Job:
     """Check the rules for ``kind``, then queue the job."""
-    ensure_no_active_job(game.id, kind)
-    _check_inputs_ready(game, kind, settings)
-    if kind not in ANALYSIS_KINDS:
-        return _submit(game.id, kind, params)
-    # Mark the game queued BEFORE the job exists, so a fast worker's "processing"
-    # update can never be overwritten by ours.
-    db.update_game(game.id, status=GameStatus.QUEUED, error=None)
-    try:
-        job = _submit(game.id, kind, params)
-    except Exception:
-        db.update_game(game.id, status=game.status, error=game.error)
-        raise
-    db.update_game(game.id, latest_job_id=job.id)
-    return job
+    with start_lock:
+        ensure_no_active_job(game.id, kind)
+        _check_inputs_ready(game, kind, settings)
+        if kind not in ANALYSIS_KINDS:
+            return _submit(game.id, kind, params)
+        # Mark the game queued BEFORE the job exists, so a fast worker's "processing"
+        # update can never be overwritten by ours.
+        db.update_game(game.id, status=GameStatus.QUEUED, error=None)
+        try:
+            job = _submit(game.id, kind, params)
+        except Exception:
+            db.update_game(game.id, status=game.status, error=game.error)
+            raise
+        db.update_game(game.id, latest_job_id=job.id)
+        return job
 
 
 def ensure_no_active_job(game_id: str, kind: JobKind) -> None:
@@ -118,7 +128,12 @@ def _submit(game_id: str, kind: JobKind, params: dict[str, Any]) -> Job:
 
 @router.post("/games/{game_id}/jobs", response_model=Job, status_code=201)
 def create_job(body: JobCreate, game: CurrentGame, settings: SettingsDep) -> Job:
-    return start_job(game, body.kind, body.params, settings)
+    params = body.params
+    if body.kind == JobKind.REPORT:  # the worker hands coach_focus to Claude: same limits as POST /reports
+        params = {"coach_focus": validate_model(ReportRequest, params).coach_focus}
+    elif "coach_focus" in params:  # an analysis job that writes the report passes it to Claude too
+        params = {**params, "coach_focus": validate_model(ReportRequest, params).coach_focus}
+    return start_job(game, body.kind, params, settings)
 
 
 @router.get("/games/{game_id}/jobs", response_model=list[Job])

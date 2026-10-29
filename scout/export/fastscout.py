@@ -186,6 +186,7 @@ MAX_TABLE_COLUMNS = 18  # FastScout Web custom tables get hard to read beyond th
 JERSEY_WORDS_PLACEHOLDER = "{jersey_words}"
 _MINUTE_FIELDS = frozenset({"min", "minutes_est"})
 _TURNOVER_STARTS = frozenset({"steal", "turnover"})
+_PARTIAL_FILM_WARNING = "FILM_PARTIALLY_ANALYSED"  # docs/TRACKING_SCHEMA.md warning code
 
 # ---------------------------------------------------------------------------
 # Rows and fields: a "field" in the YAML names one of the getters below.
@@ -375,13 +376,15 @@ class _ConfigChecker:
 def validate_fastscout_config(data: Any, *, source: str = "config") -> dict[str, Any]:
     """Check a raw config mapping and fill in defaults.
 
-    Raises ``ScoutError(CONFIG_INVALID)`` naming the bad key. Missing sections and
-    settings fall back to the defaults; ``custom_tables`` and ``columns`` lists replace
+    Raises ``ScoutError(CONFIG_INVALID)`` naming the bad key. Missing or empty sections
+    and missing settings fall back to the defaults; ``custom_tables`` and ``columns`` lists replace
     the defaults entirely so a coach can remove columns or tables.
     """
     check = _ConfigChecker(source)
     data = check.mapping({} if data is None else data, "(top level)")
     check.known_keys(data, _TOP_KEYS, "")
+    # A section whose settings are all commented out is empty (None): the same as leaving it out.
+    data = {key: value for key, value in data.items() if value is not None}
     paste = _validate_paste(check, data.get("paste_block", {}))
     csv_cfg = _validate_csv(check, data.get("csv", {}))
     labels = _validate_labels(check, data.get("play_labels", {}))
@@ -496,6 +499,12 @@ def load_fastscout_config(path: Path | str | None = None) -> dict[str, Any]:
             ErrorCode.CONFIG_INVALID,
             f"FastScout export settings ({target.name}) are not valid YAML: {exc}",
             hint="Check the indentation and quotes near the line mentioned, or delete the file to use the defaults.",
+        ) from exc
+    except OSError as exc:  # a folder, or a file the server may not read
+        raise ScoutError(
+            ErrorCode.CONFIG_INVALID,
+            f"FastScout export settings ({target}) could not be read: {exc.strerror or exc}.",
+            hint="Point SCOUT_FASTSCOUT_CONFIG at a readable .yaml file, or delete it to use the built-in defaults.",
         ) from exc
     return validate_fastscout_config(data, source=target.name)
 
@@ -742,6 +751,7 @@ def _paste_rows(
         )
     rows.sort(key=lambda r: (_jersey_key(r.jersey), r.name))
     warnings = [
+        *_partial_film_warnings(analysis),
         *name_warnings,
         *_duplicate_name_warnings(rows),
         *_minutes_warnings(rows, cfg),
@@ -750,6 +760,15 @@ def _paste_rows(
     if not rows:
         warnings.append(f"No {team} player has a stat or a minute on the floor, so the paste has only the header row.")
     return rows, warnings
+
+
+def _partial_film_warnings(analysis: GameAnalysis) -> list[str]:
+    """The pipeline's note that only the start of the film could be read: the numbers are not the whole game."""
+    return [
+        f"Not the whole game: {w.message}"
+        for w in analysis.data_quality.warnings
+        if w.code == _PARTIAL_FILM_WARNING
+    ]
 
 
 def _duplicate_name_warnings(rows: list[_PlayerRow]) -> list[str]:
@@ -872,10 +891,16 @@ def team_helper_block(analysis: GameAnalysis, side: TeamSide = TeamSide.SCOUTED)
     side = _side(side)
     team, opponent = _team_name(analysis, side), _team_name(analysis, _other_side(side))
     box = analysis.box_score(side)
-    paint = f"{2 * box.totals.zones.paint.made}" if box else "unknown"
-    unplaced = box.totals.zones.unknown.made if box else 0
-    if unplaced:
-        paint += f" (approximate: {unplaced} made shot{'' if unplaced == 1 else 's'} had no court location)"
+    zones = box.totals.zones if box else None
+    unplaced = zones.unknown.made if zones else 0
+    if zones is None:
+        paint = "unknown"
+    elif zones.unknown.attempts and not (zones.paint.attempts or zones.mid.attempts or zones.three.attempts):
+        paint = "unknown (no shot had a court location - map the court to get this number)"
+    else:
+        paint = f"{2 * zones.paint.made}"
+        if unplaced:
+            paint += f" (approximate: {unplaced} made shot{'' if unplaced == 1 else 's'} had no court location)"
     lines = [
         f"{team}: team numbers to type in by hand (not part of the paste)",
         f"Final score: {team} {_score(analysis, side)}, {opponent} {_score(analysis, _other_side(side))}",
@@ -883,6 +908,7 @@ def team_helper_block(analysis: GameAnalysis, side: TeamSide = TeamSide.SCOUTED)
         f"Points in the paint: {paint}",
         f"Second-chance points: {_second_chance_points(analysis, side)}",
         f"Points off turnovers: {_points_off_turnovers(analysis, side)}",
+        *_partial_film_warnings(analysis),
         "From video analysis - verify against the film.",
     ]
     return "\n".join(lines)
@@ -892,12 +918,14 @@ def team_helper_block(analysis: GameAnalysis, side: TeamSide = TeamSide.SCOUTED)
 # CSV (FastScout Web custom tables, timeline)
 # ---------------------------------------------------------------------------
 
-_FORMULA_START = re.compile(r"^(?:[=@\t]|[+-](?![\d.]))")
+_FORMULA_START = re.compile(r"[=+\-@\t\r]")
+_PLAIN_NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)%?")
 
 
 def _safe_cell(value: str) -> str:
-    """Stop spreadsheets from running text as a formula ("=..."); numbers like "-3" are untouched."""
-    return f"'{value}" if _FORMULA_START.match(value) else value
+    """Stop spreadsheets from running text as a formula ("=...", "-1+cmd|..."); plain numbers like
+    "-3" and "+5" are untouched."""
+    return f"'{value}" if _FORMULA_START.match(value) and not _PLAIN_NUMBER.fullmatch(value) else value
 
 
 def _write_csv(header: list[str], body: list[list[str]], csv_cfg: dict[str, Any]) -> str:
@@ -1025,10 +1053,12 @@ def build_timeline_csv(analysis: GameAnalysis, config: dict[str, Any] | None = N
     """One row per timeline event, for spreadsheets. Uses the ``csv`` section's delimiter / line ending / BOM."""
     csv_cfg = _resolve_config(config)["csv"]
     names = {side: _team_name(analysis, side) for side in TeamSide}
+    score_headers = [_safe_cell(_clean_text(f"{names[side]} Score")) for side in TeamSide]  # data, unlike the rest
     header = [
         *("Time", "Seconds", "Type", "Event", "Team", "Player #", "Player", "Secondary Player"),
         *("Possession Team", "Possession #", "Points", "Zone", "Subzone", "X (ft)", "Y (ft)", "Confidence"),
-        *(f"{names[TeamSide.SCOUTED]} Score", f"{names[TeamSide.OTHER]} Score", "Play ID", "Description"),
+        *score_headers,
+        *("Play ID", "Description"),
     ]
     body = []
     for event in analysis.timeline:

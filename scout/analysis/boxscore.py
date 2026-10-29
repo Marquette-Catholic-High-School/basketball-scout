@@ -6,7 +6,9 @@ Who gets the stat: the row's ``player`` -- by roster ``player_id`` when matched,
 
 Minutes and plus-minus come from track presence, measured on the raw samples:
 consecutive samples less than ``index.max_gap_frames`` apart count as on the floor
-(so thinned samples still count fully, and long gaps do not).
+(so thinned samples still count fully, and long gaps do not). With court coordinates,
+samples placed more than ``ON_FLOOR_MARGIN_FT`` outside the lines do not count: a player
+tracked while sitting on the bench or waiting at the table is not on the floor.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ _FREE_THROWS = frozenset({EventType.FT_MADE, EventType.FT_MISSED})
 
 LineKey = tuple[str, str]  # ("p", player_id) or ("j", jersey)
 Scoring = list[tuple[int, TeamSide, int]]  # (frame, scoring side, points)
+ON_FLOOR_MARGIN_FT = 4.0  # an inbounder stands just outside the lines; the bench is further back
 
 
 def build_box_scores(
@@ -198,6 +201,7 @@ class _Presence:
     """On-floor frame intervals per track, from the raw track samples."""
 
     def __init__(self, index: TrackingIndex) -> None:
+        self.index = index
         self.fps = index.fps
         self.step = index.step
         self.max_gap = index.max_gap_frames
@@ -209,8 +213,21 @@ class _Presence:
         if track_id not in self._intervals:
             track = self._tracks.get(track_id)
             frames = sorted(s.f for s in track.samples) if track is not None else []
+            off = self._off_floor(track_id)
+            if off:
+                frames = [f for f in frames if f not in off]
             self._intervals[track_id] = _runs(frames, self.max_gap, self.step)
         return self._intervals[track_id]
+
+    def _off_floor(self, track_id: int) -> set[int]:
+        """Frames at which the track's court position is known and well outside the lines."""
+        if self.index.coord_mode != "court":
+            return set()
+        frames, xy = self.index.placed_samples(track_id)
+        court, margin = self.index.court, ON_FLOOR_MARGIN_FT
+        x, y = xy[:, 0], xy[:, 1]
+        off = (x < -margin) | (x > court.length_ft + margin) | (y < -margin) | (y > court.width_ft + margin)
+        return set(frames[off].tolist())
 
     def minutes(self, track_ids: list[int]) -> float:
         merged = _merge([iv for tid in track_ids for iv in self.intervals(tid)])

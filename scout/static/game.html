@@ -9,7 +9,7 @@
   <script type="module" src="/static/js/game.js"></script>
 </head>
 <body>
-  <a class="visually-hidden" href="#main">Skip to content</a>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
     <a class="brand" href="/"><span class="brand-ball" aria-hidden="true"></span>Basketball Scout</a>
     <nav class="site-nav" aria-label="Main">
@@ -179,7 +179,7 @@
           <div id="box-team-switch" class="btn-group" role="group" aria-label="Team"></div>
         </div>
         <div id="box-content"></div>
-        <p class="hint">MIN is approximate on-floor video time (includes stoppages). Stats the analysis couldn't tie to a player go on the Team line. Click a column to sort.</p>
+        <p class="hint">MIN is approximate on-floor video time (includes stoppages). DNP: no stats and under a minute on the film (the FastScout paste leaves these players out). Stats the analysis couldn't tie to a player go on the Team line. Click a column to sort.</p>
       </section>
 
       <section id="tab-shots" class="card" role="tabpanel" aria-labelledby="tabbtn-shots" tabindex="0" hidden>
@@ -279,6 +279,18 @@
             <label class="visually-hidden" for="export-preview">FastScout paste block</label>
             <textarea id="export-preview" class="mono-box section-sub" readonly spellcheck="false"></textarea>
             <p class="hint">In FastScout Classic: Stats &gt; Edit Stats Database &gt; Box Score &gt; Paste <span id="export-help-team">Team</span> Data.</p>
+            <div id="export-notes" class="section-sub" hidden>
+              <div id="export-warnings"></div>
+              <div id="export-team-wrap" hidden>
+                <div class="card-head">
+                  <h4>Team numbers to type in by hand</h4>
+                  <button id="export-team-copy" type="button" class="btn-small">Copy team numbers</button>
+                </div>
+                <label class="visually-hidden" for="export-team-numbers">Team numbers to type in by hand</label>
+                <textarea id="export-team-numbers" class="mono-box mono-box-short" readonly spellcheck="false"></textarea>
+                <div id="export-team-status" class="section-sub" aria-live="polite"></div>
+              </div>
+            </div>
           </div>
           <div>
             <h3>FastScout Web custom table (CSV)</h3>

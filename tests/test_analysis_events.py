@@ -192,13 +192,13 @@ def test_rebound_inference_and_possession_flips():
         ev("m2", "shot", 8, track_id=2, made=False, shot_court_xy=[6.0, 25.0]),
         ev("r2", "rebound", 9, track_id=11),  # other team -> defensive, ball changes hands
         ev("m3", "shot", 20, track_id=11, made=False, shot_court_xy=[78.0, 25.0]),
-        ev("r3", "rebound", 21, track_id=12, offensive=False),  # explicit flag wins over inference
+        ev("r3", "rebound", 21, track_id=12, offensive=False),  # the sides beat a contradicting flag
     ]
     build = _build(events)
     rows = by_id(build)
     assert rows["r1"].type == EventType.OREB and rows["r1"].label == "Off. Rebound"
     assert rows["r2"].type == EventType.DREB and rows["r2"].label == "Def. Rebound"
-    assert rows["r3"].type == EventType.DREB
+    assert rows["r3"].type == EventType.OREB  # Other's own miss, Other's rebound
     poss = build.possessions
     assert [(p.side, p.start_reason, p.outcome) for p in poss] == [
         (S, "jump_ball", PossessionOutcome.MISSED_FG),

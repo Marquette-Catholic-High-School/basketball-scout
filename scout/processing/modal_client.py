@@ -8,7 +8,7 @@ One job, step by step::
     poll()         FunctionCall.get(timeout=0); while running, progress comes from the
                    Modal Dict the pipeline writes to
     fetch()        download results/<job_id>/tracking.json.gz (+ annotated.mp4)
-    cleanup()      delete uploads/<job_id> and results/<job_id>, drop the progress entry
+    cleanup()      delete uploads/<job_id>, results/<job_id> and tmp/<job_id>, drop the progress entry
 
 ``modal`` is imported inside methods so the web server and worker start (and the mock /
 local processors work) on machines where Modal is not installed or configured.
@@ -40,9 +40,15 @@ HANDLE_SEPARATOR = "|"
 TRACKING_FILENAME = "tracking.json.gz"
 ANNOTATED_FILENAME = "annotated.mp4"
 # While Modal cannot be reached at all, poll() keeps answering "running" for this long
-# before failing the job: the GPU call keeps running meanwhile and its result waits for us.
-CONNECTION_GRACE_S = 3600.0
-DOWNLOAD_ATTEMPTS = 3
+# before failing the job: the GPU call keeps running meanwhile and its result waits for us
+# (7 days). Giving up throws that paid run away (Retry starts a new one) and, with Modal
+# unreachable, cleanup() cannot delete the film either; so in practice the worker's own
+# limit (SCOUT_MODAL_MAX_WAIT_HOURS, from the job's start) ends a long outage first.
+CONNECTION_GRACE_S = 24 * 3600.0
+# The results are hours of paid GPU work and a failed job deletes them from the volume, so a
+# download rides out a few minutes without internet: delays double from download_retry_delay_s
+# (5 + 10 + 20 + 40 + 80 s).
+DOWNLOAD_ATTEMPTS = 6
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -90,9 +96,12 @@ class ModalProcessor(Processor):
         errors = _modal().exception
         try:
             call = function.spawn(request)
-        except (errors.AuthError, errors.PermissionDeniedError) as exc:
-            raise ScoutError(ErrorCode.MODAL_AUTH_FAILED, detail=_describe(exc)) from exc
         except Exception as exc:
+            # No handle is saved, so no cleanup() will ever run for this upload: delete the film now.
+            if request["video"]["type"] == "volume":
+                self._remove_remote(self._volume(), f"uploads/{job_id}")
+            if isinstance(exc, (errors.AuthError, errors.PermissionDeniedError)):
+                raise ScoutError(ErrorCode.MODAL_AUTH_FAILED, detail=_describe(exc)) from exc
             message = "Modal did not accept the GPU job."
             raise ScoutError(ErrorCode.MODAL_REMOTE_ERROR, message, detail=_describe(exc)) from exc
         logger.info("Spawned Modal call %s for job %s", call.object_id, job_id)
@@ -111,7 +120,15 @@ class ModalProcessor(Processor):
             return _failed(ErrorCode.MODAL_TIMEOUT, "The GPU function ran past its time limit on Modal.", exc)
         except errors.OutputExpiredError as exc:
             return _failed(ErrorCode.MODAL_RESULT_EXPIRED, None, exc)
-        except (errors.ConnectionError, errors.ServiceError, errors.TimeoutError) as exc:
+        # Trouble with Modal's API (gRPC UNAVAILABLE / INTERNAL / RESOURCE_EXHAUSTED after the SDK's own
+        # retries), not an outcome of our GPU call, which keeps running meanwhile.
+        except (
+            errors.ConnectionError,
+            errors.ServiceError,
+            errors.InternalError,
+            errors.ResourceExhaustedError,
+            errors.TimeoutError,
+        ) as exc:
             return self._unreachable(handle, exc)
         except (errors.AuthError, errors.PermissionDeniedError) as exc:
             return _failed(ErrorCode.MODAL_AUTH_FAILED, None, exc)
@@ -163,13 +180,10 @@ class ModalProcessor(Processor):
         if not job_id:
             return
         volume = self._volume()
-        for path in (f"uploads/{job_id}", f"results/{job_id}"):
-            try:
-                volume.remove_file(path, recursive=True)
-            except FileNotFoundError:
-                pass
-            except Exception as exc:
-                logger.warning("Could not delete %s from the Modal volume: %s", path, _describe(exc))
+        # tmp/<job_id>: a link film's download, which modal_app/app.py deletes itself unless the
+        # container was killed (time limit, out of memory).
+        for path in (f"uploads/{job_id}", f"results/{job_id}", f"tmp/{job_id}"):
+            self._remove_remote(volume, path)
         try:
             self._progress_store().pop(job_id, None)
         except Exception as exc:
@@ -209,6 +223,16 @@ class ModalProcessor(Processor):
         return _modal().Volume.from_name(
             s.modal_volume_name, create_if_missing=True, environment_name=s.modal_environment
         )
+
+    @staticmethod
+    def _remove_remote(volume: Any, path: str) -> None:
+        """Best-effort recursive delete of one volume path (errors only logged)."""
+        try:
+            volume.remove_file(path, recursive=True)
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            logger.warning("Could not delete %s from the Modal volume: %s", path, _describe(exc))
 
     def _progress_store(self) -> Any:
         s = self.settings
@@ -274,7 +298,7 @@ class ModalProcessor(Processor):
             since = self._unreachable_since.setdefault(handle, now)
         if now - since > CONNECTION_GRACE_S:
             self._forget_unreachable(handle)
-            message = f"Lost contact with Modal for more than {CONNECTION_GRACE_S / 60:.0f} minutes."
+            message = f"Lost contact with Modal for more than {CONNECTION_GRACE_S / 3600:.0f} hours."
             return _failed(ErrorCode.MODAL_REMOTE_ERROR, message, exc)
         logger.warning("Could not reach Modal to check %s (will keep trying): %s", handle, _describe(exc))
         return PollResult(state="running", message="Lost contact with the GPU service; retrying...")
@@ -303,8 +327,8 @@ class ModalProcessor(Processor):
                 logger.warning(
                     "Download of %s failed (attempt %d of %d): %s", remote_path, attempt, DOWNLOAD_ATTEMPTS, exc
                 )
+                time.sleep(self.download_retry_delay_s * 2 ** (attempt - 1))
                 attempt += 1
-                time.sleep(self.download_retry_delay_s)
 
 
 def _download_once(volume: Any, remote_path: str, dest: Path) -> None:
