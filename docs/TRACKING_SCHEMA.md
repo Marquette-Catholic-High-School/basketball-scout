@@ -17,6 +17,14 @@ explains the semantics.
   for a 50 ft wide court.
 * Team ids (`team_id`) are pipeline clusters (0, 1). The server maps them to
   `scouted` / `other` using the game's colour hint or the coach's choice.
+* Court or pixel mode: without a homography, the server treats sample `court_xy` as
+  court coordinates only when at least 50 % of PLAYER track samples (referee tracks
+  excluded) carry one, the same share as the GPU's `EventConfig.court_mode_min_share`;
+  otherwise it works in pixels and uses `shot_court_xy` per shot.
+* OpenHoopVision's court y grows toward the camera (its demo output shows the ball
+  handler nearest the camera at the bottom of its mini-map), so the adapter mirrors it
+  to our near-sideline `y = 0`. `COURT_ORIENTATION_CHECK` stays as a safety net when a
+  manual calibration exists.
 
 ## Processing request / response
 
@@ -46,7 +54,10 @@ with one dict:
 
 `video` may instead be `{"type": "url", "url": "https://.../film.mp4", "filename": "film.mp4"}`;
 the Modal function (`modal_app/app.py`) downloads it into `/data/tmp/<job_id>/` first and
-deletes it afterwards (`runner.run_pipeline` itself only takes a local file). Paths are
+deletes it afterwards (`runner.run_pipeline` itself only takes a local file). The local
+processor downloads it into its run folder the same way, but on the server, so it refuses
+links whose host resolves to a private, loopback, link-local, multicast or reserved
+address (also after a redirect) with `VIDEO_DOWNLOAD_FAILED`. Paths are
 relative to the Modal volume root (mounted at `/data` in the container) or, for the local
 processor, to its run folder `<SCOUT_DATA_DIR>/local_runs/<job_id>/`.
 
@@ -129,6 +140,8 @@ Gzipped JSON validating as `scout.schemas.TrackingResult`:
 ### Warning codes
 
 Warnings never fail the job; the server shows them on the Data quality tab.
+OpenHoopVision prints the ReID, OCR and GPU-memory messages while its progress bar is on
+screen; the runner still picks them up from those lines.
 
 | Code | Meaning |
 |---|---|
@@ -139,12 +152,13 @@ Warnings never fail the job; the server shows them on the Data quality tab.
 | `BALL_HOLDERS_UNAVAILABLE` | Ball holders could not be inferred; possessions may be incomplete. |
 | `OCR_SPARSE` | Few jersey numbers could be read. |
 | `OCR_UNAVAILABLE` | The jersey OCR model did not load: no jersey numbers at all. |
-| `REID_UNAVAILABLE` | Re-identification did not load: one player may appear as several tracks. |
+| `REID_UNAVAILABLE` | Re-identification did not load or failed during the run (OpenHoopVision then turns it off for the rest of the film): one player may appear as several tracks. |
 | `GPU_OOM_RECOVERED` | The GPU ran low on memory and the film was analysed with smaller batches. |
 | `TRACKING_DATA_TRUNCATED` | (info) Unreadable frame records from OpenHoopVision were skipped. |
-| `FILM_PARTIALLY_ANALYSED` | Only the first part of the film could be read, so stats and plays cover that part only. |
+| `FILM_PARTIALLY_ANALYSED` | Fewer than 90 % of the film's frames (the video stream's frame count divided by the analysis step) were analysed, so stats and plays cover only the part that was read. |
 | `EVENT_ENRICHMENT_FAILED` | Assists, blocks and offensive / defensive rebounds could not be filled in. |
 | `EXTRA_EVENTS_FAILED` | Free throws, fouls, screens, jump balls and periods could not be detected. |
+| `FREE_THROWS_NOT_DETECTED` | No court positions, so free throws (and the shooting fouls inferred from them) could not be detected: OpenHoopVision reports each free throw as a field-goal attempt, so FGA and points run high. A manual calibration sent with the GPU job lets the pipeline find them; a server-side re-analysis cannot. |
 | `ANNOTATED_VIDEO_MISSING` | No overlay video was produced; the film plays without overlays. |
 | `ANNOTATED_VIDEO_FAILED` | The overlay video could not be encoded; stats and the timeline are unaffected. |
 
@@ -175,6 +189,22 @@ box score from double counting.
 renumbers the events (`e00001`, ...), so it never appears in `tracking.json.gz`. Events
 from OpenHoopVision may carry a few more attrs (`source`, `end_frame`, `points_source`,
 `gained_by_track`); the server ignores attrs it does not know.
+
+### Periods and timeouts
+
+OpenHoopVision has no notion of periods; `events.detect_events` infers them from long
+stoppages (no ball holder and at most 4 players on the floor for 45 s or more). Quarter
+breaks and full timeouts look alike, so it uses the structure of a game:
+
+* The film's first live play starts period 1.
+* The longest stoppage of 5 minutes or more is halftime (if several, the one nearest
+  the middle of the film's live play).
+* In each half (the whole film when there is no halftime), at most one stoppage is a
+  quarter break: the one nearest the middle of that half's live play, and only when it
+  falls between 30 % and 70 % of it and each side has at least 7 minutes of live play.
+  An 8-minute quarter has at least 8 minutes of live play.
+* Every other stoppage becomes a `timeout` event (team unknown, `attrs.inferred: true`).
+  Overtime is not split off; it stays in the last period.
 
 Server-side rules for turning these into a box score and possessions are in
 `docs/ARCHITECTURE.md` → "Event semantics".

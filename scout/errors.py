@@ -58,6 +58,7 @@ class ErrorCode(StrEnum):
     UPLOAD_TOO_LARGE = "UPLOAD_TOO_LARGE"
     UPLOAD_INCOMPLETE = "UPLOAD_INCOMPLETE"
     UPLOAD_NOT_FOUND = "UPLOAD_NOT_FOUND"
+    REQUEST_TOO_LARGE = "REQUEST_TOO_LARGE"
     NOT_FOUND = "NOT_FOUND"
     CONFLICT = "CONFLICT"
     VALIDATION_FAILED = "VALIDATION_FAILED"
@@ -229,7 +230,7 @@ _CATALOG: dict[ErrorCode, tuple[str, str, str | None, bool, int]] = {
     ErrorCode.CONFIG_INVALID: (
         "Settings file is invalid",
         "A settings file under config/ could not be used.",
-        "Fix the setting named in the message, or restore the shipped file with `git checkout config/`.",
+        "Fix the setting named in the message, or ask IT to restore the shipped file (README.md > Troubleshooting > CONFIG_INVALID).",
         False,
         500,
     ),
@@ -316,6 +317,13 @@ _CATALOG: dict[ErrorCode, tuple[str, str, str | None, bool, int]] = {
         "Start the upload again.",
         False,
         404,
+    ),
+    ErrorCode.REQUEST_TOO_LARGE: (
+        "Request too large",
+        "The request was larger than this server accepts.",
+        "Send film with the upload page; roster files must be under 2 MB.",
+        False,
+        413,
     ),
     ErrorCode.NOT_FOUND: ("Not found", "The requested item does not exist.", None, False, 404),
     ErrorCode.CONFLICT: ("Conflict", "The request conflicts with the current state.", None, False, 409),

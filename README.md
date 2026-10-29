@@ -137,8 +137,16 @@ What has not been tried yet:
 - **The install, update and uninstall scripts** were run with stand-ins for apt, systemd
   and nginx, not yet on a real Ubuntu 24.04 server. Take a VM snapshot before the first
   install.
-- **Left and right on the court** as OpenHoopVision reports them are not confirmed on real
-  film. Paint, mid-range, three and 2-vs-3 calls do not depend on it.
+- **Left and right on the court** as OpenHoopVision reports them were checked on its own
+  demo output only, not on real film. Paint, mid-range, three and 2-vs-3 calls do not
+  depend on it, and with a manual calibration the `COURT_ORIENTATION_CHECK` note flags a
+  mirror.
+- **Thresholds are tuned on synthetic games.** Play recognition (`config/play_rules.yaml`)
+  and the period detector were tuned on generated tracking data. Pick-and-roll,
+  pick-and-pop and handoff detection need the screener to stand nearly still; if real
+  tracking jitters by more than about half a foot, raise
+  `pick_and_roll.screener_max_speed_fts`, `handoff.giver_max_speed_fts` or
+  `general.speed_window_s` after the first real film.
 
 ## Try it in 5 minutes (demo, no GPU)
 
@@ -463,6 +471,12 @@ points spread across the court, **Save calibration**, then **Re-run analysis**. 
 panning camera there is nothing to calibrate; zones stay approximate. Set the gym's
 length in `config/court.yaml` if you know it.
 
+Free throws are found on the GPU and need court positions. If the first run could not
+map the court, the Data quality tab shows **Free throws not detected**: after you
+calibrate, choose **Full re-analysis** (it sends the film to the GPU again, with your
+calibration) instead of **Re-run analysis**, which only redoes the stats on this server.
+A new film clears the calibration, since it was clicked on the old film.
+
 ### 5. Reading the results
 
 - **Video**: switch between *Annotated* and *Original*, change the speed, step to the
@@ -533,6 +547,7 @@ reads the same file).
 | `SCOUT_AUTH_PASSWORD` | (none) | Plain-text password (install.sh generates one) |
 | `SCOUT_AUTH_PASSWORD_HASH` | (none) | Hash instead of a password, from `python -m scout.auth hash-password`; wins over the password |
 | `SCOUT_AUTH_DISABLED` | `false` | `true` turns sign-in off. Trusted private networks only |
+| `SCOUT_ALLOWED_HOSTS` | (none) | Host names the app answers to, comma-separated (`*.school.org` allowed). Empty: any name with sign-in on; with sign-in off only IP addresses, `localhost` and the server's own name |
 
 **Uploads**
 
@@ -588,7 +603,7 @@ reads the same file).
 | `ANTHROPIC_API_KEY` | (none) | Anthropic API key; without it there is no written report |
 | `SCOUT_CLAUDE_MODEL` | `claude-opus-5-5` | Claude model |
 | `SCOUT_CLAUDE_EFFORT` | `high` | `low`, `medium`, `high`, `xhigh` or `max`: thinking depth (and cost) |
-| `SCOUT_CLAUDE_MAX_TOKENS` | `32000` | Output cap per report, thinking included (2048-128000) |
+| `SCOUT_CLAUDE_MAX_TOKENS` | `64000` | Output cap per report, thinking included (2048-128000) |
 | `SCOUT_CLAUDE_FALLBACKS` | `true` | Let the API retry on a fallback model if Claude declines |
 | `SCOUT_CLAUDE_TIMEOUT_S` | `900` | Seconds to wait for one report |
 | `SCOUT_AUTO_REPORT` | `true` | Write a report automatically after each analysis |
@@ -644,8 +659,8 @@ cost = (uncached input x $4 + cache-write input x $5 + cache-read input x $0.20 
 ```
 
 With the defaults the game data is capped at roughly 25,000 tokens, plus a few thousand
-tokens of instructions, and the output at `SCOUT_CLAUDE_MAX_TOKENS` = 32,000. That puts
-an upper bound of about **$0.80 per report** at list prices; real reports finish below
+tokens of instructions, and the output at `SCOUT_CLAUDE_MAX_TOKENS` = 64,000. That puts
+an upper bound of about **$1.45 per report** at list prices; real reports finish below
 the output cap (a report that hits it fails with `REPORT_TRUNCATED` and is still
 billed). We have not measured typical token counts: the worker logs the approximate
 payload size of each request, and the Anthropic Console shows the real usage. Lower
@@ -691,11 +706,12 @@ Every error shown in the app has a code. Find it here:
 | `REPORT_RATE_LIMITED` | The key hit Anthropic's rate limit. | Wait a minute and click **Generate report** again. |
 | `REPORT_OVERLOADED` | The Anthropic API is busy. | Try again in a few minutes. |
 | `REPORT_REFUSED` | Claude declined the request. | Remove unusual instructions from the coach focus box and try again. |
-| `REPORT_TRUNCATED` | The report hit the output limit. | Raise `SCOUT_CLAUDE_MAX_TOKENS` (e.g. 48000), restart the worker, regenerate. |
+| `REPORT_TRUNCATED` | The report hit the output limit. | Raise `SCOUT_CLAUDE_MAX_TOKENS` (e.g. 96000), restart the worker, regenerate. |
 | `REPORT_FAILED` | The report could not be written. | Try again; stats and exports still work. Details in the worker log. |
 | `UPLOAD_TOO_LARGE` | The film is larger than `SCOUT_MAX_UPLOAD_GB`. | Raise the limit (restart the web app) or compress / trim the film. |
 | `UPLOAD_INCOMPLETE` | Part of the file did not arrive. | Retry the upload; it resumes where it stopped. |
 | `UPLOAD_NOT_FOUND` | The upload session expired. | Start the upload again. |
+| `REQUEST_TOO_LARGE` | A request was larger than the server accepts (1 MB of JSON, 4 MB for a roster file). | Send film with the upload page; keep roster files under 2 MB. |
 | `NOT_FOUND`, `CONFLICT`, `VALIDATION_FAILED` | A missing item, a clash (e.g. an analysis already running) or invalid input. | The message names the problem. |
 | `JOB_CANCELLED` | The job was cancelled. | Click Retry to run it again. |
 | `WORKER_LOST` | The worker stopped during this job too many times. | Check `journalctl -u basketball-scout-worker` (and `journalctl -k \| grep -i oom` for memory), then Retry. |
@@ -706,8 +722,10 @@ Sign-in problems: **"Sign-in is not set up"** (HTTP 503, `AUTH_NOT_CONFIGURED`) 
 `.env` has no `SCOUT_AUTH_PASSWORD` or hash; **"Too many sign-in attempts"** (429)
 clears itself after 5 minutes (or restart the web app); **"Request blocked"** (403,
 `CROSS_SITE_REQUEST`) means a change was sent from a page on another website: open
-Basketball Scout directly (type its address or use a bookmark) and try again. Forgot
-the password? `sudo grep SCOUT_AUTH_PASSWORD /opt/basketball-scout/.env`, or set a new
+Basketball Scout directly (type its address or use a bookmark) and try again; **"Unknown
+server name"** (403, `HOST_NOT_ALLOWED`) means the address you typed is not in
+`SCOUT_ALLOWED_HOSTS` (with sign-in off, add the name you use there, or use the
+server's IP address). Forgot the password? `sudo grep SCOUT_AUTH_PASSWORD /opt/basketball-scout/.env`, or set a new
 one and `sudo systemctl restart basketball-scout-web`.
 
 **Uploads fail with "413 Request Entity Too Large".** That page comes from nginx (or
@@ -763,6 +781,16 @@ Download, or set up HTTPS.
 - **Play recognition is rule-based.** It labels what the tracking suggests (thresholds
   in `config/play_rules.yaml`); expect missed and mislabelled plays, more so when the
   court was not mapped.
+- **Free throws need the court mapped.** Without court positions the pipeline cannot
+  tell a free throw from a field goal: FTA shows 0 and each free throw counts as a
+  2-point attempt. Calibrate and run a full re-analysis (see Court calibration).
+- **Periods are inferred.** Quarter breaks and full timeouts look alike on film. The
+  pipeline takes the longest stoppage (5 minutes or more) as halftime and one stoppage
+  per half as the quarter break; other long stoppages show as timeouts. Overtime is
+  not split off.
+- **ID swaps.** When two players cross and the tracker swaps their ids, the rest of
+  that track's stats go to the wrong player. A track is assigned as a whole; the app
+  cannot split one yet.
 - **Check the Data quality tab** for every game: court mapped, jersey match rate and
   ball visibility tell you how far to trust that particular film.
 

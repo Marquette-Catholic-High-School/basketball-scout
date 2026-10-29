@@ -148,7 +148,10 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   running). If a worker dies, the lease expires and another worker re-claims the job;
   because `Job.external_id` (the Modal FunctionCall id) was saved right after submit,
   the new worker resumes polling instead of resubmitting.
-* `attempts > max_attempts` → fail with `WORKER_LOST`.
+* `attempts > max_attempts` → fail with `WORKER_LOST`. With either queue, a job whose
+  worker died stays `running` until another worker re-claims it; a cancel meanwhile is
+  handled by that worker. A worker whose lease lapsed keeps a job that its own claim
+  hands back, and steps aside when another worker has taken the job over.
 * **Graceful stop** (SIGTERM, e.g. `systemctl restart`): the worker stops claiming. A
   job that is waiting on the GPU is handed back at its next poll: `worker_id` cleared,
   lease expired at once, and the attempt is not counted towards `WORKER_LOST`; the next
@@ -169,10 +172,14 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
 * A resumed job is polled by the processor that created its handle (`Job.processor`),
   even if `SCOUT_PROCESSOR` changed in between.
 * Retryable failures (see `scout/errors.py`) show a Retry button in the UI
-  (`POST /api/jobs/{id}/retry` creates a new job).
+  (`POST /api/jobs/{id}/retry` creates a new job). Retrying an ANALYZE job that failed
+  after the GPU results were saved (stage `analyzing` or `reporting`, `tracking.json.gz`
+  on disk) starts a REANALYZE instead, so the film is not sent to the GPU again.
 * Game status follows the latest ANALYZE/REANALYZE job: `queued`, `processing`,
   `ready` (analysis.json written) or `failed` (with `Game.error`). After a cancel it
-  goes back to `ready`, `uploaded` or `draft`, decided from the files on disk.
+  goes back to `ready`, `uploaded` or `draft`, decided from the files on disk. The worker
+  settles the game status before it marks the job finished (success, failure and
+  cancel alike), so a page that reloads the game when its job ends sees the final status.
 * A report failure after a successful analysis does NOT fail the ANALYZE job; it is
   recorded as a job warning and the coach can click "Generate report" again.
 * Mock processor (`SCOUT_PROCESSOR=mock`): the seed of the synthetic game is written to
@@ -190,10 +197,22 @@ so their codes are plain strings, not `ErrorCode` members: `AUTH_REQUIRED` (401 
 `WWW-Authenticate` challenge), `AUTH_THROTTLED` (429 with `Retry-After`; 10 wrong
 passwords from one address within 5 minutes lock it out for 5 minutes, 30 from one
 IPv6 /64 network lock out the network) and `AUTH_NOT_CONFIGURED` (503: no password or
-hash set, or the hash is malformed). `CROSS_SITE_REQUEST` (403) comes from the
+hash set, or the hash is malformed). Failures expire after 5 minutes, and a successful
+sign-in does not clear an address's count. A browser that signs in successfully gets an
+HttpOnly `scout_device` cookie (`SameSite=Lax`, `Secure` over HTTPS, HMAC-signed with a
+key kept in memory, so a restart or a password change issues new ones). While it holds
+one, address and network lockouts do not apply to it, but it has its own limit of 10
+failures in 5 minutes; it is not a credential, as every request still needs the
+password. `CROSS_SITE_REQUEST` (403) comes from the
 same-origin middleware in front of it: a POST/PUT/PATCH/DELETE that the browser marks
 as sent by another website (`Sec-Fetch-Site`, else `Origin` / `Referer` against `Host`
-or `X-Forwarded-Host`) is refused. The interactive API docs are at `/api/docs` and
+or `X-Forwarded-Host`) is refused, even with auth disabled. `HOST_NOT_ALLOWED` (403)
+comes from the same middleware: the request's `Host` is not one the server answers to
+(`SCOUT_ALLOWED_HOSTS`; when it is empty, any name while auth is on, and with auth
+disabled only IP addresses, `localhost` / `*.localhost` and the machine's own name, which
+blocks DNS rebinding). `GET /api/health/live` is exempt. Request bodies are capped:
+1 MB for JSON, 4 MB for a roster file; upload chunks have their own limit
+(`REQUEST_TOO_LARGE`, 413). The interactive API docs are at `/api/docs` and
 `/api/openapi.json` (behind sign-in).
 
 Extra rules beyond the table:
@@ -203,9 +222,21 @@ Extra rules beyond the table:
   REPORT included. Only one REPORT job per game may be active at a time.
 * **New film** (a completed upload or a video URL) deletes the old film, tracking,
   annotated video and `analysis.json` (`has_analysis` becomes false) and clears the
-  track overrides and the coach's team-colour choice (`team_id_map`): track and team
-  ids from the old film mean nothing for the new one. A video URL game has
-  `has_video=false`, `video_url` set (the GPU downloads it).
+  track overrides, the coach's team-colour choice (`team_id_map`) and the court
+  calibration: track and team ids from the old film mean nothing for the new one, and
+  the calibration was clicked on the old film's frame. It also aborts the game's other
+  open uploads and deletes their `.part` files. A video URL game has `has_video=false`,
+  `video_url` set (the GPU downloads it; the local processor downloads it on the server
+  and refuses links to private, loopback and link-local addresses). Video links must be
+  `http(s)` with a valid host and port (0-65535).
+* **Uploads**: starting an upload aborts the game's open uploads that have had no data
+  for an hour. `PUT /api/uploads/{id}/chunk` answers 409 `UPLOAD_INCOMPLETE` with the
+  current upload after 120 s without data, so the browser can resume from `received`.
+* `POST /api/games/{id}/jobs` checks `params.coach_focus` like `ReportRequest` for
+  every kind (kind=report keeps only `coach_focus`): ANALYZE and REANALYZE jobs that
+  write the report send it to Claude too.
+* `GET /api/games/{id}/video` is sent with `Cache-Control: no-cache`: the URL stays the
+  same when the film is replaced or re-analysed, so browsers revalidate with the ETag.
 * `PUT /api/games/{id}/tracks/{track_id}`: `track_id` in the body is optional; the one
   in the path wins.
 * `GET /api/games/{id}/jobs` lists the newest job first.
@@ -275,27 +306,58 @@ Export/download routes accept `?download=1` to add `Content-Disposition: attachm
 * **Block**: `blocked_by_track` → BLOCK row, BLK+1 for the blocker (the shot counts as a
   miss).
 * **Free throws**: `free_throw` → FT_MADE/FT_MISSED, FTA+1 (FTM+1, PTS+1).
-* **Rebounds**: `rebound` → OREB when `offensive` is true (or, when null, the rebounder's
-  side matches the side of the last missed FG/FT), else DREB.
+* **Event side** = the side of the actor's track (manual override, then the track's
+  team, then the roster assignment); the event's own `team_id` only when the actor's
+  team is unknown, and for team events. OpenHoopVision's per-event team label can
+  flicker, while the track's majority team is stable. An assist or block credited to a
+  player of the other team is dropped.
+* **Rebounds**: `rebound` → OREB when the rebounder's side matches the side of the last
+  missed FG/FT (both known); when either side is unknown, the pipeline's `offensive`
+  flag decides; else DREB.
 * **Turnovers / steals**: `turnover` → TOV+1 for the player who lost it; with
   `kind="steal"` or `stolen_by_track`, a STEAL row and STL+1 for the stealer.
 * **Fouls**: `foul` → PF+1 for the fouler.
-* **Possessions** change on: a made FG, a made last FT of a trip, a defensive rebound,
-  a turnover, a jump ball and a period start. Offensive rebounds continue the
-  possession.
+* **Possessions** change on: a made FG (unless the scoring team's free throw is the next
+  ball event: an and-one), the made last FT of a trip (technical-foul free throws: the
+  shooting team keeps the ball), a defensive rebound, a turnover, a jump ball and a
+  period start. Offensive rebounds continue the possession.
   * After a made basket the possession flips at once, unless the scoring team's free
     throw is the next ball event (an and-one: the other team has not done anything with
     the ball yet); then the flip is undone and the free throw belongs to the scoring
-    possession. This holds however long the film takes to get to the line.
+    possession. This holds however long the film takes to get to the line, and however
+    long the shooter holds the ball for the official.
+  * **Dead balls.** After a shooting foul the ball is dead until the fouled team's free
+    throws, and between two free throws of one trip: a `rebound` then is dropped, and a
+    hold by the other team does not change possession. A hold by the team that has just
+    scored (a field goal or its last free throw), before the other team acts, does not
+    start a possession either.
   * A missed last free throw does not flip the possession by itself: the rebound decides.
-  * Gaps are filled from ball-holder segments, and a shot, free throw, turnover or
-    offensive rebound by the team without the ball also starts an `inferred` possession.
+  * Gaps are filled from ball-holder segments of 2 s or more, and a shot, free throw,
+    turnover or offensive rebound by the team without the ball also starts an `inferred`
+    possession. When the other team gains control within 4 s of a missed shot or last
+    free throw that nobody was credited with rebounding, and nothing stopped play, the
+    new possession counts as an unseen defensive rebound (reason `def_rebound`, a live
+    start) but no DREB is credited.
+  * **Transition** (`Possession.transition`, FastScout's fast-break points): a live
+    start (defensive rebound, steal, live-ball turnover), the possession's last field-goal
+    attempt, turnover or fouled shot within 10 s of the start, and no timeout or common
+    foul before it. OpenHoopVision reports a turnover only for a direct change of control
+    within 0.5 s, so a turnover without a known dead-ball kind (`travel`,
+    `out_of_bounds`, `offensive_foul`) counts as live.
   * `points_per_possession` = points / possessions for that side.
 * Unknown player → stat goes to the team's `team_unattributed` line.
 * `GameAnalysis.data_quality.warnings` holds the pipeline's warnings
   (docs/TRACKING_SCHEMA.md) plus the server's own: `NO_ROSTER`, `COURT_NOT_MAPPED`
   (pixel mode: no homography and no calibration) and `LOW_JERSEY_MATCH` (under 50 % of
-  player time matched to a roster jersey).
+  player time matched to a roster jersey). When the server applied the coach's
+  calibration, the pipeline's `NO_COURT_HOMOGRAPHY` / `COURT_MAPPING_SPARSE` warnings are
+  dropped (the calibration answers them), but `FREE_THROWS_NOT_DETECTED` stays: free
+  throws are found on the GPU, so only a full re-analysis (ANALYZE, which sends the
+  calibration to the GPU) detects them.
+* **Calibration and re-analysis.** A REANALYZE after the coach re-calibrates or removes
+  the calibration replaces a calibration that the GPU run had baked in (its `manual`
+  homography and the positions projected with it); positions from the pipeline's court
+  model are kept.
 
 ## Configuration
 

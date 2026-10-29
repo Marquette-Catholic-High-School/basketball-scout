@@ -222,9 +222,10 @@ passwords.
 The web app is light; the heavy computer vision runs on Modal.
 
 - **One web process.** Keep the web unit's single uvicorn process (no `--workers`): the
-  sign-in lockout, remembered logins, the per-upload locks that keep resumed upload
-  chunks in order and the lock that stops a double click from starting two analyses
-  live in that process's memory.
+  sign-in lockout, remembered logins, the key that signs the `scout_device` cookies, the
+  per-upload locks that keep resumed upload chunks in order and the lock that stops a
+  double click from starting two analyses live in that process's memory. A second
+  uvicorn process would not recognise the first one's device cookies.
 - **More films at once:** raise `SCOUT_WORKER_CONCURRENCY` (default 2, max 16; restart
   the worker) together with `SCOUT_MODAL_MAX_CONTAINERS` (default 2; redeploy). A
   running job mostly waits on the GPU, but the analysis step after it runs on this

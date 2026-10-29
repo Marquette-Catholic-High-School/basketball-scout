@@ -56,11 +56,17 @@ class Settings(BaseSettings):
     auth_password: str | None = None
     auth_password_hash: str | None = Field(default=None, description="pbkdf2_sha256$<iterations>$<salt_b64>$<hash_b64> from `python -m scout.auth hash-password`")
     auth_disabled: bool = False
+    allowed_hosts: str = Field(
+        default="",
+        description="Comma-separated host names the server answers to, e.g. scout.school.org,*.school.org. "
+        "Empty: any name while sign-in is on; with SCOUT_AUTH_DISABLED=true only IP addresses, localhost and "
+        "this machine's own name (blocks DNS rebinding).",
+    )
 
     # --- uploads ------------------------------------------------------------
     max_upload_gb: float = 12.0
     upload_chunk_mb: int = 16
-    max_video_minutes: float = 150.0
+    max_video_minutes: float = Field(default=150.0, gt=0, le=2880)  # the GPU pipeline refuses films over 48 h
 
     # --- queue / worker -----------------------------------------------------
     queue_backend: Literal["sqlite", "redis"] = "sqlite"
@@ -94,7 +100,7 @@ class Settings(BaseSettings):
     )
     claude_model: str = "claude-opus-5-5"
     claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
-    claude_max_tokens: int = Field(default=32000, ge=2048, le=128000)
+    claude_max_tokens: int = Field(default=64000, ge=2048, le=128000)
     claude_fallbacks: bool = True
     claude_timeout_s: float = Field(default=900.0, gt=0)
     auto_report: bool = True
@@ -147,6 +153,11 @@ class Settings(BaseSettings):
     @property
     def auth_enabled(self) -> bool:
         return not self.auth_disabled
+
+    @property
+    def allowed_host_patterns(self) -> list[str]:
+        """``SCOUT_ALLOWED_HOSTS`` as lower-case names (``*.example.org`` matches subdomains)."""
+        return [name.strip().lower().rstrip(".") for name in self.allowed_hosts.split(",") if name.strip()]
 
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.games_dir, self.uploads_dir, self.database_path.parent):

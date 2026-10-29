@@ -407,7 +407,7 @@ class ZoneSplits(_Model):
 
 class BoxScoreLine(_Model):
     player: PlayerRef
-    minutes_est: float | None = Field(default=None, description="Approximate on-floor VIDEO minutes from track presence (includes stoppages).")
+    minutes_est: float | None = Field(default=None, description="Approximate on-floor VIDEO minutes from track presence (includes stoppages; with court coordinates, time tracked more than 4 ft outside the lines, e.g. on the bench, is not counted).")
     pts: int = 0
     fgm: int = 0
     fga: int = 0
@@ -514,7 +514,12 @@ class TeamSummary(_Model):
 
 
 class DataQuality(_Model):
-    homography_available: bool = False
+    homography_available: bool = Field(
+        default=False,
+        description='True when positions and shot zones are in court feet (coord_mode == "court"): a pipeline homography, '
+        "the coach's calibration, or court positions from the pipeline's court model (OpenHoopVision sends positions, "
+        'not matrices). Shown as "Court mapped".',
+    )
     coord_mode: Literal["court", "pixel"] = "pixel"
     ball_coverage: float = 0.0
     jersey_match_rate: float = 0.0
@@ -762,7 +767,7 @@ class UploadSession(_Model):
 
 class VideoUrlRequest(_Model):
     url: str = Field(min_length=8, max_length=2000)
-    filename: str | None = None
+    filename: str | None = Field(default=None, max_length=255)
 
 
 class JobCreate(_Model):

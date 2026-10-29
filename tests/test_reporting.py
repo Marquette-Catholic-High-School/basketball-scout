@@ -549,7 +549,7 @@ def test_refusal(analysis, game, rosters, settings):
 
 def test_max_tokens_is_truncated_even_with_text(analysis, game, rosters, settings):
     error = _error(analysis, game, rosters, settings, make_message(REPORT_JSON[:200], stop_reason="max_tokens"))
-    assert error.code == ErrorCode.REPORT_TRUNCATED and "32000" in error.message
+    assert error.code == ErrorCode.REPORT_TRUNCATED and str(settings.claude_max_tokens) in error.message
 
 
 @pytest.mark.parametrize(
