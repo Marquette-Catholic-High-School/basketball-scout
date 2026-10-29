@@ -461,7 +461,8 @@ table lists every tracked player with the readings and the match; pick the right
 player when it is wrong, choose a team's **Unknown player** when you know the team but
 not the player (also for a track the tracker took for a referee), or mark referees and
 spectators as **Not a player**, then **Save & re-run analysis** (about a minute, no
-GPU). **Unclear match** means the best read is a roster number, but another track was
+GPU). **Unknown player (keep team)** keeps the team the table shows. **Unclear match**
+means the best read is a roster number, but another track was
 matched to that player or the readings were too split to be sure: assign it yourself if
 you know who it is. The FastScout name column sets the exact spelling FastScout expects.
 
@@ -487,8 +488,9 @@ map the court, the Data quality tab warns that free throws were not detected
 warning or at the top of the game page; it sends the film to the GPU again, with your
 calibration) instead of **Re-run analysis**, which only redoes the stats on this server.
 A Full re-analysis numbers the players' tracks again, so it clears the track
-assignments you made on the Roster page; redo them afterwards. A new film clears the
-calibration, since it was clicked on the old film.
+assignments you made on the Roster page; the Roster page takes new ones once it has
+finished. Cancelling it before its new results are in place keeps the earlier
+results. A new film clears the calibration, since it was clicked on the old film.
 
 ### 5. Reading the results
 

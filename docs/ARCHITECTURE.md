@@ -172,6 +172,16 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   call and marks it `cancelled`, also when its attempts ran out (a cancel wins over
   `WORKER_LOST`). Cancel is also checked between stages and while a failed film upload
   waits to be retried.
+* A cancel stops an ANALYZE only until its new results are installed: a results
+  download in progress is thrown away, so the game keeps its earlier tracking,
+  overlay, analysis and track overrides. Once the results are installed (stage
+  `analyzing`), the analysis runs to the end and the job ends `succeeded`; a cancel then
+  only skips the automatic report. Either way a job warning says so: "Cancelled after
+  the new GPU results were in place: the analysis was finished, the scouting report was
+  skipped." (without the report clause when no report was due). A GPU poll or a
+  results download that fails after the coach asked to cancel ends the job
+  `cancelled`, not `failed`; when another worker has taken the job over meanwhile, the
+  worker steps aside instead.
 * A film upload to the Modal volume that fails is tried twice more, after 10 s and
   30 s (not after an auth error, a film that is gone, or a cancelled upload). A cancel
   during those waits ends the job as `cancelled` within a second; a graceful stop hands
@@ -195,7 +205,10 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
 * Retryable failures (see `scout/errors.py`) show a Retry button in the UI
   (`POST /api/jobs/{id}/retry` creates a new job). Retrying an ANALYZE job that failed
   after the GPU results were saved (stage `analyzing` or `reporting`, `tracking.json.gz`
-  on disk) starts a REANALYZE instead, so the film is not sent to the GPU again.
+  on disk) starts a REANALYZE instead, so the film is not sent to the GPU again. The
+  page offers that retry, labelled **Re-run analysis**, even when the error is not
+  retryable (for example `CONFIG_INVALID`): once the coach has fixed the cause, the
+  cheap retry is what they need.
 * Game status follows the latest ANALYZE/REANALYZE job: `queued`, `processing`,
   `ready` (analysis.json written) or `failed` (with `Game.error`). After a cancel it
   goes back to `ready`, `uploaded` or `draft`, decided from the files on disk. The worker
@@ -209,7 +222,8 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   into place in one step, so a download cut short (the worker killed mid-download, a
   full disk) leaves the earlier run's tracking, overlay and track overrides together.
   A worker whose job was taken over during the download steps aside: it neither
-  installs nor fails it.
+  installs nor fails it. When an ANALYZE ends without installing (failed or
+  cancelled), its worker removes `.incoming/`.
 * A report failure after a successful analysis does NOT fail the ANALYZE job; it is
   recorded as a job warning and the coach can click "Generate report" again.
 * Mock processor (`SCOUT_PROCESSOR=mock`): the seed of the synthetic game is written to
@@ -218,7 +232,7 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
 
 ## HTTP API
 
-All routes require HTTP Basic auth except `GET /api/health/live`. Errors are JSON
+All routes require HTTP Basic auth except `GET` / `HEAD /api/health/live`. Errors are JSON
 `{"error": ErrorInfo}` with the status from `scout.errors` (validation errors: 422 +
 `VALIDATION_FAILED`, detail lists the bad fields).
 
@@ -242,7 +256,7 @@ comes from the same middleware: the request's `Host`, or a name in `X-Forwarded-
 never allow one), is not one the server answers to (`SCOUT_ALLOWED_HOSTS`, `*.school.org`
 for subdomains, `*` for any name; IP addresses, `localhost` and `*.localhost` always
 work; when it is empty, any name while auth is on, and with auth disabled only those and
-the machine's own name, which blocks DNS rebinding). `GET /api/health/live` is exempt.
+the machine's own name, which blocks DNS rebinding). `GET` / `HEAD /api/health/live` is exempt.
 Request bodies are capped (`REQUEST_TOO_LARGE`, 413): 1 MB for JSON, 4 MB for a
 multipart form such as a roster file; upload chunks have their own limit (twice the
 upload's chunk size, `UPLOAD_TOO_LARGE`). The interactive API docs are at `/api/docs` and
@@ -252,7 +266,11 @@ Extra rules beyond the table:
 
 * **409 `CONFLICT` while an analysis job (ANALYZE / REANALYZE) is queued or running:** it
   blocks starting or completing an upload, setting a video URL and every new job,
-  REPORT included. Only one REPORT job per game may be active at a time.
+  REPORT included. Only one REPORT job per game may be active at a time. While an
+  ANALYZE is queued or running it also blocks `PUT` / `DELETE
+  /api/games/{id}/tracks/{track_id}`: its new run numbers the tracks again, and
+  installing it clears the overrides (see **Full re-analysis**), so a fix made
+  meanwhile would be dropped without a word.
 * **New film** (a completed upload or a video URL) deletes the old film, tracking,
   annotated video and `analysis.json` (`has_analysis` becomes false) and clears the
   track overrides, the coach's team-colour choice (`team_id_map`) and the court
@@ -268,8 +286,11 @@ Extra rules beyond the table:
   extension of up to 10 characters (the upload page sends only the link).
 * **Full re-analysis** (an ANALYZE of a game that already has GPU results) sends the
   film and the court calibration to the GPU again; the old results stay until the new
-  ones arrive. When the worker installs the new tracking over the earlier run's, it
-  clears the track overrides (the new run may number its tracks differently);
+  ones are installed. When the worker installs the new tracking over the earlier
+  run's, it clears the track overrides (the new run may number its tracks
+  differently) and deletes the earlier run's `analysis.json` (`has_analysis` becomes
+  false until the new analysis is saved, about a minute later), so no page shows the
+  earlier run's track ids over the new tracking, also when that analysis fails;
   `team_id_map` stays, because OpenHoopVision's team ids are its dark/light jersey
   clusters.
 * **Uploads**: starting an upload aborts the game's open uploads that have had no data
@@ -296,7 +317,7 @@ existing game), `GET /games/{id}` (results), `GET /games/{id}/roster`. Assets un
 | Method & path | Body | Returns |
 |---|---|---|
 | `GET /api/health` | | `HealthStatus` |
-| `GET /api/health/live` (no auth) | | `{"status": "ok"}` |
+| `GET` / `HEAD /api/health/live` (no auth) | | `{"status": "ok"}` (HEAD: headers only) |
 | `GET /api/court/landmarks` | | `{"court": {...CourtConfig}, "landmarks": {name: [x, y]}}` |
 | `GET /api/games` | | `list[Game]` (newest first) |
 | `POST /api/games` | `GameCreate` | `Game` (201) |

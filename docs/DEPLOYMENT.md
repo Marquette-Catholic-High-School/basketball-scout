@@ -157,7 +157,7 @@ modal app logs basketball-scout                           # the GPU side (on Mod
 
 **Health endpoints:**
 
-- `GET /api/health/live` needs no sign-in and answers `{"status": "ok"}` while the web
+- `GET /api/health/live` (or `HEAD`) needs no sign-in and answers `{"status": "ok"}` while the web
   app runs. Point an uptime monitor (Uptime Kuma, the school's monitoring) at
   `https://scout.myschool.org/api/health/live`.
 - `GET /api/health` needs the coaches' login and reports what works:
