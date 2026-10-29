@@ -154,7 +154,11 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
 * A worker claims it (lease = `SCOUT_JOB_LEASE_SECONDS`, renewed by heartbeat while
   running). If a worker dies, the lease expires and another worker re-claims the job;
   because `Job.external_id` (the Modal FunctionCall id) was saved right after submit,
-  the new worker resumes polling instead of resubmitting.
+  the new worker resumes polling instead of resubmitting. An ANALYZE claimed at
+  `analyzing` or `reporting` with `tracking.json.gz` on disk (its worker died after
+  installing the new results) goes straight on to the analysis from the installed
+  results: it neither polls the GPU call nor downloads the results again, so its stage
+  never goes back to `gpu_processing`.
 * `attempts > max_attempts` → fail with `WORKER_LOST`. With either queue, a job whose
   worker died stays `running` until another worker re-claims it; a cancel meanwhile is
   handled by that worker. A worker whose lease lapsed keeps a job that its own claim
@@ -173,8 +177,9 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   `WORKER_LOST`). The exception is an ANALYZE whose worker died after installing its
   new results (claimed at `analyzing` or `reporting`, `tracking.json.gz` on disk) while
   it has attempts left: the claiming worker finishes the analysis from the installed
-  results, without downloading them again, as the next bullet says. Cancel is also
-  checked between stages and while a failed film upload waits to be retried.
+  results, as the bullet above says, and the cancel works as the next bullet says.
+  Cancel is also checked between stages and while a failed film upload waits to be
+  retried.
 * A cancel stops an ANALYZE only until its new results are installed: a results
   download in progress is thrown away, so the game keeps its earlier tracking,
   overlay, analysis and track overrides. Once the results are installed (stage
@@ -185,10 +190,26 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   already writing the report: that report is kept). A GPU poll or a results download
   that fails after the coach asked to cancel ends the job `cancelled`, not `failed`;
   when another worker has taken the job over meanwhile, the worker steps aside instead.
-  The job panel's Cancel confirm says so for an ANALYZE at `analyzing` or `reporting`,
-  and **Start again** on a cancelled Full re-analysis of a game that has an analysis
-  asks first, like the Full re-analysis button (the film goes to the GPU again and the
-  track assignments are cleared).
+* A cancel stops a REANALYZE only until its analysis starts (stage `analyzing`), and a
+  REPORT only until Claude starts writing (stage `reporting`). After that the job runs
+  to the end and ends `succeeded`; a cancel then only skips the report a REANALYZE was
+  still to write (`params.report`). A job warning says so: "Cancelled after the
+  analysis had started: the analysis was finished, the scouting report was skipped."
+  (without the report clause when no report was due, or when Claude was already
+  writing the report: that report is kept), and for a REPORT: "Cancelled after Claude
+  had started writing the report: the report was kept."
+* A cancel no longer stops an ANALYZE or REANALYZE at `analyzing` or `reporting`, or a
+  REPORT at `reporting` (`scout.schemas.cancel_stops_job`, mirrored by `tooLateToStop`
+  in `static/js/labels.js`). A cancel request for such a job sets its message to
+  "Cancel requested: too late to stop this job, so it will finish." instead of
+  "Cancelling...", and no page says "Cancelling…" for it: the pages show its stage and
+  "Cancel requested". The job panel's Cancel confirm says what a cancel still does to
+  such a job, in words that hold whether or not a report is due.
+* **Start again** restarts a cancelled job with its kind and params (`POST
+  /api/jobs/{id}/retry`). On a cancelled Full re-analysis it asks first, like the Full
+  re-analysis button (the film goes to the GPU again and the track assignments are
+  cleared), and so does **Retry** on a Full re-analysis that failed before its new
+  results were installed.
 * A film upload to the Modal volume that fails is tried twice more, after 10 s and
   30 s (not after an auth error, a film that is gone, or a cancelled upload). A cancel
   during those waits ends the job as `cancelled` within a second; a graceful stop hands
@@ -221,10 +242,14 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   goes back to `ready`, `uploaded` or `draft`, decided from the files on disk. The worker
   settles the game status before it marks the job finished (success, failure and
   cancel alike), so a page that reloads the game when its job ends sees the final status.
-* When an ANALYZE installs its outputs, the worker sets `has_annotated_video` at once,
-  so a failure later in the job does not leave the flag pointing at a removed file. New
-  tracking installed over an earlier run's also clears the game's track overrides (see
-  **Full re-analysis** below).
+* When an ANALYZE installs its outputs, the worker sets `has_annotated_video` and
+  `has_tracking` at once, so a failure later in the job does not leave the flags
+  pointing at removed files. New tracking installed over an earlier run's also clears
+  the game's track overrides (see **Full re-analysis** below).
+* `Game.has_tracking` is true exactly when `tracking.json.gz` is in the game folder,
+  so a REANALYZE can start: in every Game body the API returns, also for games saved
+  before the field existed, and also after a cancel or a failure left the game without
+  an analysis.
 * An ANALYZE downloads its results into the game folder's `.incoming/` and moves them
   into place in one step, so a download cut short (the worker killed mid-download, a
   full disk) leaves the earlier run's tracking, overlay and track overrides together.
@@ -279,9 +304,10 @@ Extra rules beyond the table:
   installing it clears the overrides (see **Full re-analysis**), so a fix made
   meanwhile would be dropped without a word.
 * **New film** (a completed upload or a video URL) deletes the old film, tracking,
-  annotated video and `analysis.json` (`has_analysis` becomes false) and clears the
-  track overrides, the coach's team-colour choice (`team_id_map`) and the court
-  calibration: track and team ids from the old film mean nothing for the new one, and
+  annotated video and `analysis.json` (`has_analysis` and `has_tracking` become
+  false) and clears the track overrides, the coach's team-colour choice
+  (`team_id_map`) and the court calibration: track and team ids from the old film
+  mean nothing for the new one, and
   the calibration was clicked on the old film's frame. It also aborts the game's other
   open uploads and deletes their `.part` files, and what a results download cut short
   left in the game's `.incoming/` folder. A video URL game has `has_video=false`,
@@ -291,9 +317,11 @@ Extra rules beyond the table:
   with a valid host and port (0-65535); a file name taken from the link is URL-decoded,
   has control characters turned into spaces and is cut to 255 characters, keeping an
   extension of up to 10 characters (the upload page sends only the link).
-* **Full re-analysis** (an ANALYZE of a game that already has GPU results) sends the
-  film and the court calibration to the GPU again; the old results stay until the new
-  ones are installed. When the worker installs the new tracking over the earlier
+* **Full re-analysis** (an ANALYZE of a game that already has GPU results:
+  `has_tracking` is true) sends the film and the court calibration to the GPU again;
+  the old results stay until the new ones are installed. The game page offers **Re-run
+  analysis** and **Full re-analysis** whenever `has_tracking` is true (**Analyze film**
+  otherwise). When the worker installs the new tracking over the earlier
   run's, it clears the track overrides (the new run may number its tracks
   differently) and deletes the earlier run's `analysis.json` (`has_analysis` becomes
   false until the new analysis is saved, about a minute later), so no page shows the

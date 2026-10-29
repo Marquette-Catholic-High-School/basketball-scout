@@ -467,7 +467,10 @@ the readings were too split to be sure, or both rosters have that number and the
 has no team: assign it yourself if you know who it is. If the film was analysed again
 (a **Full re-analysis**, for example from another tab) since you opened the page,
 **Save & re-run analysis** shows the new table instead of saving: make your choices
-again there. The FastScout name column sets the exact spelling FastScout expects.
+again there. If you remove a player from a roster, the track choices for that player
+that you had not saved are dropped (the page says which tracks), and saving the roster
+removes that player's saved assignments. The FastScout name column sets the exact
+spelling FastScout expects.
 
 ### 3. Confirm the team colours
 
@@ -495,7 +498,9 @@ A Full re-analysis numbers the players' tracks again, so it clears the track
 assignments you made on the Roster page; the Roster page locks them while it runs and
 takes new ones once it has finished (choices you had not saved are dropped once its
 new tracks are in place). Cancelling it before its new results are in place keeps the
-earlier results. A new film clears the calibration, since it was clicked on the old film.
+earlier results; after that it can no longer be stopped, and a cancel only skips the
+automatic scouting report (a **Re-run analysis** likewise, once its analysis has
+started). A new film clears the calibration, since it was clicked on the old film.
 
 ### 5. Reading the results
 
