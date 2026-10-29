@@ -185,6 +185,10 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   already writing the report: that report is kept). A GPU poll or a results download
   that fails after the coach asked to cancel ends the job `cancelled`, not `failed`;
   when another worker has taken the job over meanwhile, the worker steps aside instead.
+  The job panel's Cancel confirm says so for an ANALYZE at `analyzing` or `reporting`,
+  and **Start again** on a cancelled Full re-analysis asks first, like the Full
+  re-analysis button (the film goes to the GPU again and the track assignments are
+  cleared).
 * A film upload to the Modal volume that fails is tried twice more, after 10 s and
   30 s (not after an auth error, a film that is gone, or a cancelled upload). A cancel
   during those waits ends the job as `cancelled` within a second; a graceful stop hands
@@ -292,10 +296,10 @@ Extra rules beyond the table:
   ones are installed. When the worker installs the new tracking over the earlier
   run's, it clears the track overrides (the new run may number its tracks
   differently) and deletes the earlier run's `analysis.json` (`has_analysis` becomes
-  false until the new analysis is saved, about a minute later), so no page loaded after
-  the install shows the earlier run's track ids over the new tracking, also when that
-  analysis fails (a Roster page opened before the Full re-analysis started keeps its
-  table until it is reloaded, or until a save is refused while the analysis runs);
+  false until the new analysis is saved, about a minute later), so no page shows the
+  earlier run's track ids over the new tracking, also when that analysis fails (a
+  Roster page opened before the Full re-analysis started reads the tracks again before
+  it saves, and shows the new table instead of saving when they were numbered again);
   `team_id_map` stays, because OpenHoopVision's team ids are its dark/light jersey
   clusters.
 * **Uploads**: starting an upload aborts the game's open uploads that have had no data

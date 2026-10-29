@@ -464,8 +464,10 @@ spectators as **Not a player**, then **Save & re-run analysis** (about a minute,
 GPU). **Unknown player (keep team)** keeps the team the table shows. **Unclear match**
 means the best read is a roster number, but another track was matched to that player,
 the readings were too split to be sure, or both rosters have that number and the track
-has no team: assign it yourself if you know who it is. The FastScout name column sets
-the exact spelling FastScout expects.
+has no team: assign it yourself if you know who it is. If the film was analysed again
+(a **Full re-analysis**, for example from another tab) since you opened the page,
+**Save & re-run analysis** shows the new table instead of saving: make your choices
+again there. The FastScout name column sets the exact spelling FastScout expects.
 
 ### 3. Confirm the team colours
 
@@ -479,9 +481,10 @@ Shot zones and court positions need the court mapped. OpenHoopVision usually fin
 the court lines by itself; the **Data quality** tab says whether it did. If not, and
 the camera **never moved** (tripod, no pan or zoom): **Calibrate court**, find a frame
 with clear floor lines, pick a landmark, click exactly where it is, add at least 4
-points spread across the court, **Save calibration**, then **Re-run analysis**. For a
-panning camera there is nothing to calibrate; zones stay approximate. Set the gym's
-length in `config/court.yaml` if you know it.
+points spread across the court, **Save calibration**, then **Re-run analysis**
+(**Analyze film** for a game that has not been analysed yet). For a panning camera
+there is nothing to calibrate; zones stay approximate. Set the gym's length in
+`config/court.yaml` if you know it.
 
 Free throws are found on the GPU and need court positions. If the first run could not
 map the court, the Data quality tab warns that free throws were not detected
