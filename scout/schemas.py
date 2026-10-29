@@ -562,6 +562,9 @@ class RosterPlayer(_Model):
     grade: str | None = None
     height: str | None = None
     notes: str | None = None
+    fastscout_name: str | None = Field(
+        default=None, description="Exact spelling used in the coach's FastScout roster (paste matching is by name)."
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

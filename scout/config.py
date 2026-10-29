@@ -79,12 +79,13 @@ class Settings(BaseSettings):
     modal_poll_seconds: float = Field(default=10.0, ge=1.0)
     modal_max_wait_hours: float = Field(default=8.0, gt=0)
     modal_cleanup: bool = True
-    analysis_fps: float = Field(default=10.0, gt=0, le=60)
+    analysis_fps: float = Field(default=15.0, gt=0, le=60)
     analysis_max_side: int = Field(default=1280, ge=320, le=3840)
     render_annotated_video: bool = True
     render_height: int = Field(default=720, ge=240, le=2160)
     detector_weights: str | None = None
     court_keypoint_weights: str | None = None
+    mock_seconds: float = Field(default=8.0, ge=0, description="Simulated GPU time for SCOUT_PROCESSOR=mock.")
 
     # --- Claude scouting report ---------------------------------------------
     anthropic_api_key: str | None = Field(

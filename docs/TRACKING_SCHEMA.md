@@ -29,7 +29,7 @@ with one dict:
   "video": {"type": "volume", "path": "uploads/j_abc123/source.mp4", "filename": "vs-central.mp4"},
   "output_dir": "results/j_abc123",
   "options": {
-    "analysis_fps": 10,
+    "analysis_fps": 15,
     "analysis_max_side": 1280,
     "render_video": true,
     "render_height": 720,
