@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from scout.errors import ScoutError
+from scout.errors import ErrorCode, ScoutError
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,7 @@ class ProcessorOutput:
 
 class Processor(ABC):
     name: str = "base"
+    poll_interval: float | None = None  # seconds between polls; None = SCOUT_MODAL_POLL_SECONDS
 
     @abstractmethod
     def submit(self, *, job_id: str, video: VideoSource, options: dict[str, Any]) -> str:
@@ -83,3 +84,24 @@ class Processor(ABC):
 
     def check_ready(self) -> None:  # noqa: B027 - optional
         """Raise ``ScoutError`` if the processor cannot run at all (missing credentials...)."""
+
+
+def poll_result_from_response(response: Any) -> PollResult:
+    """Turn the pipeline's response dict (docs/TRACKING_SCHEMA.md) into a finished PollResult."""
+    if not isinstance(response, dict):
+        detail = f"expected a response dict, got {type(response).__name__}"
+        return PollResult(state="failed", error=ScoutError(ErrorCode.TRACKING_RESULT_INVALID, detail=detail))
+    status = response.get("status")
+    if status == "ok":
+        return PollResult(state="succeeded", progress=100.0, message="GPU processing finished", result=response)
+    if status == "error":
+        error = response.get("error") if isinstance(response.get("error"), dict) else {}
+        code = str(error.get("code") or ErrorCode.PIPELINE_FAILED)
+        failure = ScoutError.from_code(code, _text(error.get("message")), _text(error.get("detail")))
+        return PollResult(state="failed", error=failure)
+    detail = f"unknown response status {status!r}"
+    return PollResult(state="failed", error=ScoutError(ErrorCode.TRACKING_RESULT_INVALID, detail=detail))
+
+
+def _text(value: Any) -> str | None:
+    return None if value is None else str(value)

@@ -206,7 +206,7 @@ def load_play_rules(path: Path | str | None = None) -> PlayRules:
     The file is merged over ``DEFAULT_RULES`` key by key, so a file that changes one
     threshold keeps every other default. ``enabled`` keys become ``PlayRules.enabled``.
     Unknown sections/keys are ignored with a warning; wrong value types raise
-    ``ScoutError(ANALYSIS_FAILED)`` naming the offending key.
+    ``ScoutError(CONFIG_INVALID)`` naming the offending key.
     """
     if path is None:
         from scout.config import get_settings
@@ -219,7 +219,7 @@ def load_play_rules(path: Path | str | None = None) -> PlayRules:
             continue
         if not isinstance(overrides, dict):
             message = f"play_rules.yaml: '{section}' must contain settings."
-            raise ScoutError(ErrorCode.ANALYSIS_FAILED, message, hint=_YAML_HINT, retryable=False)
+            raise ScoutError(ErrorCode.CONFIG_INVALID, message, hint=_YAML_HINT, retryable=False)
         for key, value in overrides.items():
             if key not in values[section]:
                 logger.warning("play_rules.yaml: unknown setting %s.%s ignored", section, key)
@@ -239,7 +239,7 @@ def _check_templates(templates: dict[str, Any]) -> None:
         )
         if not ok:
             message = f"play_rules.yaml: zone template {name!r} must be a list of [x, y] spots in feet."
-            raise ScoutError(ErrorCode.ANALYSIS_FAILED, message, hint=_YAML_HINT, retryable=False)
+            raise ScoutError(ErrorCode.CONFIG_INVALID, message, hint=_YAML_HINT, retryable=False)
 
 
 def _read_rules_file(path: Path) -> dict[str, Any]:
@@ -250,14 +250,14 @@ def _read_rules_file(path: Path) -> dict[str, Any]:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise ScoutError(
-            ErrorCode.ANALYSIS_FAILED,
+            ErrorCode.CONFIG_INVALID,
             f"config/play_rules.yaml could not be read: {exc}",
             hint="Fix the YAML (indentation, colons) or delete the file to use the built-in defaults.",
             retryable=False,
         ) from exc
     if not isinstance(data, dict):
         message = "config/play_rules.yaml must be a list of sections."
-        raise ScoutError(ErrorCode.ANALYSIS_FAILED, message, hint=_YAML_HINT, retryable=False)
+        raise ScoutError(ErrorCode.CONFIG_INVALID, message, hint=_YAML_HINT, retryable=False)
     return data
 
 
@@ -272,7 +272,7 @@ def _coerce(section: str, key: str, value: Any, default: Any) -> Any:
         ok = isinstance(value, type(default))
     if not ok:
         raise ScoutError(
-            ErrorCode.ANALYSIS_FAILED,
+            ErrorCode.CONFIG_INVALID,
             f"play_rules.yaml: {section}.{key} should be like {default!r}, got {value!r}.",
             hint=_YAML_HINT,
             retryable=False,

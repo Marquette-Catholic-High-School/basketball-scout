@@ -319,7 +319,7 @@ class _ConfigChecker:
 
     def error(self, key: str, problem: str) -> ScoutError:
         return ScoutError(
-            ErrorCode.VALIDATION_FAILED,
+            ErrorCode.CONFIG_INVALID,
             f"FastScout export settings ({self.source}): '{key}' {problem}",
             hint="Fix that setting in config/fastscout_columns.yaml (docs/FASTSCOUT.md explains each one), "
             "or delete the file to use the built-in defaults.",
@@ -375,7 +375,7 @@ class _ConfigChecker:
 def validate_fastscout_config(data: Any, *, source: str = "config") -> dict[str, Any]:
     """Check a raw config mapping and fill in defaults.
 
-    Raises ``ScoutError(VALIDATION_FAILED)`` naming the bad key. Missing sections and
+    Raises ``ScoutError(CONFIG_INVALID)`` naming the bad key. Missing sections and
     settings fall back to the defaults; ``custom_tables`` and ``columns`` lists replace
     the defaults entirely so a coach can remove columns or tables.
     """
@@ -477,7 +477,7 @@ def load_fastscout_config(path: Path | str | None = None) -> dict[str, Any]:
     """Load and validate the column mapping (defaults to settings.fastscout_config).
 
     Read on every call (it is tiny) so a coach's edits apply without a restart. A
-    missing file means "use the defaults"; a broken one raises VALIDATION_FAILED.
+    missing file means "use the defaults"; a broken one raises CONFIG_INVALID.
     """
     target = Path(path) if path is not None else get_settings().fastscout_config
     if not target.exists():
@@ -487,13 +487,13 @@ def load_fastscout_config(path: Path | str | None = None) -> dict[str, Any]:
         data = yaml.safe_load(target.read_text(encoding="utf-8"))
     except UnicodeDecodeError as exc:
         raise ScoutError(
-            ErrorCode.VALIDATION_FAILED,
+            ErrorCode.CONFIG_INVALID,
             f"FastScout export settings ({target.name}) are not saved as UTF-8 text.",
             hint="Save the file as UTF-8 (most editors offer it under 'Save As' / 'Encoding').",
         ) from exc
     except yaml.YAMLError as exc:
         raise ScoutError(
-            ErrorCode.VALIDATION_FAILED,
+            ErrorCode.CONFIG_INVALID,
             f"FastScout export settings ({target.name}) are not valid YAML: {exc}",
             hint="Check the indentation and quotes near the line mentioned, or delete the file to use the defaults.",
         ) from exc

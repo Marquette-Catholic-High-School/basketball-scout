@@ -394,6 +394,7 @@ def merge_events(perception: Perception, ohv_events: list[dict[str, Any]]) -> li
     merged.sort(key=lambda e: e["frame"])
     for number, event in enumerate(merged, start=1):
         event["event_id"] = f"e{number:05d}"
+        event["attrs"].pop("replaces_event_id", None)  # points at a pre-renumbering id
     return merged
 
 

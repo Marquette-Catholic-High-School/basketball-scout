@@ -589,7 +589,7 @@ def test_invalid_yaml_file(tmp_path):
     path.write_text("paste_block: [unclosed\n", encoding="utf-8")
     with pytest.raises(ScoutError) as err:
         fastscout.load_fastscout_config(path)
-    assert err.value.code == ErrorCode.VALIDATION_FAILED
+    assert err.value.code == ErrorCode.CONFIG_INVALID
     assert "not valid YAML" in err.value.message
 
 
@@ -598,7 +598,7 @@ def test_non_utf8_yaml_file(tmp_path):
     path.write_bytes("play_labels:\n  cut: Coupé\n".encode("cp1252"))
     with pytest.raises(ScoutError) as err:
         fastscout.load_fastscout_config(path)
-    assert err.value.code == ErrorCode.VALIDATION_FAILED and "UTF-8" in err.value.message
+    assert err.value.code == ErrorCode.CONFIG_INVALID and "UTF-8" in err.value.message
 
 
 def test_yaml_file_with_unknown_field_names_the_key(tmp_path):
@@ -607,7 +607,7 @@ def test_yaml_file_with_unknown_field_names_the_key(tmp_path):
     path.write_text(yaml.safe_dump({"paste_block": {"columns": columns}}), encoding="utf-8")
     with pytest.raises(ScoutError) as err:
         fastscout.load_fastscout_config(path)
-    assert err.value.code == ErrorCode.VALIDATION_FAILED
+    assert err.value.code == ErrorCode.CONFIG_INVALID
     assert "'paste_block.columns[1].field'" in err.value.message and "'fgx'" in err.value.message
     assert "fastscout_columns.yaml" in err.value.message
 
@@ -640,7 +640,7 @@ def test_yaml_file_with_unknown_field_names_the_key(tmp_path):
 def test_config_validation_names_the_key(config, key):
     with pytest.raises(ScoutError) as err:
         fastscout.validate_fastscout_config(config)
-    assert err.value.code == ErrorCode.VALIDATION_FAILED
+    assert err.value.code == ErrorCode.CONFIG_INVALID
     assert f"'{key}'" in err.value.message
 
 

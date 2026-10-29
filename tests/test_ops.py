@@ -629,7 +629,7 @@ def test_worker_unit_stops_gracefully():
     service = unit_directives(UNITS[1])["[Service]"]
     assert "ExecStart=@DIR@/.venv/bin/python -m scout.worker" in service
     assert "KillSignal=SIGTERM" in service
-    assert "TimeoutStopSec=60" in service
+    assert "TimeoutStopSec=120" in service
     # SCOUT_PROCESSOR=local needs /dev/nvidia*, which PrivateDevices would hide.
     assert "PrivateDevices=true" not in service
 

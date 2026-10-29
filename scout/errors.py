@@ -42,6 +42,7 @@ class ErrorCode(StrEnum):
     ANALYSIS_FAILED = "ANALYSIS_FAILED"
     ANALYSIS_NOT_READY = "ANALYSIS_NOT_READY"
     CALIBRATION_INVALID = "CALIBRATION_INVALID"
+    CONFIG_INVALID = "CONFIG_INVALID"
     # Roster
     ROSTER_PARSE_FAILED = "ROSTER_PARSE_FAILED"
     ROSTER_UNSUPPORTED_FILE = "ROSTER_UNSUPPORTED_FILE"
@@ -108,7 +109,8 @@ _CATALOG: dict[ErrorCode, tuple[str, str, str | None, bool, int]] = {
     ErrorCode.MODAL_TIMEOUT: (
         "GPU processing timed out",
         "Processing took longer than the configured time limit.",
-        "Retry; for very long films raise PROCESS_TIMEOUT_S in modal_app/app.py and redeploy, or split the film.",
+        "Retry. For very long films raise SCOUT_MODAL_TIMEOUT_S (and SCOUT_MODAL_MAX_WAIT_HOURS) in .env, "
+        "redeploy with `scripts/update.sh --deploy-modal`, or split the film.",
         True,
         504,
     ),
@@ -223,6 +225,13 @@ _CATALOG: dict[ErrorCode, tuple[str, str, str | None, bool, int]] = {
         "Click at least 4 landmarks spread across the court, not all on one line.",
         False,
         422,
+    ),
+    ErrorCode.CONFIG_INVALID: (
+        "Settings file is invalid",
+        "A settings file under config/ could not be used.",
+        "Fix the setting named in the message, or restore the shipped file with `git checkout config/`.",
+        False,
+        500,
     ),
     ErrorCode.ROSTER_PARSE_FAILED: (
         "Roster could not be read",

@@ -555,7 +555,9 @@ class GameAnalysis(_Model):
 
 class RosterPlayer(_Model):
     id: str = Field(default_factory=lambda: new_id("p_"))
-    jersey: str = Field(min_length=1, max_length=3, description='Digits as typed; "0" and "00" are different numbers.')
+    jersey: str = Field(
+        pattern=r"^\d{1,2}$", description='One or two digits as typed; "0" and "00" are different numbers.'
+    )
     first_name: str = ""
     last_name: str = ""
     position: str | None = None
@@ -828,3 +830,4 @@ class HealthStatus(_Model):
     ffmpeg_available: bool = False
     worker_last_seen_s: float | None = Field(default=None, description="Seconds since the last worker heartbeat.")
     auth_enabled: bool = True
+    max_upload_bytes: int | None = Field(default=None, description="SCOUT_MAX_UPLOAD_GB in bytes, for the upload page.")

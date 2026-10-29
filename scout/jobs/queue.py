@@ -20,7 +20,8 @@ from typing import Any
 
 from scout import db
 from scout.config import Settings, get_settings
-from scout.schemas import Job, JobKind
+from scout.errors import ErrorCode, ScoutError
+from scout.schemas import Job, JobKind, JobStage, JobStatus
 
 
 class JobQueue(ABC):
@@ -39,6 +40,9 @@ class JobQueue(ABC):
 
     def ack(self, job_id: str, worker_id: str) -> None:  # noqa: B027 - optional hook
         """Called when a worker finishes a job (any outcome)."""
+
+    def heartbeat(self, worker_id: str) -> None:  # noqa: B027 - optional hook
+        """Called every ~30 s by a live worker (Redis uses it to spot dead workers)."""
 
     def requeue_stale(self) -> int:
         """Return jobs whose worker died (expired lease) to the queue. Returns how many."""
@@ -105,8 +109,26 @@ def set_queue(queue: JobQueue | None) -> None:
 
 
 def submit_job(game_id: str, kind: JobKind, params: dict[str, Any] | None = None, *, queue: JobQueue | None = None) -> Job:
-    """Create a job row and hand it to the queue."""
+    """Create a job row and hand it to the queue.
+
+    If the queue refuses it (Redis down), the new row is marked failed before the error
+    is re-raised, so a stray ``queued`` row cannot block the coach's next attempt.
+    """
     settings = get_settings()
     job = db.create_job(game_id, kind, params, processor=settings.processor if kind == JobKind.ANALYZE else None)
-    (queue or get_queue(settings)).enqueue(job.id)
+    try:
+        (queue or get_queue(settings)).enqueue(job.id)
+    except Exception as exc:
+        error = exc if isinstance(exc, ScoutError) else ScoutError(ErrorCode.QUEUE_UNAVAILABLE, detail=str(exc))
+        db.update_job(
+            job.id,
+            status=JobStatus.FAILED,
+            stage=JobStage.DONE,
+            error=error,
+            message=error.message,
+            finished_at=db.utcnow(),
+        )
+        if error is exc:
+            raise
+        raise error from exc
     return job

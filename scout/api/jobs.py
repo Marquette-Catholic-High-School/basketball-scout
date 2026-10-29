@@ -22,7 +22,7 @@ from scout.api.deps import CurrentGame, JobId, SettingsDep, has_analysis_file
 from scout.config import Settings
 from scout.errors import ErrorCode, ScoutError
 from scout.jobs import queue as job_queue
-from scout.schemas import Game, GameStatus, Job, JobCreate, JobKind, JobStage, JobStatus
+from scout.schemas import Game, GameStatus, Job, JobCreate, JobKind, JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -103,21 +103,10 @@ def _check_inputs_ready(game: Game, kind: JobKind, settings: Settings) -> None:
 
 
 def _submit(game_id: str, kind: JobKind, params: dict[str, Any]) -> Job:
-    """``submit_job`` writes the job row before handing it to the queue. When the queue
-    (Redis) is down, mark that row failed so it cannot block the next attempt."""
+    """``submit_job`` marks its own row failed when the queue (Redis) is down."""
     try:
         return job_queue.submit_job(game_id, kind, params)
     except ScoutError as exc:
-        for orphan in db.active_jobs_for_game(game_id):
-            if orphan.kind == kind and orphan.status == JobStatus.QUEUED:
-                db.update_job(
-                    orphan.id,
-                    status=JobStatus.FAILED,
-                    stage=JobStage.DONE,
-                    error=exc,
-                    message=exc.message,
-                    finished_at=db.utcnow(),
-                )
         logger.error("Could not queue %s job for game %s: %s", kind, game_id, exc)
         raise
 

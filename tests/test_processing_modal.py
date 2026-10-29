@@ -14,7 +14,8 @@ import pytest
 from scout.errors import ErrorCode, ScoutError
 from scout.processing import get_processor, modal_client
 from scout.processing.base import VideoSource
-from scout.processing.modal_client import ModalProcessor, parse_handle, poll_result_from_response
+from scout.processing.base import poll_result_from_response
+from scout.processing.modal_client import ModalProcessor, parse_handle
 
 # --- a fake modal SDK ------------------------------------------------------------
 

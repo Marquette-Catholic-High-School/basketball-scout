@@ -32,9 +32,10 @@ Restart=on-failure
 RestartSec=10
 # On SIGTERM the worker stops taking new jobs and hands jobs that are waiting on the GPU
 # back to the queue: after the restart they resume polling, so no film is processed
-# twice. systemd waits up to 60 seconds, then kills whatever is left.
+# twice. systemd waits up to 120 seconds (time for an analysis or report that is
+# already past the GPU to finish), then kills whatever is left.
 KillSignal=SIGTERM
-TimeoutStopSec=60
+TimeoutStopSec=120
 # Box-score and play analysis can keep a CPU core busy for a minute; keep the web
 # pages responsive meanwhile.
 Nice=5

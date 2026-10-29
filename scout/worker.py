@@ -316,9 +316,7 @@ class Worker:
     def _wait_for_processor(self, run: _Run, handle: str) -> dict[str, Any]:
         """GPU_PROCESSING: poll until the processor finishes and return its response dict."""
         job, processor = run.job, run.processor
-        interval = getattr(processor, "poll_interval", None)
-        if interval is None:
-            interval = self.settings.modal_poll_seconds
+        interval = processor.poll_interval if processor.poll_interval is not None else self.settings.modal_poll_seconds
         # Measured from the first claim, so restarts do not extend the limit.
         started = job.started_at.timestamp() if job.started_at else time.time()
         deadline = started + self.settings.modal_max_wait_hours * 3600
@@ -650,9 +648,7 @@ class Worker:
         try:
             db.record_worker_heartbeat(self.worker_id, info)
             # The Redis queue keeps its own heartbeat so it never hands our jobs to someone else.
-            queue_heartbeat = getattr(self.queue, "heartbeat", None)
-            if callable(queue_heartbeat):
-                queue_heartbeat(self.worker_id)
+            self.queue.heartbeat(self.worker_id)
         except Exception as exc:
             logger.warning("Could not record the worker heartbeat: %s", exc)
 

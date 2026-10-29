@@ -644,6 +644,7 @@ Every error shown in the app has a code. Find it here:
 | `ANALYSIS_FAILED` | Building the box score or plays failed. | Click **Re-run analysis**. If it repeats, send the job id and `journalctl -u basketball-scout-worker -n 200` to IT. |
 | `ANALYSIS_NOT_READY` | The game has not been analysed yet. | Wait for the job to finish. |
 | `CALIBRATION_INVALID` | The clicked points do not give a usable court mapping. | Click at least 4 landmarks spread over the court, not all on one line. |
+| `CONFIG_INVALID` | A settings file in `config/` (`play_rules.yaml`, `fastscout_columns.yaml`) has a typo or a wrong value type. | The message names the setting. Fix it, or restore the shipped file with `git checkout config/`. |
 | `ROSTER_PARSE_FAILED` | No players could be read from the roster file. | Use a header row with a number column (#, No, Number) and a name column, or start from the roster template. |
 | `ROSTER_UNSUPPORTED_FILE` | Not a `.csv`, `.tsv`, `.txt` or `.xlsx` file. | In Excel use File > Save As > Excel Workbook (.xlsx) or CSV. |
 | `REPORT_NOT_CONFIGURED` | No Anthropic API key. | Add `ANTHROPIC_API_KEY` to `.env` and restart the worker. |

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
         env_prefix="SCOUT_",
         env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
+        env_ignore_empty=True,  # `SCOUT_DB_PATH=` in .env means "unset", not "the repo directory"
         extra="ignore",
     )
 
@@ -53,7 +54,7 @@ class Settings(BaseSettings):
     # --- auth ---------------------------------------------------------------
     auth_username: str = "coach"
     auth_password: str | None = None
-    auth_password_hash: str | None = Field(default=None, description="pbkdf2_sha256$<iterations>$<salt>$<hex digest> (see scout.auth)")
+    auth_password_hash: str | None = Field(default=None, description="pbkdf2_sha256$<iterations>$<salt_b64>$<hash_b64> from `python -m scout.auth hash-password`")
     auth_disabled: bool = False
 
     # --- uploads ------------------------------------------------------------

@@ -27,8 +27,7 @@ from modal_app.pipeline import runner
 from modal_app.pipeline.errors import PipelineError, is_cuda_oom
 from scout.config import Settings, get_settings
 from scout.errors import ErrorCode, ScoutError
-from scout.processing.base import PollResult, Processor, ProcessorOutput, VideoSource
-from scout.processing.modal_client import poll_result_from_response
+from scout.processing.base import PollResult, Processor, ProcessorOutput, VideoSource, poll_result_from_response
 
 logger = logging.getLogger(__name__)
 

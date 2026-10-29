@@ -181,7 +181,7 @@ def test_bad_yaml_is_a_clear_error(tmp_path, text, needle):
     path.write_text(text)
     with pytest.raises(ScoutError) as exc:
         load_play_rules(path)
-    assert exc.value.code == ErrorCode.ANALYSIS_FAILED and needle in exc.value.message
+    assert exc.value.code == ErrorCode.CONFIG_INVALID and needle in exc.value.message
 
 
 # ---------------------------------------------------------------------------

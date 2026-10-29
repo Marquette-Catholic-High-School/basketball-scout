@@ -28,6 +28,7 @@ const state = {
 };
 
 const storageKey = (gameId) => `scout.upload.${gameId}`;
+let maxUploadBytes = null; // from /api/health; the server re-checks when the upload starts
 
 // ---------------------------------------------------------------------------
 // Step 1: game details
@@ -119,6 +120,13 @@ function validateFile(file) {
   }
   if (file.size === 0) {
     return { title: "Empty file", message: `"${file.name}" is empty.`, hint: "Pick the full game film file." };
+  }
+  if (maxUploadBytes && file.size > maxUploadBytes) {
+    return {
+      title: "File too large",
+      message: `"${file.name}" is ${formatBytes(file.size)}; this server accepts films up to ${formatBytes(maxUploadBytes)}.`,
+      hint: "Trim or compress the film, or ask IT to raise SCOUT_MAX_UPLOAD_GB.",
+    };
   }
   return null;
 }
@@ -413,6 +421,8 @@ async function init() {
       e.returnValue = "";
     }
   });
+
+  api.get("/api/health").then((health) => { maxUploadBytes = health.max_upload_bytes || null; }).catch(() => {});
 
   const gameId = new URLSearchParams(window.location.search).get("game");
   if (!gameId) {

@@ -52,6 +52,7 @@ def health(settings: SettingsDep) -> HealthStatus:
         ffmpeg_available=shutil.which("ffmpeg") is not None,
         worker_last_seen_s=worker_age,
         auth_enabled=settings.auth_enabled,
+        max_upload_bytes=settings.max_upload_bytes,
     )
 
 

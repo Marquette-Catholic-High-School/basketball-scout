@@ -745,7 +745,7 @@ class _Game:
 
     def _fast_break(self, poss: _Poss) -> _Start:
         """Outlet, point guard pushes up the middle with one or two wings running the lanes."""
-        s, (pg, sg, sf, pf, c) = poss.start, poss.offense
+        s, (pg, sg, sf, _pf, _c) = poss.start, poss.offense
         t0, holder = s.t, s.holder or pg
         poss.modes = [(t0, "transition")]
         if holder == pg:

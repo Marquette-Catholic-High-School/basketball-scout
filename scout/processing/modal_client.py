@@ -32,7 +32,7 @@ from typing import Any
 
 from scout.config import Settings, get_settings
 from scout.errors import ErrorCode, ScoutError
-from scout.processing.base import PollResult, Processor, ProcessorOutput, VideoSource
+from scout.processing.base import PollResult, Processor, ProcessorOutput, VideoSource, poll_result_from_response
 
 logger = logging.getLogger(__name__)
 
@@ -63,23 +63,6 @@ def parse_handle(handle: str) -> tuple[str, str | None]:
     if not call_id.startswith("fc-"):
         raise ScoutError(ErrorCode.INTERNAL_ERROR, detail=f"not a Modal job handle: {handle!r}")
     return call_id, job_id or None
-
-
-def poll_result_from_response(response: Any) -> PollResult:
-    """Turn the pipeline's response dict (docs/TRACKING_SCHEMA.md) into a finished PollResult."""
-    if not isinstance(response, dict):
-        detail = f"expected a response dict, got {type(response).__name__}"
-        return PollResult(state="failed", error=ScoutError(ErrorCode.TRACKING_RESULT_INVALID, detail=detail))
-    status = response.get("status")
-    if status == "ok":
-        return PollResult(state="succeeded", progress=100.0, message="GPU processing finished", result=response)
-    if status == "error":
-        error = response.get("error") if isinstance(response.get("error"), dict) else {}
-        code = str(error.get("code") or ErrorCode.PIPELINE_FAILED)
-        failure = ScoutError.from_code(code, _text(error.get("message")), _text(error.get("detail")))
-        return PollResult(state="failed", error=failure)
-    detail = f"unknown response status {status!r}"
-    return PollResult(state="failed", error=ScoutError(ErrorCode.TRACKING_RESULT_INVALID, detail=detail))
 
 
 class ModalProcessor(Processor):
@@ -343,10 +326,6 @@ def _failed(code: ErrorCode, message: str | None, exc: BaseException) -> PollRes
 def _describe(exc: BaseException) -> str:
     text = str(exc).strip()
     return (f"{type(exc).__name__}: {text}" if text else type(exc).__name__)[:2000]
-
-
-def _text(value: Any) -> str | None:
-    return None if value is None else str(value)
 
 
 def _as_percent(value: Any) -> float | None:
