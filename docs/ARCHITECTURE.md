@@ -186,9 +186,9 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   that fails after the coach asked to cancel ends the job `cancelled`, not `failed`;
   when another worker has taken the job over meanwhile, the worker steps aside instead.
   The job panel's Cancel confirm says so for an ANALYZE at `analyzing` or `reporting`,
-  and **Start again** on a cancelled Full re-analysis asks first, like the Full
-  re-analysis button (the film goes to the GPU again and the track assignments are
-  cleared).
+  and **Start again** on a cancelled Full re-analysis of a game that has an analysis
+  asks first, like the Full re-analysis button (the film goes to the GPU again and the
+  track assignments are cleared).
 * A film upload to the Modal volume that fails is tried twice more, after 10 s and
   30 s (not after an auth error, a film that is gone, or a cancelled upload). A cancel
   during those waits ends the job as `cancelled` within a second; a graceful stop hands

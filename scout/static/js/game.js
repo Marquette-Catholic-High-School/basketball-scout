@@ -38,6 +38,9 @@ let refreshes = 0; // only the newest refresh() may draw the page
 /** Film the GPU can analyse: an uploaded file or a video link. */
 const hasFilm = (game) => Boolean(game.has_video || game.video_url);
 
+/** An analysis job is queued or running: the server starts no other until it has ended. */
+const analysisRunning = (game) => game.status === "queued" || game.status === "processing";
+
 /** The GPU could not find free throws (no court positions); a GPU run with a calibration can. */
 const freeThrowsMissing = (analysis) => Boolean(analysis?.data_quality?.warnings?.some((w) => w.code === "FREE_THROWS_NOT_DETECTED"));
 
@@ -135,6 +138,8 @@ async function refresh() {
     landmarks: court?.landmarks,
     calibration: game.calibration,
     fullRunAdvised: hasFilm(game) && freeThrowsMissing(analysis),
+    rerunKind: rerunKind(),
+    busy: analysisRunning(game),
   });
   if (analysis) renderAnalysis(game, analysis, names, court);
   else parts.player.setData({ teamNames: names });
@@ -242,7 +247,7 @@ function renderHeader(game, names) {
   film.href = `/upload?game=${encodeURIComponent(game.id)}`;
   film.textContent = hasFilm(game) ? "Replace film" : "Add film";
   byId("no-film-link").href = film.href;
-  const busy = game.status === "queued" || game.status === "processing";
+  const busy = analysisRunning(game);
   const rerunnable = rerunKind() === "reanalyze";
   const rerun = byId("reanalyze-btn");
   rerun.textContent = rerunnable ? "Re-run analysis" : "Analyze film";
@@ -377,6 +382,8 @@ function init() {
       refresh();
     },
     onUpdate: showJobStatus,
+    // Start again on a cancelled Full re-analysis sends the film to the GPU again: it asks first, like its button.
+    restartConfirm: (job) => (job.kind === "analyze" && rerunKind() === "reanalyze" ? fullRunConfirm(Boolean(state.analysis)) : null),
   });
   parts.calibration = new Calibration({
     player: parts.player,

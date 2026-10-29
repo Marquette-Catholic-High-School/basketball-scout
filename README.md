@@ -733,7 +733,7 @@ Every error shown in the app has a code. Find it here:
 | `UPLOAD_NOT_FOUND` | The upload session expired. | Start the upload again. |
 | `REQUEST_TOO_LARGE` | A request was larger than the server accepts (1 MB of JSON, 4 MB for a roster file). | Send film with the upload page; keep roster files under 2 MB. |
 | `NOT_FOUND`, `CONFLICT`, `VALIDATION_FAILED` | A missing item, a clash (e.g. an analysis already running) or invalid input. | The message names the problem. |
-| `JOB_CANCELLED` | The job was cancelled. | Click Retry to run it again. |
+| `JOB_CANCELLED` | The GPU run was stopped outside Basketball Scout (for example cancelled in the Modal dashboard, or the local GPU run was stopped). | Start it again on the game page: **Analyze film**, or **Full re-analysis** for a game analysed before. |
 | `WORKER_LOST` | The worker stopped during this job too many times. | Check `journalctl -u basketball-scout-worker` (and `journalctl -k \| grep -i oom` for memory), then Retry. |
 | `QUEUE_UNAVAILABLE` | Redis could not be reached. | `sudo systemctl start redis-server`, or set `SCOUT_QUEUE_BACKEND=sqlite`. |
 | `INTERNAL_ERROR` | Something unexpected went wrong. | Retry; if it repeats, check the logs. |

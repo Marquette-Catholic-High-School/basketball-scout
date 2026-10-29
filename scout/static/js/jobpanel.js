@@ -14,15 +14,38 @@ function elapsedSince(iso) {
   return Number.isFinite(started) ? formatDuration((Date.now() - started) / 1000) : null;
 }
 
+/**
+ * What Cancel asks first. Once an ANALYZE has installed its new results (stage analyzing or
+ * reporting) a cancel no longer stops it: the analysis is finished and only the automatic
+ * report is skipped, unless Claude is already writing it (scout/worker.py, _run_analyze).
+ */
+function cancelQuestion(job) {
+  if (job.kind === "analyze" && job.stage === "analyzing") {
+    return "Too late to stop the analysis: the new GPU results are already in place, so it will finish.\n\n"
+      + "Cancelling now only skips the automatic scouting report.";
+  }
+  if (job.kind === "analyze" && job.stage === "reporting") {
+    return "Too late to cancel: the analysis is finished and Claude is already writing the scouting report.\n\n"
+      + "The job will finish on its own, and the report is kept.";
+  }
+  return "Stop this job? You can start it again later.";
+}
+
+/** A cancel no longer stops this job: it carries on to the end (see cancelQuestion). */
+const tooLateToStop = (job) => job.kind === "analyze" && ["analyzing", "reporting"].includes(job.stage);
+
 export class JobPanel {
   /**
    * onChange(job) runs when a job finishes or a new one is started, so the page can reload;
-   * onUpdate(job) runs with every poll of a running job (the page header shows its progress).
+   * onUpdate(job) runs with every poll of a running job (the page header shows its progress);
+   * restartConfirm(job) is what Start again asks before it starts the cancelled job again
+   * (null: it starts at once).
    */
-  constructor({ onChange, onUpdate = null }) {
+  constructor({ onChange, onUpdate = null, restartConfirm = null }) {
     this.panel = byId("job-panel");
     this.onChange = onChange;
     this.onUpdate = onUpdate;
+    this.restartConfirm = restartConfirm;
     this.controller = null;
     this.jobId = null;
     this.view = null; // nodes of the "in progress" panel, updated in place by each poll
@@ -107,14 +130,16 @@ export class JobPanel {
     const setText = (node, text) => {
       if (node.textContent !== text) node.textContent = text;
     };
+    // Asked too late to stop it: it carries on, so the panel says what it does, not "Cancelling…" (nor the server's message).
+    const late = job.cancel_requested && tooLateToStop(job);
     setText(view.title, `${jobKindLabel(job.kind)} in progress`);
-    setText(view.stage, jobStageText(job));
-    setText(view.cancel, job.cancel_requested ? "Cancelling…" : "Cancel");
+    setText(view.stage, jobStageText(late ? { ...job, cancel_requested: false } : job));
+    setText(view.cancel, late ? "Cancel requested" : job.cancel_requested ? "Cancelling…" : "Cancel");
     view.cancel.disabled = Boolean(job.cancel_requested);
     view.bar.classList.toggle("progress-indeterminate", job.status === "queued");
     view.bar.setAttribute("aria-valuenow", String(pct));
     view.fill.style.width = `${pct}%`;
-    setText(view.details, [`${pct}% overall`, job.message, elapsed ? `running for ${elapsed}` : null].filter(Boolean).join(" · "));
+    setText(view.details, [`${pct}% overall`, late ? null : job.message, elapsed ? `running for ${elapsed}` : null].filter(Boolean).join(" · "));
     if (job.status === "queued") {
       this.checkWorker(view);
     } else if (view.workerProblem) {
@@ -171,9 +196,9 @@ export class JobPanel {
 
   async cancel(button) {
     const view = this.view;
-    if (!view || !window.confirm("Stop this job? You can start it again later.")) return;
+    if (!view || !window.confirm(cancelQuestion(view.job))) return;
     button.disabled = true;
-    button.textContent = "Cancelling…";
+    button.textContent = tooLateToStop(view.job) ? "Cancel requested" : "Cancelling…";
     clearError(view.error);
     try {
       const job = await api.post(jobPath(view.job.id, "/cancel"));
@@ -191,6 +216,8 @@ export class JobPanel {
   }
 
   async restart(job, button) {
+    const question = this.restartConfirm?.(job);
+    if (question && !window.confirm(question)) return;
     await this.start(button, () => api.post(gamePath(job.game_id, "/jobs"), { kind: job.kind }));
   }
 

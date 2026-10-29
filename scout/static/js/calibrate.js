@@ -8,6 +8,8 @@ import { landmarkLabel } from "./labels.js";
 import { byId, clearError, el, notice, prepareCanvas, setChildren, show, showError, toast, withBusy } from "./ui.js";
 
 const MIN_POINTS = 4;
+/** The result's button for the job the game page's re-run starts (game.js rerunKind). */
+const RERUN_LABELS = { analyze: "Analyze film", reanalyze: "Re-run analysis" };
 
 /** Plain-English verdict for the mean reprojection error (feet). */
 function calibrationQuality(errorFt) {
@@ -44,6 +46,10 @@ export class Calibration {
     this.saved = null;
     this.matrix = null;
     this.fullRunAdvised = false;
+    this.rerunKind = "reanalyze";
+    this.rerunButton = null; // the result's Re-run analysis / Analyze film button
+    this.fullButton = null; // and its Full re-analysis button, when it offers one
+    this.busy = false; // an analysis job runs: the server would refuse another
     this.isOpen = false;
 
     byId("calibrate-btn").addEventListener("click", () => (this.isOpen ? this.close() : this.open()));
@@ -70,13 +76,22 @@ export class Calibration {
   /**
    * court: CourtConfig dict; landmarks: {name: [x, y]}; calibration: saved CourtCalibration
    * or null; fullRunAdvised: the GPU found no free throws, so after saving the panel offers
-   * a full re-analysis.
+   * a full re-analysis; rerunKind: the job onReanalyze() starts, "reanalyze" (Re-run
+   * analysis) or "analyze" (Analyze film, for a game that has not been analysed yet);
+   * busy: an analysis job is queued or running, so the result's buttons wait, as the header's.
    */
-  setup({ court, landmarks, calibration, fullRunAdvised = false }) {
+  setup({ court, landmarks, calibration, fullRunAdvised = false, rerunKind = "reanalyze", busy = false }) {
     this.cfg = courtConfig(court);
     this.landmarks = landmarks || {};
     this.saved = calibration || null;
     this.fullRunAdvised = Boolean(fullRunAdvised);
+    this.rerunKind = rerunKind;
+    this.busy = Boolean(busy);
+    // A result on show names the job its button starts now (the first analysis may have finished since).
+    // Only a new name is written: the result is a live region, which would read the same name out again.
+    const label = RERUN_LABELS[rerunKind];
+    if (this.rerunButton && this.rerunButton.textContent !== label) this.rerunButton.textContent = label;
+    this.followBusy();
     const groups = new Map();
     for (const name of Object.keys(this.landmarks)) {
       const group = landmarkGroup(name);
@@ -220,15 +235,43 @@ export class Calibration {
     const [kind, verdict] = calibrationQuality(error);
     // No free throws from the first run: only a GPU run with this calibration finds them.
     const full = this.fullRunAdvised && this.onFullAnalysis;
+    this.rerunButton = el("button", {
+      type: "button", class: full ? null : "btn-primary", text: RERUN_LABELS[this.rerunKind], onClick: (e) => this.rerun(e.currentTarget),
+    });
+    this.fullButton = full
+      ? el("button", { type: "button", class: "btn-primary", text: "Full re-analysis", onClick: (e) => this.onFullAnalysis(e.currentTarget) })
+      : null;
     setChildren(byId("cal-result"),
       notice(kind, `${verdict} (average error ${error.toFixed(1)} ft)`,
         "Check that the orange court lines drawn on the frame sit on the real lines. If they don't, move or remove points and save again.",
         full
-          ? "The new mapping is used after the analysis runs again. Free throws need a full re-analysis: it sends the film to the GPU again."
-          : "The new mapping is used after the analysis runs again."),
-      el("div", { class: "row" },
-        el("button", { type: "button", class: full ? null : "btn-primary", text: "Re-run analysis", onClick: () => this.onReanalyze() }),
-        full ? el("button", { type: "button", class: "btn-primary", text: "Full re-analysis", onClick: (e) => this.onFullAnalysis(e.currentTarget) }) : null));
+          ? "The new mapping is used the next time the analysis runs. Free throws need a full re-analysis: it sends the film to the GPU again."
+          : "The new mapping is used the next time the analysis runs."),
+      el("div", { class: "row" }, this.rerunButton, this.fullButton));
+    this.followBusy();
+  }
+
+  /** Busy until the page has started the job: a double click would post a second one, which the server refuses. */
+  async rerun(button) {
+    button.disabled = true;
+    try {
+      await this.onReanalyze();
+    } finally {
+      button.disabled = this.busy; // the job it started runs: setup() enables it again when that has ended
+    }
+  }
+
+  /**
+   * The result's buttons wait while an analysis runs, as the header's do; setup() enables them again once it
+   * has ended, also after the page's Full re-analysis disabled its button for a start the server refused.
+   */
+  followBusy() {
+    for (const button of [this.rerunButton, this.fullButton]) {
+      if (!button) continue;
+      button.disabled = this.busy;
+      if (this.busy) button.title = "An analysis is already running";
+      else button.removeAttribute("title");
+    }
   }
 
   async remove() {
@@ -237,7 +280,9 @@ export class Calibration {
       await api.del(gamePath(this.gameId, "/calibration"));
       this.saved = null;
       this.changePoints([]);
-      setChildren(byId("cal-result"), notice("info", null, "Calibration removed. Re-run the analysis to go back to automatic court detection."));
+      setChildren(byId("cal-result"), notice("info", null, this.rerunKind === "analyze"
+        ? "Calibration removed. The analysis will use automatic court detection."
+        : "Calibration removed. Re-run the analysis to go back to automatic court detection."));
       this.onChange?.(null);
     } catch (err) {
       showError(byId("cal-result"), err);

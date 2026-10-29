@@ -415,6 +415,20 @@ async function saveTracksAndRerun() {
       return;
     }
   }
+  // The choices are for the tracks the table shows: read them again first. A Full re-analysis since the page loaded
+  // (from another tab) numbers them again, and the server would put the choices on the new tracks: other players.
+  let data;
+  try {
+    data = await api.get(gamePath(gameId, "/tracks"));
+  } catch (err) {
+    showError(byId("tracks-error"), err); // nothing sent: the choices stay pending
+    return;
+  }
+  if (!sameTracking(data.assignments || [])) {
+    await tracksNumberedAgain(data);
+    return;
+  }
+  state.overrides = overridesById(data.overrides); // another tab may have saved some since: the changes go against them
   try {
     for (const [trackId, value] of state.pending) {
       const path = gamePath(gameId, `/tracks/${trackId}`);
@@ -427,7 +441,7 @@ async function saveTracksAndRerun() {
       }
       state.pending.delete(trackId);
     }
-    updatePendingNote();
+    renderTracks(); // saved: the rows no longer show them as changes, also if the re-run does not start
     await rerunAnalysis();
   } catch (err) {
     showError(byId("tracks-error"), err);
@@ -449,10 +463,87 @@ async function rerunAnalysis() {
   }
 }
 
-/** withBusy enables its button again when the action ends; not while a full analysis runs (it may have just started). */
+/**
+ * withBusy enables its button again when the action ends; not while a full analysis runs (it may have just started),
+ * nor Save & re-run with nothing left to save.
+ */
 async function busyUnlessAnalyzing(button, label, action) {
   await withBusy(button, label, action);
   if (state.analyzing) button.disabled = true;
+  updatePendingNote();
+}
+
+// ---------------------------------------------------------------------------
+// The film analysed again since the page loaded
+// ---------------------------------------------------------------------------
+
+/** What a track has from the GPU run alone (its id, samples, team id and jersey reads); a REANALYZE never changes it. */
+const trackingKey = (a) => JSON.stringify([a.track_id, a.frames, a.team_id ?? null, a.best_read ?? null]);
+
+/** These are the tracks the table shows: no full analysis has numbered them again since they were loaded. */
+function sameTracking(assignments) {
+  const keys = (list) => list.map(trackingKey).sort().join("\n");
+  return keys(assignments) === keys(state.tracks);
+}
+
+/**
+ * Save & re-run found other tracks than the table shows, so it sends none of the choices. While the full analysis
+ * still runs, wait for it (its end drops them); otherwise drop them now and show the new table, or none.
+ */
+async function tracksNumberedAgain(data) {
+  let game;
+  try {
+    game = await api.get(gamePath(gameId));
+  } catch (err) {
+    showError(byId("tracks-error"), err); // nothing sent: the choices stay pending
+    return;
+  }
+  const job = game.latest_job_id ? await api.get(jobPath(game.latest_job_id)).catch(() => null) : null;
+  if (isFullAnalysis(job)) {
+    waitForAnalysis(job); // polls until the analysis ends
+    return;
+  }
+  state.game = game;
+  dropTracks();
+  setTracks(data);
+  updatePendingNote();
+  sayNumberedAgain();
+  if (byId("tracks").hidden) byId("tracks-gone").scrollIntoView({ block: "nearest" }); // the table, and the button clicked, went
+}
+
+/** The choices went because the tracks were numbered again since the page loaded: say so by the new table, or where it was. */
+function sayNumberedAgain() {
+  const message = "The players' tracks were numbered again since this page was opened (for example by a full analysis "
+    + "from another tab), so your unsaved track choices were dropped.";
+  showByTracks(byId("tracks").hidden
+    ? gamePageNotice("Film analysed again", message, "There are no tracks to assign now: see the game page.")
+    : notice("warning", "Film analysed again", message, "Make them again in the new table."));
+}
+
+/** The earlier run's track ids are gone, with their assignments and the choices not saved yet (true when there were some). */
+function dropTracks() {
+  const dropped = state.pending.size > 0;
+  state.pending.clear();
+  state.tracks = [];
+  state.overrides = new Map();
+  setChildren(byId("tracks-body"));
+  show(byId("tracks"), false);
+  return dropped;
+}
+
+/** Say so by the tracks table, or where it was when there is none (its card is hidden); null clears it. */
+function showByTracks(box) {
+  const table = !byId("tracks").hidden;
+  setChildren(byId("tracks-wait"), table ? box : null);
+  show(byId("tracks-wait"), table && Boolean(box));
+  setChildren(byId("tracks-gone"), table ? null : box);
+}
+
+/** A notice that sends the coach to the game page, which says how the analysis went. */
+function gamePageNotice(title, message, hint) {
+  const box = notice("warning", title, message, hint);
+  box.append(el("div", { class: "notice-actions" }, el("a", { class: "btn", href: `/games/${encodeURIComponent(gameId)}`, text: "Open the game page" })));
+  return box;
 }
 
 // ---------------------------------------------------------------------------
@@ -503,27 +594,32 @@ async function waitForAnalysis(job) {
     return;
   }
   const game = await api.get(gamePath(gameId)).catch(() => null);
+  const tableShown = !byId("tracks").hidden;
   let dropped = false;
   // Installing the new run deletes the earlier run's analysis first, so a game left without one has none of the
   // earlier run's tracks to show, also when the job failed before its stage said it had installed.
-  if (tracksRenumbered(final) || (game && !game.has_analysis)) {
-    // The earlier run's track ids are gone, with their assignments and the choices not saved yet.
-    dropped = state.pending.size > 0;
-    state.pending.clear();
-    state.tracks = [];
-    state.overrides = new Map();
-    setChildren(byId("tracks-body"));
-    show(byId("tracks"), false);
-  }
+  if (tracksRenumbered(final) || (game && !game.has_analysis)) dropped = dropTracks();
   if (game) state.game = game;
   state.analyzing = null;
   clearError(byId("tracks-error")); // the 409 that started the wait, if one did
   clearError(byId("page-error")); // a refused Re-run analysis, if one started it
-  setChildren(wait, dropped ? notice("info", "Film analysis finished",
-    "It numbered the players' tracks again, so your unsaved track choices were dropped. Make them again in the new table.") : null);
-  show(wait, dropped);
+  showByTracks(null);
   lockAssignments();
-  if (state.game.has_analysis) await loadTracks();
+  // Choices still kept are for the tracks the table showed, which a full analysis before this one may have numbered again.
+  if (state.game.has_analysis && (await loadTracks())) {
+    sayNumberedAgain();
+    return;
+  }
+  // With no new table (the analysis failed after installing its run) its card stays hidden: say so where it was,
+  // also when no choices went (the wait said this table would update).
+  const tableWent = tableShown && byId("tracks").hidden;
+  if (!dropped && !tableWent) return;
+  showByTracks(byId("tracks").hidden
+    ? gamePageNotice("Film analysis finished without results", dropped
+      ? "A full analysis numbers the players' tracks again, so your unsaved track choices were dropped."
+      : "There are no tracks to assign now.", "See the game page for what went wrong.")
+    : notice("info", "Film analysis finished",
+      "It numbered the players' tracks again, so your unsaved track choices were dropped. Make them again in the new table."));
 }
 
 /** A track change or the re-run was refused (409): if a full analysis started after the page loaded, wait for it. */
@@ -533,21 +629,33 @@ async function checkForAnalysis() {
   if (isFullAnalysis(job)) await waitForAnalysis(job);
 }
 
+const overridesById = (overrides) => new Map((overrides || []).map((o) => [o.track_id, o]));
+
+/** Show the tracks GET /tracks answered; the card stays hidden when there are none. */
+function setTracks(data) {
+  state.tracks = data.assignments || [];
+  state.overrides = overridesById(data.overrides);
+  show(byId("tracks"), state.tracks.length > 0);
+  renderTracks();
+}
+
+/** Load the game's tracks; true when the choices kept for the table shown were dropped (the server's tracks are others now). */
 async function loadTracks() {
+  let data;
   try {
-    const data = await api.get(gamePath(gameId, "/tracks"));
-    state.tracks = data.assignments || [];
-    state.overrides = new Map((data.overrides || []).map((o) => [o.track_id, o]));
+    data = await api.get(gamePath(gameId, "/tracks"));
   } catch (err) {
-    state.tracks = [];
+    // The table the page shows stays (after a full analysis that kept the earlier run, its tracks are the server's).
     if (err.code !== "ANALYSIS_NOT_READY" && err.status !== 404) {
       show(byId("tracks"), true);
       showError(byId("tracks-error"), err);
     }
-    return;
+    return false;
   }
-  show(byId("tracks"), state.tracks.length > 0);
-  renderTracks();
+  // Numbered again since the choices were made: on the new tracks with those numbers they would name other players.
+  const dropped = state.pending.size > 0 && !sameTracking(data.assignments || []) && dropTracks();
+  setTracks(data);
+  return dropped;
 }
 
 // ---------------------------------------------------------------------------
