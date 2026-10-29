@@ -385,11 +385,14 @@ It refuses to run over local code changes, such as edited `config/*.yaml` files
 on top; if the new version changed the same lines, it keeps the new version, says so
 and leaves your changes in the stash and the patch). It remembers the current
 version, pulls from GitHub (`git fetch` + fast-forward, as the `scout` user), installs
-the Python requirements, runs the database migrations, redeploys the GPU app when
+the Python requirements (with `SCOUT_PROCESSOR=local` also `modal_app/requirements-gpu.txt`
+and the OpenHoopVision commit pinned in `modal_app/pipeline/ohv.py`, when they changed),
+runs the database migrations, redeploys the GPU app when
 `modal_app/` changed (and Modal credentials exist; force it with `--deploy-modal`, skip
 it with `--no-deploy-modal`), restarts both services, checks that the app answers and
 lists the new commits. At the end, and when a step fails, it prints the commands that go
-back to the previous version (`git reset --hard <old commit>`, reinstall requirements,
+back to the previous version (`git reset --hard <old commit>`, reinstall requirements
+(for a local GPU also the GPU packages and the old OpenHoopVision commit),
 redeploy the GPU app if this update redeployed it, restart). After a failure you can
 also fix the problem and run `update.sh` again: it remembers which version the services
 and Modal really run, so it finishes the restart and redeploy even though the code is
@@ -406,7 +409,10 @@ sudo /opt/basketball-scout/scripts/uninstall.sh
 ```
 
 Removes the services, the nginx site and `/opt/basketball-scout` (code and Python
-environment). The data folder stays, with a copy of `.env` in
+environment). With `SCOUT_PROCESSOR=local` it also deletes the OpenHoopVision checkout
+(`OHV_HOME`, default `/opt/openhoopvision`) and
+`/etc/modules-load.d/basketball-scout-nvidia.conf`; the NVIDIA driver stays installed.
+The data folder stays, with a copy of `.env` in
 `/var/lib/basketball-scout/backups/`, so `install.sh` restores everything later.
 Options: `--purge` (also delete all games and film; asks you to type DELETE),
 `--remove-user` (delete the `scout` user and its home), `--remove-modal` (stop the GPU
@@ -472,10 +478,13 @@ panning camera there is nothing to calibrate; zones stay approximate. Set the gy
 length in `config/court.yaml` if you know it.
 
 Free throws are found on the GPU and need court positions. If the first run could not
-map the court, the Data quality tab shows **Free throws not detected**: after you
-calibrate, choose **Full re-analysis** (it sends the film to the GPU again, with your
+map the court, the Data quality tab warns that free throws were not detected
+(`FREE_THROWS_NOT_DETECTED`): after you calibrate, choose **Full re-analysis** (in that
+warning or at the top of the game page; it sends the film to the GPU again, with your
 calibration) instead of **Re-run analysis**, which only redoes the stats on this server.
-A new film clears the calibration, since it was clicked on the old film.
+A Full re-analysis numbers the players' tracks again, so it clears the track
+assignments you made on the Roster page; redo them afterwards. A new film clears the
+calibration, since it was clicked on the old film.
 
 ### 5. Reading the results
 
@@ -547,7 +556,7 @@ reads the same file).
 | `SCOUT_AUTH_PASSWORD` | (none) | Plain-text password (install.sh generates one) |
 | `SCOUT_AUTH_PASSWORD_HASH` | (none) | Hash instead of a password, from `python -m scout.auth hash-password`; wins over the password |
 | `SCOUT_AUTH_DISABLED` | `false` | `true` turns sign-in off. Trusted private networks only |
-| `SCOUT_ALLOWED_HOSTS` | (none) | Host names the app answers to, comma-separated (`*.school.org` allowed). Empty: any name with sign-in on; with sign-in off only IP addresses, `localhost` and the server's own name |
+| `SCOUT_ALLOWED_HOSTS` | (none) | Host names the app answers to, comma-separated (`*.school.org` for its subdomains, `*` for any name); IP addresses and `localhost` always work. Empty: any name with sign-in on; with sign-in off only IP addresses, `localhost` and the server's own name |
 
 **Uploads**
 
@@ -680,10 +689,10 @@ Every error shown in the app has a code. Find it here:
 | `MODAL_NOT_CONFIGURED` | No Modal credentials were found. | Add `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` to `.env` (or `modal token new` as the service user) and restart the worker. For a demo use `SCOUT_PROCESSOR=mock`. |
 | `MODAL_AUTH_FAILED` | Modal rejected the token. | Create a new token in the Modal dashboard, update `.env`, restart the worker. |
 | `MODAL_APP_NOT_DEPLOYED` | The GPU app or function was not found. | `sudo /opt/basketball-scout/scripts/update.sh --deploy-modal`. Check that `SCOUT_MODAL_APP_NAME` and the Modal environment match the deployment. |
-| `MODAL_UPLOAD_FAILED` | The film could not be copied to the Modal Volume. | Check the internet connection. School firewalls that inspect TLS traffic must let modal.com through untouched. Retry. |
+| `MODAL_UPLOAD_FAILED` | The film could not be copied to the Modal Volume (the upload is tried three times). | Check the internet connection. School firewalls that inspect TLS traffic must let modal.com through untouched. Retry. |
 | `MODAL_TIMEOUT` | The GPU job ran longer than `SCOUT_MODAL_TIMEOUT_S` (6 hours) or the worker waited longer than `SCOUT_MODAL_MAX_WAIT_HOURS` (8 hours). | Retry. For very long films raise `SCOUT_MODAL_TIMEOUT_S` (max 86400) and redeploy; above 8 hours also raise `SCOUT_MODAL_MAX_WAIT_HOURS` and restart the worker. Or split the film. |
 | `MODAL_REMOTE_ERROR` | The GPU job crashed. | Retry; details in `modal app logs basketball-scout`. |
-| `MODAL_RESULT_EXPIRED` | The GPU result is no longer available. | Re-run the analysis. |
+| `MODAL_RESULT_EXPIRED` | The GPU result is no longer available (Modal keeps it 7 days) and its files are no longer on the volume. | Re-run the analysis. |
 | `VIDEO_INVALID` | The file is not an MP4, MOV or M4V video. | Export the film as H.264 MP4 and upload again. |
 | `VIDEO_DECODE_FAILED` | The video is corrupt or uses a codec that cannot be read. | Re-export as H.264 MP4 (for example with HandBrake) and upload again. |
 | `VIDEO_TOO_LONG` | Longer than `SCOUT_MAX_VIDEO_MINUTES`. | Trim the film or raise the limit. |
@@ -702,7 +711,7 @@ Every error shown in the app has a code. Find it here:
 | `ROSTER_PARSE_FAILED` | No players could be read from the roster file. | Use a header row with a number column (#, No, Number) and a name column, or start from the roster template. |
 | `ROSTER_UNSUPPORTED_FILE` | Not a `.csv`, `.tsv`, `.txt` or `.xlsx` file. | In Excel use File > Save As > Excel Workbook (.xlsx) or CSV. |
 | `REPORT_NOT_CONFIGURED` | No Anthropic API key. | Add `ANTHROPIC_API_KEY` to `.env` and restart the worker. |
-| `REPORT_AUTH_FAILED` | Anthropic rejected the key. | Check or replace `ANTHROPIC_API_KEY`, restart the worker. |
+| `REPORT_AUTH_FAILED` | Anthropic rejected the key (401), or refused the request (403: the key's organisation may not use this model, or not from this region). | Check or replace `ANTHROPIC_API_KEY`; for a 403 check in the Anthropic Console that the key can use `SCOUT_CLAUDE_MODEL`. Restart the worker. |
 | `REPORT_RATE_LIMITED` | The key hit Anthropic's rate limit. | Wait a minute and click **Generate report** again. |
 | `REPORT_OVERLOADED` | The Anthropic API is busy. | Try again in a few minutes. |
 | `REPORT_REFUSED` | Claude declined the request. | Remove unusual instructions from the coach focus box and try again. |
@@ -735,8 +744,8 @@ be bigger than `SCOUT_UPLOAD_CHUNK_MB`, 16 MB), then
 `sudo nginx -t && sudo systemctl reload nginx`. A school proxy or firewall in front of
 the server may need the same change.
 
-**Jobs stay "Queued".** The worker is not running. The **System status** card on the
-Games page shows when it was last seen. Check
+**Jobs stay "Queued".** The worker is not running. The game page says so under the
+queued job, and the **System status** card on the Games page shows when it was last seen. Check
 `systemctl status basketball-scout-worker` and
 `journalctl -u basketball-scout-worker -n 100`, then
 `sudo systemctl restart basketball-scout-worker`. With Redis, also check
@@ -869,8 +878,8 @@ Makefile               development shortcuts
 ## Running the tests
 
 ```bash
-make test                         # or: .venv/bin/python -m pytest -q
-.venv/bin/python -m pytest tests/test_ops.py -q    # just the scripts and deploy files
+make test                         # or: .venv/bin/python -m pytest
+.venv/bin/python -m pytest tests/test_ops.py    # just the scripts and deploy files
 make lint                         # ruff (if installed) + bash syntax check
 ```
 

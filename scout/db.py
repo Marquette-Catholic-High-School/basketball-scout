@@ -452,33 +452,26 @@ def heartbeat_job(job_id: str, worker_id: str, lease_seconds: float) -> bool:
     return cur.rowcount > 0
 
 
-def requeue_expired_jobs() -> list[str]:
-    """Put running jobs whose lease expired back to ``queued`` (used by the Redis queue reaper)."""
-    with session() as conn:
-        rows = conn.execute(
-            """UPDATE jobs SET status = 'queued', worker_id = NULL, updated_at = ?
-               WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?
-               RETURNING id""",
-            (_iso(utcnow()), time.time()),
-        ).fetchall()
-    return [r["id"] for r in rows]
-
-
 def request_cancel(job_id: str) -> Job:
-    """Cancel a queued job immediately; flag a running job so its worker stops it."""
+    """Cancel a queued job immediately; flag a running job so its worker stops it.
+
+    A queued job that already has a processor handle (``external_id``: a GPU call that may still
+    be running, as an older version's Redis reaper left them) is flagged like a running one, so the
+    worker that claims it cancels the call, deletes the remote files and settles the game.
+    """
     with session() as conn, transaction(conn):
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if row is None:
             raise _not_found("Job", job_id)
         job = _job_from_row(row)
         now_iso = _iso(utcnow())
-        if job.status == JobStatus.QUEUED:
+        if job.status == JobStatus.QUEUED and not job.external_id:
             conn.execute(
                 """UPDATE jobs SET status = 'cancelled', stage = ?, cancel_requested = 1, message = 'Cancelled',
                    finished_at = ?, updated_at = ? WHERE id = ?""",
                 (JobStage.DONE.value, now_iso, now_iso, job_id),
             )
-        elif job.status == JobStatus.RUNNING:
+        elif job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
             conn.execute(
                 "UPDATE jobs SET cancel_requested = 1, message = 'Cancelling...', updated_at = ? WHERE id = ?",
                 (now_iso, job_id),

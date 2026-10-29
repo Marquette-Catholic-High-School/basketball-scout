@@ -24,7 +24,7 @@ from scout.api.errors import validate_model
 from scout.config import Settings
 from scout.errors import ErrorCode, ScoutError
 from scout.jobs import queue as job_queue
-from scout.schemas import Game, GameStatus, Job, JobCreate, JobKind, JobStatus, ReportRequest
+from scout.schemas import Game, GameStatus, Job, JobCreate, JobKind, JobStage, JobStatus, ReportRequest
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,8 @@ def get_job(job_id: JobId) -> Job:
 
 @router.post("/jobs/{job_id}/cancel", response_model=Job)
 def cancel_job(job_id: JobId) -> Job:
-    """Queued jobs stop at once; running jobs are flagged and the worker stops them."""
+    """Queued jobs stop at once; running jobs (and queued ones that already have a GPU call)
+    are flagged and the worker stops them and settles the game."""
     job = db.request_cancel(job_id)
     if job.kind in ANALYSIS_KINDS and job.status == JobStatus.CANCELLED:
         _release_game(job)
@@ -157,11 +158,34 @@ def cancel_job(job_id: JobId) -> Job:
 
 @router.post("/jobs/{job_id}/retry", response_model=Job)
 def retry_job(job_id: JobId, settings: SettingsDep) -> Job:
-    """New job with the same kind and params as a failed or cancelled one."""
+    """New job with the same kind and params as a failed or cancelled one.
+
+    An ANALYZE job that failed after the GPU results were saved (stage analyzing or reporting,
+    tracking.json.gz on disk) is retried as a REANALYZE: the film is not sent to the GPU again.
+    """
     old = db.require_job(job_id)
     if old.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
         raise ScoutError(ErrorCode.CONFLICT, f"Only failed or cancelled jobs can be retried; this one is {old.status}.")
-    return start_job(db.require_game(old.game_id), old.kind, dict(old.params), settings)
+    # Decided under the lock: a film change holds it while it deletes the old tracking.json.gz.
+    with start_lock:
+        game = db.require_game(old.game_id)
+        if _gpu_results_saved(old):
+            # What the ANALYZE would still have done: the report (with the coach's focus) when enabled.
+            params: dict[str, Any] = {"report": settings.auto_report and settings.claude_configured}
+            if old.params.get("coach_focus"):
+                params["coach_focus"] = old.params["coach_focus"]
+            return start_job(game, JobKind.REANALYZE, params, settings)
+        return start_job(game, old.kind, dict(old.params), settings)
+
+
+def _gpu_results_saved(job: Job) -> bool:
+    """A failed ANALYZE job got past the GPU: its tracking.json.gz is installed in the game folder."""
+    return (
+        job.kind == JobKind.ANALYZE
+        and job.status == JobStatus.FAILED
+        and job.stage in (JobStage.ANALYZING, JobStage.REPORTING)
+        and storage.tracking_path(job.game_id).is_file()
+    )
 
 
 def _release_game(job: Job) -> None:

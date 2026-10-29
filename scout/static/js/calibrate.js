@@ -24,18 +24,26 @@ function landmarkGroup(name) {
 }
 
 export class Calibration {
-  constructor({ player, gameId, onReanalyze }) {
+  /**
+   * onReanalyze() / onFullAnalysis(button) start a re-run / a full re-analysis;
+   * onChange(calibration) runs after the calibration was saved (or removed: null).
+   */
+  constructor({ player, gameId, onReanalyze, onFullAnalysis = null, onChange = null }) {
     this.player = player;
     this.gameId = gameId;
     this.onReanalyze = onReanalyze;
+    this.onFullAnalysis = onFullAnalysis;
+    this.onChange = onChange;
     this.panel = byId("calibration-panel");
     this.layer = byId("calibration-layer");
     this.select = byId("cal-landmark");
     this.cfg = courtConfig(null);
     this.landmarks = {};
     this.points = [];
+    this.frameSize = null; // {width, height} of the copy the points and matrix are measured on
     this.saved = null;
     this.matrix = null;
+    this.fullRunAdvised = false;
     this.isOpen = false;
 
     byId("calibrate-btn").addEventListener("click", () => (this.isOpen ? this.close() : this.open()));
@@ -52,14 +60,23 @@ export class Calibration {
     this.layer.addEventListener("click", (e) => this.onFrameClick(e));
     new ResizeObserver(() => this.drawLayer()).observe(this.layer);
     this.player.video.addEventListener("seeked", () => this.drawLayer());
-    this.player.video.addEventListener("loadedmetadata", () => this.drawLayer());
+    this.player.video.addEventListener("loadedmetadata", () => {
+      if (!this.isOpen) return;
+      this.fitToVideo(); // e.g. the original won't play here and the annotated copy took over
+      this.update();
+    });
   }
 
-  /** court: CourtConfig dict; landmarks: {name: [x, y]}; calibration: saved CourtCalibration or null. */
-  setup({ court, landmarks, calibration }) {
+  /**
+   * court: CourtConfig dict; landmarks: {name: [x, y]}; calibration: saved CourtCalibration
+   * or null; fullRunAdvised: the GPU found no free throws, so after saving the panel offers
+   * a full re-analysis.
+   */
+  setup({ court, landmarks, calibration, fullRunAdvised = false }) {
     this.cfg = courtConfig(court);
     this.landmarks = landmarks || {};
     this.saved = calibration || null;
+    this.fullRunAdvised = Boolean(fullRunAdvised);
     const groups = new Map();
     for (const name of Object.keys(this.landmarks)) {
       const group = landmarkGroup(name);
@@ -86,10 +103,16 @@ export class Calibration {
     byId("calibrate-btn").setAttribute("aria-expanded", "true");
     await this.player.setCalibrating(true);
     if (this.saved && !this.points.length) {
+      const video = this.player.video;
       this.points = this.saved.points.map((p) => ({ landmark: p.landmark, px: [...p.px] }));
       this.matrix = this.saved.matrix;
+      this.frameSize = {
+        width: this.saved.video_width || video.videoWidth,
+        height: this.saved.video_height || video.videoHeight,
+      };
       this.showResult(this.saved);
     }
+    this.fitToVideo();
     this.update();
     this.select.focus();
   }
@@ -113,6 +136,24 @@ export class Calibration {
     return [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
   }
 
+  /**
+   * Measure the points and the matrix in the pixels of the copy now loaded. A calibration
+   * saved on another copy (the 720p annotated one where the original won't play, the
+   * full-size original in Safari) would be drawn at the wrong scale, and new clicks would
+   * mix the two sizes. matrix · diag(1/sx, 1/sy, 1): new pixels -> saved pixels -> feet.
+   */
+  fitToVideo() {
+    const { videoWidth: width, videoHeight: height } = this.player.video;
+    const from = this.frameSize;
+    if (!width || !height || !from?.width || !from?.height || (from.width === width && from.height === height)) return;
+    const sx = width / from.width;
+    const sy = height / from.height;
+    const round = (v) => Math.round(v * 10) / 10;
+    this.points = this.points.map((p) => ({ landmark: p.landmark, px: [round(p.px[0] * sx), round(p.px[1] * sy)] }));
+    if (this.matrix) this.matrix = this.matrix.map((row) => [row[0] / sx, row[1] / sy, row[2]]);
+    this.frameSize = { width, height };
+  }
+
   onFrameClick(event) {
     const px = this.toVideoPixels(event);
     const landmark = this.select.value;
@@ -120,6 +161,8 @@ export class Calibration {
       toast("Click inside the picture, on the selected landmark.");
       return;
     }
+    this.fitToVideo(); // the points so far in the same pixels as this click
+    this.frameSize = { width: this.player.video.videoWidth, height: this.player.video.videoHeight };
     this.changePoints([...this.points.filter((p) => p.landmark !== landmark), { landmark, px }]);
     const names = Object.keys(this.landmarks);
     const next = names.find((name) => !this.points.some((p) => p.landmark === name));
@@ -152,18 +195,21 @@ export class Calibration {
 
   async save() {
     const video = this.player.video;
+    // The server scales the points from this size to the film's own resolution.
+    const size = this.frameSize || { width: video.videoWidth, height: video.videoHeight };
     clearError(byId("cal-result"));
     try {
       const calibration = await api.put(gamePath(this.gameId, "/calibration"), {
         points: this.points,
         frame_t: video.currentTime,
-        video_width: video.videoWidth,
-        video_height: video.videoHeight,
+        video_width: size.width || null,
+        video_height: size.height || null,
       });
       this.saved = calibration;
       this.matrix = calibration.matrix;
       this.update();
       this.showResult(calibration);
+      this.onChange?.(calibration);
     } catch (err) {
       showError(byId("cal-result"), err);
     }
@@ -172,11 +218,17 @@ export class Calibration {
   showResult(calibration) {
     const error = Number(calibration.reprojection_error_ft);
     const [kind, verdict] = calibrationQuality(error);
+    // No free throws from the first run: only a GPU run with this calibration finds them.
+    const full = this.fullRunAdvised && this.onFullAnalysis;
     setChildren(byId("cal-result"),
       notice(kind, `${verdict} (average error ${error.toFixed(1)} ft)`,
         "Check that the orange court lines drawn on the frame sit on the real lines. If they don't, move or remove points and save again.",
-        "The new mapping is used after the analysis runs again."),
-      el("button", { type: "button", class: "btn-primary", text: "Re-run analysis", onClick: () => this.onReanalyze() }));
+        full
+          ? "The new mapping is used after the analysis runs again. Free throws need a full re-analysis: it sends the film to the GPU again."
+          : "The new mapping is used after the analysis runs again."),
+      el("div", { class: "row" },
+        el("button", { type: "button", class: full ? null : "btn-primary", text: "Re-run analysis", onClick: () => this.onReanalyze() }),
+        full ? el("button", { type: "button", class: "btn-primary", text: "Full re-analysis", onClick: (e) => this.onFullAnalysis(e.currentTarget) }) : null));
   }
 
   async remove() {
@@ -186,6 +238,7 @@ export class Calibration {
       this.saved = null;
       this.changePoints([]);
       setChildren(byId("cal-result"), notice("info", null, "Calibration removed. Re-run the analysis to go back to automatic court detection."));
+      this.onChange?.(null);
     } catch (err) {
       showError(byId("cal-result"), err);
     }

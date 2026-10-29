@@ -2,7 +2,7 @@
 
 OpenHoopVision already emits shots, passes, rebounds, turnovers/steals and dribbles.
 This module adds what it does not produce -- free throws, (inferred) fouls, screens,
-jump balls, period boundaries -- and fills attributes it leaves empty (assists,
+jump balls, period boundaries and timeouts -- and fills attributes it leaves empty (assists,
 offensive/defensive rebound, blocks). It works on a ``Perception`` built by
 ``modal_app.pipeline.adapter`` (or by any other front end).
 
@@ -147,12 +147,15 @@ class EventConfig:
     jump_ball_lateral: float = 1.0  # (bbox heights) ball between the jumpers: this close to their midpoint
     jump_ball_control_s: float = 5.0  # the first holder after the tip decides won_by_team
 
-    # Period boundaries
-    period_min_stoppage_s: float = 45.0  # no holder and few players on the floor this long
-    period_sure_stoppage_s: float = 300.0  # a stoppage this long is surely a period break (halftime)
+    # Period boundaries and timeouts (docs/TRACKING_SCHEMA.md, "Periods and timeouts"). Live
+    # time = analysed slots that are not part of a quiet stretch.
+    period_min_stoppage_s: float = 45.0  # no holder and few players on the floor this long: a stoppage
+    period_sure_stoppage_s: float = 300.0  # the longest stoppage at least this long is halftime
     period_max_players: int = 4
     period_merge_gap_s: float = 5.0  # brief activity inside a stoppage (players walking across)
-    period_min_length_s: float = 240.0  # a period lasts at least this long (earlier stoppages are timeouts)
+    period_min_live_s: float = 420.0  # a quarter break has this much live time on both sides (8-min quarters)
+    period_quarter_min_share: float = 0.3  # ... and falls between these shares of its half's live time
+    period_quarter_max_share: float = 0.7
     period_first_holder_s: float = 15.0  # the first holder after a period start names the team
 
     # Dedup windows (against existing and our own events)
@@ -294,6 +297,16 @@ def _rim_covers(rim: RimObs, frame: int) -> bool:
     return rim.frame_start <= frame and (rim.frame_end is None or frame <= rim.frame_end)
 
 
+def has_court_positions(perception: Perception) -> bool:
+    """True when some player sighting has a court position. Without one, ``detect_events``
+    skips free throws, the fouls inferred from them and jump balls."""
+    return any(
+        o.court_xy is not None and math.isfinite(o.court_xy[0]) and math.isfinite(o.court_xy[1])
+        for t in perception.player_tracks()
+        for o in t.obs
+    )
+
+
 # ---------------------------------------------------------------------------
 # Array view of the perception
 # ---------------------------------------------------------------------------
@@ -352,7 +365,7 @@ class _Scene:
         trajectories = [self._load(t) for t in perception.player_tracks() if t.obs]
         total = sum(len(t.slots) for t in trajectories)
         mapped = sum(int(np.isfinite(t.court[:, 0]).sum()) for t in trajectories)
-        self.has_court = mapped > 0
+        self.has_court = has_court_positions(perception)  # the runner warns FREE_THROWS_NOT_DETECTED on it
         self.court_mode = total > 0 and mapped >= cfg.court_mode_min_share * total
         half_window = self.slots(cfg.speed_window_s / 2)
         for t in trajectories:
@@ -801,8 +814,10 @@ def detect_events(
     existing_events: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Return only NEW RawEvent dicts (free_throw, foul, screen, jump_ball, period_start,
-    period_end), deduplicated against ``existing_events``. A free throw that coincides
-    with an existing ``shot`` carries ``attrs.replaces_event_id`` so the runner can drop it.
+    period_end, timeout), deduplicated against ``existing_events``. A free throw that
+    coincides with an existing ``shot`` carries ``attrs.replaces_event_id`` so the runner can
+    drop it. Free throws, their fouls and jump balls need court positions
+    (:func:`has_court_positions`); without them they are skipped.
 
     Ids are ``sx00001``, ``sx00002``... in time order, skipping ids already used.
     """
@@ -1255,13 +1270,23 @@ def _screen_by(
 
 
 def _detect_periods(scene: _Scene, known: _Known, cfg: EventConfig) -> list[dict[str, Any]]:
-    """period_start / period_end around long stoppages, plus the jump ball that starts a period.
+    """period_start / period_end at the game's breaks, a ``timeout`` for every other long
+    stoppage, and the jump ball that starts a period (docs/TRACKING_SCHEMA.md).
 
-    The film's first live play starts period 1. Each later stoppage of at least
-    ``period_min_stoppage_s`` (no holder, few players on the floor) ends a period and starts
-    the next one, unless it comes within ``period_min_length_s`` of the period start (then
-    it is taken for a timeout). A stoppage that runs to the end of the film ends the last
-    period. Full timeouts can still look like quarter breaks; their conf stays lower.
+    A stoppage is at least ``period_min_stoppage_s`` without a holder and with few players on
+    the floor. Quarter breaks and full timeouts look alike, so the structure of a game decides,
+    measured in live time (slots that are not quiet):
+
+    * The film's first live play starts period 1 (after the stoppage the film opens with, if any).
+    * Halftime is the longest stoppage of ``period_sure_stoppage_s`` or more (of equally long
+      ones, the one nearest the middle of the film's live time).
+    * Each half (the whole film without a halftime) has at most one quarter break: the
+      stoppage nearest the middle of the half's live time, if it falls between
+      ``period_quarter_min_share`` and ``period_quarter_max_share`` of it and both sides have
+      ``period_min_live_s`` of live time.
+    * Every other stoppage is a timeout at its first slot (team unknown, ``attrs.inferred``),
+      except one that runs to the end of the film: that ends the last period. Overtime is not
+      split off.
     """
     quiet = (scene.holder < 0) & (scene.on_court_counts() <= cfg.period_max_players)
     live = np.flatnonzero(~quiet)
@@ -1275,15 +1300,11 @@ def _detect_periods(scene: _Scene, known: _Known, cfg: EventConfig) -> list[dict
         stoppages = stoppages[1:]
     if first_slot > last:
         return []
-    starts: list[tuple[int, float]] = [(first_slot, first_conf)]
-    ends: list[tuple[int, float]] = []
-    for a, b, conf in stoppages:
-        if b >= last:
-            ends.append((a, conf))
-            break
-        if (a - starts[-1][0]) * scene.dt >= cfg.period_min_length_s:
-            ends.append((a, conf))
-            starts.append((b + 1, conf))
+    closing = stoppages.pop() if stoppages and stoppages[-1][1] >= last else None
+    game_end = closing[0] - 1 if closing is not None else last
+    breaks = _period_breaks(stoppages, np.r_[0, np.cumsum(~quiet)], first_slot, game_end, scene, cfg)
+    starts = [(first_slot, first_conf)] + [(b + 1, conf) for _, b, conf in breaks]
+    ends = [(a, conf) for a, _, conf in breaks] + ([(closing[0], closing[2])] if closing is not None else [])
     drafts: list[dict[str, Any]] = []
     for number, (slot, conf) in enumerate(starts, start=1):
         jump = _find_jump_ball(scene, slot, cfg) if scene.has_court else None
@@ -1299,7 +1320,53 @@ def _detect_periods(scene: _Scene, known: _Known, cfg: EventConfig) -> list[dict
     for number, (slot, conf) in enumerate(ends, start=1):
         if not known.near("period_end", slot, scene.slots(cfg.dedup_period_s)):
             drafts.append(_draft(scene, "period_end", slot, None, None, conf, {"period": number}))
+    window = scene.slots(cfg.dedup_period_s)
+    for a, b, conf in stoppages:
+        if (a, b, conf) not in breaks and not known.between("timeout", a - window, b):
+            drafts.append(_draft(scene, "timeout", a, None, None, conf, {"inferred": True}))
     return drafts
+
+
+def _period_breaks(
+    stoppages: list[tuple[int, int, float]],
+    live_before: np.ndarray,
+    start: int,
+    end: int,
+    scene: _Scene,
+    cfg: EventConfig,
+) -> list[tuple[int, int, float]]:
+    """The stoppages between ``start`` and ``end`` that are halftime or a quarter break (see
+    :func:`_detect_periods`), in time order. ``live_before[k]`` = live slots before slot k."""
+
+    def live(a: int, b: int) -> int:  # live slots in [a, b]
+        return int(live_before[b + 1] - live_before[a])
+
+    def nearest_middle(candidates: list[tuple[int, int, float]], lo: int, hi: int) -> tuple[int, int, float]:
+        middle = live(lo, hi) / 2
+        return min(candidates, key=lambda s: abs(live(lo, s[0] - 1) - middle))
+
+    breaks: list[tuple[int, int, float]] = []
+    halves = [(start, end)]
+    long = [s for s in stoppages if (s[1] - s[0] + 1) * scene.dt >= cfg.period_sure_stoppage_s]
+    if long:
+        longest = max(s[1] - s[0] for s in long)
+        halftime = nearest_middle([s for s in long if s[1] - s[0] == longest], start, end)
+        breaks.append(halftime)
+        halves = [(start, halftime[0] - 1), (halftime[1] + 1, end)]
+    for lo, hi in halves:
+        inside = [s for s in stoppages if lo <= s[0] and s[1] <= hi]
+        total = live(lo, hi)
+        if not inside or total <= 0:
+            continue
+        quarter = nearest_middle(inside, lo, hi)
+        before, after = live(lo, quarter[0] - 1), live(quarter[1] + 1, hi)
+        share = before / total
+        if (
+            cfg.period_quarter_min_share <= share <= cfg.period_quarter_max_share
+            and min(before, after) * scene.dt >= cfg.period_min_live_s
+        ):
+            breaks.append(quarter)
+    return sorted(breaks)
 
 
 def _stoppages(quiet: np.ndarray, scene: _Scene, cfg: EventConfig) -> list[tuple[int, int, float]]:

@@ -5,10 +5,11 @@
 #
 # Steps: check the checkout, stop if the code has local changes (--force saves them,
 # updates and puts them back on top), git fetch + fast-forward (git runs as the service
-# user), install the Python requirements, run the database migrations, redeploy the GPU
-# app to Modal when modal_app/ changed, restart both services, check that the web app
-# answers and show what changed. It prints the commands that go back to the previous
-# version at the end, and when a step fails.
+# user), install the Python requirements (with SCOUT_PROCESSOR=local also the GPU packages
+# and the pinned OpenHoopVision commit, when they changed), run the database migrations,
+# redeploy the GPU app to Modal when modal_app/ changed, restart both services, check
+# that the web app answers and show what changed. It prints the commands that go back to
+# the previous version at the end, and when a step fails.
 #
 # The steps run inside main(), called on the last line: git may replace this file while
 # it runs, and bash has already read all of it by then.
@@ -38,6 +39,9 @@ NEW_HEAD=""      # checked out after the pull
 RUNNING_HEAD=""  # what the services last started on (an earlier update may have stopped halfway)
 MODAL_HEAD=""    # what was last deployed to Modal by install.sh / update.sh ("" = unknown)
 CODE_CHANGED=0
+RESTARTED=0      # restart_services restarted the services (on NEW_HEAD)
+GPU_UPDATED=0    # this run installed modal_app/requirements-gpu.txt (SCOUT_PROCESSOR=local)
+OHV_UPDATED=""   # the OpenHoopVision folder this run checked out again (SCOUT_PROCESSOR=local)
 MODAL_DEPLOYED=0
 MODAL_SUMMARY="not needed"
 MODAL_ENV=""     # SCOUT_MODAL_ENVIRONMENT: the Modal environment the worker looks in ("" = default)
@@ -105,9 +109,15 @@ print_rollback_help() {
   if [[ $CODE_CHANGED -eq 0 || -z $RUNNING_HEAD ]]; then
     return 0
   fi
-  printf '\n  The code was already updated. Running update.sh again finishes the update; the\n'
-  printf '  services keep running the old version until they are restarted.\n'
-  printf '  To go back to the version that ran before this update (%s) instead:\n' "${RUNNING_HEAD:0:12}"
+  if [[ $RESTARTED -eq 1 ]]; then
+    printf '\n  The code was already updated and the services were restarted on the new version.\n'
+    printf '  Fix the problem shown above and run update.sh again (it restarts and checks them\n'
+    printf '  again), or go back to the version that ran before this update (%s):\n' "${RUNNING_HEAD:0:12}"
+  else
+    printf '\n  The code was already updated. Running update.sh again finishes the update; the\n'
+    printf '  services keep running the old version until they are restarted.\n'
+    printf '  To go back to the version that ran before this update (%s) instead:\n' "${RUNNING_HEAD:0:12}"
+  fi
   print_rollback_commands
 }
 
@@ -119,6 +129,14 @@ print_rollback_commands() {  # the commands that return the code, packages, GPU 
       "$SERVICE_USER" "$INSTALL_DIR" "${STASH_COMMIT:0:12}" "$LOCAL_PATCH"
   fi
   printf '    sudo -u %s -H %s/.venv/bin/python -m pip install -r %s/requirements.txt\n' "$SERVICE_USER" "$INSTALL_DIR" "$INSTALL_DIR"
+  if [[ $GPU_UPDATED -eq 1 ]]; then
+    printf '    sudo -u %s -H %s/.venv/bin/python -m pip install -r %s/modal_app/requirements-gpu.txt\n' \
+      "$SERVICE_USER" "$INSTALL_DIR" "$INSTALL_DIR"
+  fi
+  if [[ -n $OHV_UPDATED ]]; then  # the old modal_app/pipeline/ohv.py checks out the OpenHoopVision commit it pins
+    printf '    cd %s && sudo -u %s -H .venv/bin/python -m modal_app.pipeline.ohv install --home %s\n' \
+      "$INSTALL_DIR" "$SERVICE_USER" "$OHV_UPDATED"
+  fi
   forget=$(state_file running)
   if [[ $MODAL_DEPLOYED -eq 1 ]]; then
     printf '    cd %s && sudo -u %s -H .venv/bin/python -m dotenv -f .env run -- .venv/bin/modal deploy%s modal_app/app.py\n' \
@@ -423,14 +441,27 @@ pull_code() {
 }
 
 install_requirements() {
-  local gpu_requirements="$INSTALL_DIR/modal_app/requirements-gpu.txt"
+  local gpu_requirements="$INSTALL_DIR/modal_app/requirements-gpu.txt" ohv_home
   step "Python packages"
   as_user "$INSTALL_DIR/.venv/bin/python" -m pip install --quiet --disable-pip-version-check -r "$INSTALL_DIR/requirements.txt"
   ok "requirements.txt installed"
-  if [[ $(env_get "$ENV_FILE" SCOUT_PROCESSOR) == local && -f $gpu_requirements ]] && changed_since "$RUNNING_HEAD" modal_app/requirements-gpu.txt; then
+  if [[ $(env_get "$ENV_FILE" SCOUT_PROCESSOR) != local ]]; then
+    return 0
+  fi
+  if [[ -f $gpu_requirements ]] && changed_since "$RUNNING_HEAD" modal_app/requirements-gpu.txt; then
     info "modal_app/requirements-gpu.txt changed: updating the local GPU packages"
+    GPU_UPDATED=1
     as_user "$INSTALL_DIR/.venv/bin/python" -m pip install --quiet --disable-pip-version-check -r "$gpu_requirements"
     ok "GPU packages installed"
+  fi
+  # ohv.py pins the OpenHoopVision commit (and its weights): check the new one out, as install.sh does.
+  if changed_since "$RUNNING_HEAD" modal_app/pipeline/ohv.py; then
+    ohv_home=$(env_get "$ENV_FILE" OHV_HOME)
+    ohv_home=${ohv_home:-/opt/openhoopvision}
+    info "modal_app/pipeline/ohv.py changed: updating OpenHoopVision in $ohv_home"
+    OHV_UPDATED=$ohv_home
+    as_user "$INSTALL_DIR/.venv/bin/python" -m modal_app.pipeline.ohv install --home "$ohv_home"
+    ok "OpenHoopVision is at the pinned commit"
   fi
 }
 
@@ -503,6 +534,7 @@ restart_services() {
     return 0
   fi
   systemctl daemon-reload
+  RESTARTED=1  # set first: a failed restart has stopped the old processes too
   systemctl restart "$WEB_UNIT" "$WORKER_UNIT"
   ok "Restarted $WEB_UNIT and $WORKER_UNIT"
   wait_for_health

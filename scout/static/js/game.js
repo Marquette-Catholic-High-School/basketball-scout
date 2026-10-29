@@ -21,10 +21,28 @@ import {
 } from "./ui.js";
 
 const TAB_KEY = "scout.gameTab";
+const FULL_RUN_CONFIRM = "Send the film to the GPU again?\n\n"
+  + "A full re-analysis takes about as long as the first run and costs another GPU run. "
+  + "The current results stay on this page until it finishes.\n\n"
+  + "(Re-run analysis only redoes the stats on this server.)";
 const gameId = gameIdFromPath();
-const state = { game: null, analysis: null, court: null, health: null };
+// filmRenewed: a GPU run finished while the page was open, so the annotated copy is a new file.
+const state = { game: null, analysis: null, court: null, health: null, filmRenewed: false };
 const parts = {};
 let refreshes = 0; // only the newest refresh() may draw the page
+
+/** Film the GPU can analyse: an uploaded file or a video link. */
+const hasFilm = (game) => Boolean(game.has_video || game.video_url);
+
+/** The GPU could not find free throws (no court positions); a GPU run with a calibration can. */
+const freeThrowsMissing = (analysis) => Boolean(analysis?.data_quality?.warnings?.some((w) => w.code === "FREE_THROWS_NOT_DETECTED"));
+
+/**
+ * An ANALYZE job that got past the GPU installed a new annotated copy (same URL): it succeeded,
+ * or failed afterwards (the server's rule for retrying it as a REANALYZE, which keeps that copy).
+ */
+const replacedAnnotatedCopy = (job) => job?.kind === "analyze"
+  && (job.status === "succeeded" || (job.status === "failed" && ["analyzing", "reporting"].includes(job.stage)));
 
 function teamNames(game, analysis) {
   const name = (side) => analysis?.teams?.find((t) => t.side === side)?.name;
@@ -105,8 +123,14 @@ async function refresh() {
   byId("game-layout").classList.toggle("solo", !analysis);
   show(byId("analysis-tabs-wrap"), Boolean(analysis));
 
-  parts.player.load({ hasVideo: game.has_video, hasAnnotated: game.has_annotated_video });
-  parts.calibration.setup({ court: court?.court, landmarks: court?.landmarks, calibration: game.calibration });
+  parts.player.load({ hasVideo: game.has_video, hasAnnotated: game.has_annotated_video, renewed: state.filmRenewed });
+  state.filmRenewed = false;
+  parts.calibration.setup({
+    court: court?.court,
+    landmarks: court?.landmarks,
+    calibration: game.calibration,
+    fullRunAdvised: hasFilm(game) && freeThrowsMissing(analysis),
+  });
   if (analysis) renderAnalysis(game, analysis, names, court);
   else parts.player.setData({ teamNames: names });
   if (analysis) parts.report.load(game, { activeJob: jobs.report, claudeConfigured: health?.claude_configured });
@@ -126,7 +150,18 @@ function renderAnalysis(game, analysis, names, court) {
   parts.plays.render(analysis, names);
   parts.exports.render(names);
   if (byId("tabbtn-exports").getAttribute("aria-selected") === "true") parts.exports.activate();
-  renderQuality({ analysis, game, teamNames: names, onCalibrate: () => parts.calibration.open() });
+  renderQualityTab();
+}
+
+function renderQualityTab() {
+  const { game, analysis } = state;
+  renderQuality({
+    analysis,
+    game,
+    teamNames: teamNames(game, analysis),
+    onCalibrate: () => parts.calibration.open(),
+    onFullAnalysis: hasFilm(game) ? startFullAnalysis : null,
+  });
 }
 
 /**
@@ -149,9 +184,8 @@ function renderFilmState(game, analysis) {
 /** What to tell the coach while there is film but no analysis to show yet. */
 function renderPending(game, analysis) {
   const box = byId("analysis-pending");
-  const hasFilm = game.has_video || Boolean(game.video_url);
-  show(box, hasFilm && !analysis);
-  if (!hasFilm || analysis) return;
+  show(box, hasFilm(game) && !analysis);
+  if (!hasFilm(game) || analysis) return;
   if (game.status === "failed" && game.error && byId("job-panel").hidden) {
     setChildren(box, errorBox({ info: game.error }));
     return;
@@ -190,13 +224,17 @@ function renderHeader(game, names) {
   byId("nav-roster").href = rosterUrl;
   const film = byId("film-link");
   film.href = `/upload?game=${encodeURIComponent(game.id)}`;
-  film.textContent = game.has_video ? "Replace film" : "Add film";
+  film.textContent = hasFilm(game) ? "Replace film" : "Add film";
   byId("no-film-link").href = film.href;
   const busy = game.status === "queued" || game.status === "processing";
   const rerun = byId("reanalyze-btn");
   rerun.textContent = game.has_analysis ? "Re-run analysis" : "Analyze film";
-  rerun.disabled = busy || !(game.has_video || game.video_url || game.has_analysis);
-  rerun.title = busy ? "An analysis is already running" : "";
+  rerun.disabled = busy || !(hasFilm(game) || game.has_analysis);
+  rerun.title = busy ? "An analysis is already running" : game.has_analysis ? "Redo the stats on this server (about a minute, no GPU)" : "";
+  const full = byId("full-analysis-btn");
+  show(full, hasFilm(game) && game.has_analysis);
+  full.disabled = busy;
+  full.title = busy ? "An analysis is already running" : "Send the film to the GPU again";
 }
 
 /** Header badge while the analysis job runs (the whole page reloads when it ends). */
@@ -207,22 +245,35 @@ function showJobStatus(job) {
   const pct = Math.round(job.progress || 0);
   badge.className = `badge badge-${status}`;
   badge.textContent = status === "processing" && pct ? `${STATUS_LABELS.processing} · ${pct}%` : STATUS_LABELS[status];
-  const rerun = byId("reanalyze-btn");
-  rerun.disabled = true;
-  rerun.title = "An analysis is already running";
+  for (const id of ["reanalyze-btn", "full-analysis-btn"]) {
+    const button = byId(id);
+    button.disabled = true;
+    button.title = "An analysis is already running";
+  }
 }
 
 /** POST a new analyze / reanalyze job and start tracking it. */
-async function startJob(kind) {
+async function startJob(kind, started = null) {
   try {
     const job = await api.post(gamePath(gameId, "/jobs"), { kind });
-    toast(kind === "reanalyze" ? "Re-running the analysis…" : "Analysis started");
+    toast(started || (kind === "reanalyze" ? "Re-running the analysis…" : "Analysis started"));
     parts.jobPanel.track(job);
     await refresh();
   } catch (err) {
     await refresh(); // shows the job that is already running, if that was the problem
     showError(byId("page-error"), err);
   }
+}
+
+/**
+ * ANALYZE an analysed game again: the film goes back to the GPU, with the court
+ * calibration (the only way to find free throws the first run missed). The old results
+ * stay on the page until the new run finishes.
+ */
+async function startFullAnalysis(button) {
+  if (!window.confirm(FULL_RUN_CONFIRM)) return;
+  for (const b of [button, byId("reanalyze-btn"), byId("full-analysis-btn")]) if (b) b.disabled = true; // refresh() redraws them
+  await startJob("analyze", "Full re-analysis started");
 }
 
 function colorWord(team) {
@@ -302,12 +353,30 @@ function init() {
   parts.plays = new Plays({ player: parts.player });
   parts.report = new Report({ gameId });
   parts.exports = new Exports({ gameId });
-  parts.jobPanel = new JobPanel({ onChange: () => refresh(), onUpdate: showJobStatus });
-  parts.calibration = new Calibration({ player: parts.player, gameId, onReanalyze: () => startJob(rerunKind()) });
+  parts.jobPanel = new JobPanel({
+    onChange: (job) => {
+      // A finished GPU run replaced the annotated copy on the server: the player loads the new one.
+      if (replacedAnnotatedCopy(job)) state.filmRenewed = true;
+      refresh();
+    },
+    onUpdate: showJobStatus,
+  });
+  parts.calibration = new Calibration({
+    player: parts.player,
+    gameId,
+    onReanalyze: () => startJob(rerunKind()),
+    onFullAnalysis: startFullAnalysis,
+    onChange: (calibration) => {
+      // The Data quality tab shows the calibration and, with it, the Full re-analysis button.
+      state.game = { ...state.game, calibration };
+      if (state.analysis) renderQualityTab();
+    },
+  });
   byId("reanalyze-btn").addEventListener("click", (e) => {
     e.currentTarget.disabled = true; // refresh() re-enables it once the job state is known
     startJob(rerunKind());
   });
+  byId("full-analysis-btn").addEventListener("click", (e) => startFullAnalysis(e.currentTarget));
   setupAnalysisTabs();
   refresh();
 }

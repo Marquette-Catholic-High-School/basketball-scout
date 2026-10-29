@@ -224,8 +224,8 @@ def tip_off() -> Perception:
 
 
 def game_with_breaks() -> Perception:
-    """500 s of play with everyone at the benches during 300-370 s (a quarter break) and
-    420-450 s (a 30 s timeout: too short to be a period boundary)."""
+    """500 s of play with everyone at the benches during 300-370 s (a 70 s stoppage) and
+    420-450 s (30 s: too short to count as a stoppage)."""
     p = make_perception(500.0)
 
     def at_bench(t: float) -> bool:
@@ -395,19 +395,22 @@ def test_jump_ball_at_the_start():
 
 
 def test_period_boundary_after_long_stoppage_only():
-    extra = detect_events(game_with_breaks())
+    # A quarter break needs 7 minutes of live play on both sides; with less it is a timeout.
+    cfg = EventConfig(period_min_live_s=90.0, period_quarter_max_share=0.8)  # 300 s | 70 s | 100 s of play
+    extra = detect_events(game_with_breaks(), cfg)
     starts, ends = of_type(extra, "period_start"), of_type(extra, "period_end")
     assert [(s["attrs"]["period"], round(s["t"])) for s in starts] == [(1, 0), (2, 370)]
     assert [(e["attrs"]["period"], round(e["t"])) for e in ends] == [(1, 300)]
     assert starts[1]["team_id"] == 0  # first holder after the break
     assert 0.4 <= ends[0]["conf"] < 0.6  # a 70 s break could still be a timeout
-    assert of_type(extra, "jump_ball") == []
+    assert of_type(extra, "jump_ball") == [] and of_type(extra, "timeout") == []
 
 
-def test_stoppage_too_soon_after_a_period_start_is_a_timeout():
-    cfg = EventConfig(period_min_length_s=400.0)
-    extra = detect_events(game_with_breaks(), cfg)
+def test_stoppage_without_enough_play_around_it_is_a_timeout():
+    extra = detect_events(game_with_breaks())
     assert of_type(extra, "period_end") == [] and len(of_type(extra, "period_start")) == 1
+    (timeout,) = of_type(extra, "timeout")  # the 30 s break is too short to be one
+    assert round(timeout["t"]) == 300 and timeout["attrs"] == {"inferred": True} and timeout["team_id"] is None
 
 
 # ---------------------------------------------------------------------------

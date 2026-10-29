@@ -93,6 +93,10 @@ jersey_similarity(read, jersey) -> (score, method)
 jersey_votes(reads, *, min_conf=0.2) -> dict[str, float]
 match_votes(votes, roster, *, accept=0.5) -> (RosterPlayer | None, score, method)
 assign_tracks(tracking, team_map, rosters, overrides=None) -> list[TrackAssignment]
+# A track that is no roster player never shows a roster number (another track is that player, or
+# its votes were too split): no jersey, its stats go to the team line. Any override but ignore
+# makes the track a player, also one the pipeline called a referee (no jersey unless the
+# override names a player).
 match_name(query, roster, *, threshold=80) -> (RosterPlayer | None, score)
 
 # scout.export.fastscout   (roster= defaults to the game's current roster in the database)
@@ -122,6 +126,9 @@ submit_job(game_id, kind, params=None, *, queue=None) -> Job   # if enqueue fail
 # scout.processing   (Processor, PollResult and poll_result_from_response live in scout/processing/base.py)
 get_processor(settings=None, name=None) -> Processor   # submit / poll / fetch / cancel / cleanup / check_ready
 Processor.poll_interval: float | None                  # seconds between polls; None = SCOUT_MODAL_POLL_SECONDS
+Processor.should_stop: Callable[[str], bool] | None    # set by the worker: True once that job must end (cancel,
+                                                       # deleted game, lost lease, worker stop); submit() checks it
+PollResult.unreachable: bool                           # the processor could not be reached (state stays "running")
 poll_result_from_response(response) -> PollResult      # pipeline response dict -> PollResult (Modal and local processors)
 
 # scout.worker
@@ -159,16 +166,30 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   (download, analysis, report) and REANALYZE / REPORT jobs run to the end; systemd
   allows 120 s, then kills the worker and the job is picked up again when its lease
   expires.
-* Cancelling a queued job is immediate; a running job gets `cancel_requested=1` and
-  the worker cancels the processor call and marks it `cancelled`. Cancel is also
-  checked between stages.
+* Cancelling a queued job is immediate, unless it already has a GPU call
+  (`external_id`, e.g. a row an older version left `queued`): that job, like a running
+  one, gets `cancel_requested=1`, and the worker that claims it cancels the processor
+  call and marks it `cancelled`, also when its attempts ran out (a cancel wins over
+  `WORKER_LOST`). Cancel is also checked between stages and while a failed film upload
+  waits to be retried.
+* A film upload to the Modal volume that fails is tried twice more, after 10 s and
+  30 s (not after an auth error, a film that is gone, or a cancelled upload). A cancel
+  during those waits ends the job as `cancelled` within a second; a graceful stop hands
+  the job back for the next worker instead of retrying.
 * On a failure, a cancel or the max-wait timeout the worker also cancels a GPU call that
   may still be running and, with `SCOUT_MODAL_CLEANUP=true`, deletes the film and
   results from the Modal volume (`processor.cancel` / `processor.cleanup`).
 * The wait limit `SCOUT_MODAL_MAX_WAIT_HOURS` is measured from `Job.started_at` (the
   first claim), so worker restarts do not extend it → `MODAL_TIMEOUT`. Raising
   `SCOUT_MODAL_TIMEOUT_S` (the GPU function's own limit) above 8 hours therefore also
-  needs a higher `SCOUT_MODAL_MAX_WAIT_HOURS`.
+  needs a higher `SCOUT_MODAL_MAX_WAIT_HOURS`. While Modal cannot be reached at all
+  (`PollResult.unreachable`), the limit does not end the wait: a job resumed after the
+  server was off would otherwise fail on its first poll, and its cleanup could delete
+  results that are waiting. After 24 hours without contact (counted by the worker
+  process) the job fails with `MODAL_REMOTE_ERROR`.
+* Modal keeps a call's result for 7 days. When it has expired but
+  `results/<job_id>/tracking.json.gz` is still on the volume, the worker downloads that
+  file (and `annotated.mp4`, if there) instead of failing with `MODAL_RESULT_EXPIRED`.
 * A resumed job is polled by the processor that created its handle (`Job.processor`),
   even if `SCOUT_PROCESSOR` changed in between.
 * Retryable failures (see `scout/errors.py`) show a Retry button in the UI
@@ -180,6 +201,10 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   goes back to `ready`, `uploaded` or `draft`, decided from the files on disk. The worker
   settles the game status before it marks the job finished (success, failure and
   cancel alike), so a page that reloads the game when its job ends sees the final status.
+* When an ANALYZE installs its outputs, the worker sets `has_annotated_video` at once,
+  so a failure later in the job does not leave the flag pointing at a removed file. New
+  tracking installed over an earlier run's also clears the game's track overrides (see
+  **Full re-analysis** below).
 * A report failure after a successful analysis does NOT fail the ANALYZE job; it is
   recorded as a job warning and the coach can click "Generate report" again.
 * Mock processor (`SCOUT_PROCESSOR=mock`): the seed of the synthetic game is written to
@@ -207,10 +232,12 @@ password. `CROSS_SITE_REQUEST` (403) comes from the
 same-origin middleware in front of it: a POST/PUT/PATCH/DELETE that the browser marks
 as sent by another website (`Sec-Fetch-Site`, else `Origin` / `Referer` against `Host`
 or `X-Forwarded-Host`) is refused, even with auth disabled. `HOST_NOT_ALLOWED` (403)
-comes from the same middleware: the request's `Host` is not one the server answers to
-(`SCOUT_ALLOWED_HOSTS`; when it is empty, any name while auth is on, and with auth
-disabled only IP addresses, `localhost` / `*.localhost` and the machine's own name, which
-blocks DNS rebinding). `GET /api/health/live` is exempt. Request bodies are capped:
+comes from the same middleware: the request's `Host`, or a name in `X-Forwarded-Host`
+(where a proxy that rewrites `Host` puts the browser's; it can only refuse a request,
+never allow one), is not one the server answers to (`SCOUT_ALLOWED_HOSTS`, `*.school.org`
+for subdomains, `*` for any name; IP addresses, `localhost` and `*.localhost` always
+work; when it is empty, any name while auth is on, and with auth disabled only those and
+the machine's own name, which blocks DNS rebinding). `GET /api/health/live` is exempt. Request bodies are capped:
 1 MB for JSON, 4 MB for a roster file; upload chunks have their own limit
 (`REQUEST_TOO_LARGE`, 413). The interactive API docs are at `/api/docs` and
 `/api/openapi.json` (behind sign-in).
@@ -227,11 +254,21 @@ Extra rules beyond the table:
   the calibration was clicked on the old film's frame. It also aborts the game's other
   open uploads and deletes their `.part` files. A video URL game has `has_video=false`,
   `video_url` set (the GPU downloads it; the local processor downloads it on the server
-  and refuses links to private, loopback and link-local addresses). Video links must be
-  `http(s)` with a valid host and port (0-65535).
+  and refuses links whose host resolves to a private, loopback, link-local, site-local,
+  multicast or reserved address, also after a redirect). Video links must be `http(s)`
+  with a valid host and port (0-65535); a file name taken from the link is cut to 255
+  characters, keeping its extension.
+* **Full re-analysis** (an ANALYZE of a game that already has GPU results) sends the
+  film and the court calibration to the GPU again; the old results stay until the new
+  ones arrive. When the worker installs the new tracking over the earlier run's, it
+  clears the track overrides (the new run may number its tracks differently);
+  `team_id_map` stays, because OpenHoopVision's team ids are its dark/light jersey
+  clusters.
 * **Uploads**: starting an upload aborts the game's open uploads that have had no data
   for an hour. `PUT /api/uploads/{id}/chunk` answers 409 `UPLOAD_INCOMPLETE` with the
   current upload after 120 s without data, so the browser can resume from `received`.
+  The browser itself aborts a chunk whose upload has made no progress for 60 s and
+  resumes from `received` (`GET /api/uploads/{id}`).
 * `POST /api/games/{id}/jobs` checks `params.coach_focus` like `ReportRequest` for
   every kind (kind=report keeps only `coach_focus`): ANALYZE and REANALYZE jobs that
   write the report send it to Claude too.
@@ -241,7 +278,8 @@ Extra rules beyond the table:
   in the path wins.
 * `GET /api/games/{id}/jobs` lists the newest job first.
 * Cancelling a queued ANALYZE / REANALYZE job puts the game back to `ready`, `uploaded`
-  or `draft` at once.
+  or `draft` at once (one that already has a GPU call: once the worker has stopped that
+  call).
 
 Pages: `GET /` (games), `GET /upload` (new game + film; `?game=<id>` to add film to an
 existing game), `GET /games/{id}` (results), `GET /games/{id}/roster`. Assets under
@@ -315,7 +353,10 @@ Export/download routes accept `?download=1` to add `Content-Disposition: attachm
   missed FG/FT (both known); when either side is unknown, the pipeline's `offensive`
   flag decides; else DREB.
 * **Turnovers / steals**: `turnover` → TOV+1 for the player who lost it; with
-  `kind="steal"` or `stolen_by_track`, a STEAL row and STL+1 for the stealer.
+  `kind="steal"` or `stolen_by_track`, a STEAL row and STL+1 for the stealer. A steal
+  credited to a teammate of the player who lost the ball (the pipeline's team label
+  flickered) is dropped: with `kind="steal"` the STEAL row goes to the other team's
+  line, otherwise there is no STEAL row.
 * **Fouls**: `foul` → PF+1 for the fouler.
 * **Possessions** change on: a made FG (unless the scoring team's free throw is the next
   ball event: an and-one), the made last FT of a trip (technical-foul free throws: the
@@ -334,10 +375,14 @@ Export/download routes accept `?download=1` to add `Content-Disposition: attachm
   * A missed last free throw does not flip the possession by itself: the rebound decides.
   * Gaps are filled from ball-holder segments of 2 s or more, and a shot, free throw,
     turnover or offensive rebound by the team without the ball also starts an `inferred`
-    possession. When the other team gains control within 4 s of a missed shot or last
-    free throw that nobody was credited with rebounding, and nothing stopped play, the
-    new possession counts as an unseen defensive rebound (reason `def_rebound`, a live
-    start) but no DREB is credited.
+    possession. When the other team gains control (a ball-holder segment of 2 s or more,
+    a shot or a turnover) within 4 s of a shot or last free throw known to have missed
+    (`made: false`, or blocked; a `made: null` shot may have gone in) that nobody was
+    credited with rebounding, and nothing stopped play (a whistle, free throws, a period
+    break, or the shooting team holding the ball for 2 s), the new possession counts as
+    an unseen defensive rebound (reason `def_rebound`, a live start) but no DREB is
+    credited. It starts when that control starts, often the outlet receiver's hold, so
+    it can begin about a second after the real rebound.
   * **Transition** (`Possession.transition`, FastScout's fast-break points): a live
     start (defensive rebound, steal, live-ball turnover), the possession's last field-goal
     attempt, turnover or fouled shot within 10 s of the start, and no timeout or common
@@ -349,7 +394,9 @@ Export/download routes accept `?download=1` to add `Content-Disposition: attachm
 * `GameAnalysis.data_quality.warnings` holds the pipeline's warnings
   (docs/TRACKING_SCHEMA.md) plus the server's own: `NO_ROSTER`, `COURT_NOT_MAPPED`
   (pixel mode: no homography and no calibration) and `LOW_JERSEY_MATCH` (under 50 % of
-  player time matched to a roster jersey). When the server applied the coach's
+  player time matched to a roster jersey). The server also adds
+  `FREE_THROWS_NOT_DETECTED` when the pipeline reported `NO_COURT_HOMOGRAPHY`, found no
+  free throws and did not send that warning itself. When the server applied the coach's
   calibration, the pipeline's `NO_COURT_HOMOGRAPHY` / `COURT_MAPPING_SPARSE` warnings are
   dropped (the calibration answers them), but `FREE_THROWS_NOT_DETECTED` stays: free
   throws are found on the GPU, so only a full re-analysis (ANALYZE, which sends the

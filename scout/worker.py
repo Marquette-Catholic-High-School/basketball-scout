@@ -129,6 +129,7 @@ class Worker:
         self.settings = settings or get_settings()
         self.queue = queue or get_queue(self.settings)
         self.processor = processor or get_processor(self.settings)
+        self.processor.should_stop = self._should_stop  # a retried film upload gives up when the job ends
         self.worker_id = worker_id or default_worker_id()
         # Intervals in seconds; instance attributes so tests can shorten them.
         self.lease_renew_interval = self.settings.job_lease_seconds / 3
@@ -222,10 +223,10 @@ class Worker:
         }
         try:
             run.processor = self._processor_for(job)
+            if job.cancel_requested:  # before WORKER_LOST: the coach asked for a cancel, not a failure
+                raise _Cancelled
             if job.attempts > job.max_attempts:
                 raise ScoutError(ErrorCode.WORKER_LOST)
-            if job.cancel_requested:
-                raise _Cancelled
             steps[job.kind](run)
         except _Paused:
             self._release(job)
@@ -288,7 +289,14 @@ class Worker:
             note = "Sending the video link to the GPU service"
         self._stage(job.id, JobStage.UPLOADING, PROGRESS_UPLOADING, note)
         run.processor.check_ready()
-        handle = run.processor.submit(job_id=job.id, video=video, options=options)
+        try:
+            handle = run.processor.submit(job_id=job.id, video=video, options=options)
+        except ScoutError:
+            # A failed upload is not retried once the coach cancelled or the worker is stopping
+            # (Processor.should_stop): the job is then cancelled or handed back, not failed.
+            self._check_cancel(job.id)
+            self._check_stop()
+            raise
         run.handle = handle  # set before saving, so a failure below still cancels the call
         # Saved at once: from here on a worker restart resumes this call instead of paying for another.
         db.update_job(job.id, external_id=handle, processor=run.processor.name)
@@ -461,24 +469,27 @@ class Worker:
         )
         logger.info("Job %s succeeded%s", job.id, f" with warnings: {run.warnings}" if run.warnings else "")
 
+    # The game status is settled before the job ends (as on success): the game page reloads the
+    # game when it sees the job finish, and must not find it still "processing".
+
     def _finish_failed(self, run: _Run, error: ScoutError) -> None:
         job = run.job
         logger.warning("Job %s failed: %s%s", job.id, error, f" ({error.detail})" if error.detail else "")
         self._release_remote(run, cancel=True)
         info = error.to_info()
-        self._finish(job.id, status=JobStatus.FAILED, error=info, message=error.title, warnings=run.warnings)
         if job.kind in _GAME_STATUS_KINDS:
             self._set_game_status(job.game_id, GameStatus.FAILED, error=info)
+        self._finish(job.id, status=JobStatus.FAILED, error=info, message=error.title, warnings=run.warnings)
 
     def _finish_cancelled(self, run: _Run) -> None:
         job = run.job
         logger.info("Job %s cancelled", job.id)
         self._release_remote(run, cancel=True)
+        if job.kind in _GAME_STATUS_KINDS:
+            self._restore_game_status(job.game_id)
         self._finish(
             job.id, status=JobStatus.CANCELLED, stage=JobStage.DONE, message="Cancelled", warnings=run.warnings
         )
-        if job.kind in _GAME_STATUS_KINDS:
-            self._restore_game_status(job.game_id)
 
     def _release_remote(self, run: _Run, *, cancel: bool) -> None:
         """Stop a GPU call that is still running (cancel / failure) and delete remote copies."""
@@ -573,6 +584,18 @@ class Worker:
     def _check_stop(self) -> None:
         if self._stop.is_set():
             raise _Paused
+
+    def _should_stop(self, job_id: str) -> bool:
+        """``Processor.should_stop``: the job was cancelled, deleted or taken over, or we are stopping."""
+        if self._stop.is_set():
+            return True
+        try:
+            self._check_cancel(job_id)
+        except (_Cancelled, _LeaseLost):
+            return True
+        except Exception as exc:  # the database is busy: carry on, the next check decides
+            logger.warning("Could not check job %s for a cancel: %s", job_id, exc)
+        return False
 
     def _set_game_status(self, game_id: str, status: GameStatus, **changes: Any) -> None:
         try:

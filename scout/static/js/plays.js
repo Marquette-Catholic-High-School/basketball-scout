@@ -105,7 +105,8 @@ export class Plays {
       el("td", { text: PLAY_OUTCOME_LABELS[play.outcome] || play.outcome }),
       el("td", { class: "num", text: play.points ? String(play.points) : "" }),
       el("td", { class: "num small", text: `${Math.round((play.confidence || 0) * 100)}%` })));
-    setChildren(byId("plays-body"), rows.length ? rows : el("tr", {}, el("td", { colspan: "7", class: "muted", text: "No plays match these filters." })));
+    const empty = this.plays.length ? "No plays match these filters." : "No plays were recognised in this film.";
+    setChildren(byId("plays-body"), rows.length ? rows : el("tr", {}, el("td", { colspan: "7", class: "muted", text: empty })));
     byId("plays-count").textContent = `${this.listed.length} of ${this.plays.length} plays`;
   }
 }

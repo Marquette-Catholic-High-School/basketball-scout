@@ -56,8 +56,11 @@ with one dict:
 the Modal function (`modal_app/app.py`) downloads it into `/data/tmp/<job_id>/` first and
 deletes it afterwards (`runner.run_pipeline` itself only takes a local file). The local
 processor downloads it into its run folder the same way, but on the server, so it refuses
-links whose host resolves to a private, loopback, link-local, multicast or reserved
-address (also after a redirect) with `VIDEO_DOWNLOAD_FAILED`. Paths are
+links whose host resolves to a private, loopback, link-local, site-local, multicast or
+reserved address (also after a redirect) with `VIDEO_DOWNLOAD_FAILED`. It connects to the
+address it checked, so these downloads do not go through an HTTP(S) proxy set in the
+environment. A file name taken from the link is shortened to 100 characters on the GPU
+(the extension is kept). Paths are
 relative to the Modal volume root (mounted at `/data` in the container) or, for the local
 processor, to its run folder `<SCOUT_DATA_DIR>/local_runs/<job_id>/`.
 
@@ -129,7 +132,7 @@ Gzipped JSON validating as `scout.schemas.TrackingResult`:
 | `video` | fps, size, frame_count, duration_s, analysis_fps, codec |
 | `pipeline` | name (`openhoopvision` / `builtin` / `synthetic`), version, models used, gpu, elapsed_s, options |
 | `court` | `length_ft`, `width_ft`, `homographies[]` (frame ranges + 3×3 pixel→feet matrix, source `model`/`manual`/`classical`) |
-| `teams[]` | team_id, dominant jersey colour (RGB + name), track_count |
+| `teams[]` | team_id, dominant jersey colour (`color_rgb`, null when OpenHoopVision did not report it; `color_name` `dark` / `light`), track_count |
 | `tracks[]` | track_id, team_id, role (`player`/`referee`/`unknown`), jersey_reads[] (frame, raw text, conf), samples[] (f, bbox, court_xy, conf) |
 | `ball[]` | f, xy (px), court_xy (ground projection, approximate), conf, holder_track_id, interpolated |
 | `rims[]` | optional rim pixel positions (`left`/`right` in the image) |
@@ -157,7 +160,7 @@ screen; the runner still picks them up from those lines.
 | `TRACKING_DATA_TRUNCATED` | (info) Unreadable frame records from OpenHoopVision were skipped. |
 | `FILM_PARTIALLY_ANALYSED` | Fewer than 90 % of the film's frames (the video stream's frame count divided by the analysis step) were analysed, so stats and plays cover only the part that was read. |
 | `EVENT_ENRICHMENT_FAILED` | Assists, blocks and offensive / defensive rebounds could not be filled in. |
-| `EXTRA_EVENTS_FAILED` | Free throws, fouls, screens, jump balls and periods could not be detected. |
+| `EXTRA_EVENTS_FAILED` | Free throws, fouls, screens, jump balls and periods could not be detected: OpenHoopVision's free throws stay field-goal attempts, so FGA and points run high and PF runs low. |
 | `FREE_THROWS_NOT_DETECTED` | No court positions, so free throws (and the shooting fouls inferred from them) could not be detected: OpenHoopVision reports each free throw as a field-goal attempt, so FGA and points run high. A manual calibration sent with the GPU job lets the pipeline find them; a server-side re-analysis cannot. |
 | `ANNOTATED_VIDEO_MISSING` | No overlay video was produced; the film plays without overlays. |
 | `ANNOTATED_VIDEO_FAILED` | The overlay video could not be encoded; stats and the timeline are unaffected. |
@@ -181,7 +184,7 @@ box score from double counting.
 | `screen` | screener | `ball_handler_track`, `on_ball` (bool) |
 | `jump_ball` | — | `won_by_team` |
 | `period_start` / `period_end` | — | `period` |
-| `timeout` | — | (team in `team_id`) |
+| `timeout` | — | (team in `team_id`); `inferred: true` with `team_id` null when the pipeline found it from a stoppage |
 
 `attrs.replaces_event_id` on a `free_throw` is internal to the pipeline:
 `events.detect_events` sets it when a free throw it found coincides with an existing
@@ -197,8 +200,8 @@ stoppages (no ball holder and at most 4 players on the floor for 45 s or more). 
 breaks and full timeouts look alike, so it uses the structure of a game:
 
 * The film's first live play starts period 1.
-* The longest stoppage of 5 minutes or more is halftime (if several, the one nearest
-  the middle of the film's live play).
+* The longest stoppage of 5 minutes or more is halftime (of several equally long ones,
+  the one nearest the middle of the film's live play).
 * In each half (the whole film when there is no halftime), at most one stoppage is a
   quarter break: the one nearest the middle of that half's live play, and only when it
   falls between 30 % and 70 % of it and each side has at least 7 minutes of live play.

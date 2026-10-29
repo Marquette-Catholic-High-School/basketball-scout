@@ -14,7 +14,8 @@ One job, step by step::
 local processors work) on machines where Modal is not installed or configured.
 
 A spawned call keeps its result for 7 days, so a worker that restarts resumes polling
-with nothing but the handle saved on the job (``Job.external_id``).
+with nothing but the handle saved on the job (``Job.external_id``). After that the result
+is gone, but the files it pointed to are still on the volume; poll() then reports them.
 """
 
 from __future__ import annotations
@@ -26,7 +27,9 @@ import re
 import tempfile
 import threading
 import time
-from pathlib import Path
+from collections.abc import Callable
+from concurrent.futures import CancelledError
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any
 
@@ -49,6 +52,11 @@ CONNECTION_GRACE_S = 24 * 3600.0
 # download rides out a few minutes without internet: delays double from download_retry_delay_s
 # (5 + 10 + 20 + 40 + 80 s).
 DOWNLOAD_ATTEMPTS = 6
+# A film upload runs for up to an hour and Modal retries each part for less than a second, so a
+# few seconds without network would fail it and Retry would start over. The whole upload is tried
+# again after these waits (batch_upload commits only on a clean exit: nothing half-written stays).
+UPLOAD_RETRY_DELAYS_S = (10.0, 30.0)
+STOP_CHECK_S = 1.0  # a wait before the next upload attempt looks for a cancel this often
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -74,9 +82,11 @@ def parse_handle(handle: str) -> tuple[str, str | None]:
 class ModalProcessor(Processor):
     name = "modal"
     download_retry_delay_s = 5.0
+    upload_retry_delays_s: tuple[float, ...] = UPLOAD_RETRY_DELAYS_S
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        self.sleep: Callable[[float], None] = time.sleep  # waits between upload attempts (tests replace it)
         self._lock = threading.Lock()
         self._unreachable_since: dict[str, float] = {}  # handle -> monotonic time of the first failed poll
 
@@ -118,8 +128,8 @@ class ModalProcessor(Processor):
             return self._running(job_id)
         except errors.FunctionTimeoutError as exc:  # subclass of modal's TimeoutError: check it first
             return _failed(ErrorCode.MODAL_TIMEOUT, "The GPU function ran past its time limit on Modal.", exc)
-        except errors.OutputExpiredError as exc:
-            return _failed(ErrorCode.MODAL_RESULT_EXPIRED, None, exc)
+        except errors.OutputExpiredError as exc:  # after 7 days; the files may still be on the volume
+            return self._expired(job_id, exc)
         # Trouble with Modal's API (gRPC UNAVAILABLE / INTERNAL / RESOURCE_EXHAUSTED after the SDK's own
         # retries), not an outcome of our GPU call, which keeps running meanwhile.
         except (
@@ -249,26 +259,81 @@ class ModalProcessor(Processor):
         if video.path is None or not video.path.exists():
             raise ScoutError(ErrorCode.VIDEO_MISSING, "The uploaded film is missing from the server.")
         remote_path = f"uploads/{job_id}/{_safe_name(video.path.name)}"
-        self._upload(video.path, remote_path)
+        self._upload(job_id, video.path, remote_path)
         return {"type": "volume", "path": remote_path, "filename": video.filename}
 
-    def _upload(self, local_path: Path, remote_path: str) -> None:
+    def _upload(self, job_id: str, local_path: Path, remote_path: str) -> None:
+        """Copy the film to the volume; a failed attempt is retried after ``upload_retry_delays_s``."""
         errors = _modal().exception
         size_mb = local_path.stat().st_size / 1e6
         volume_name = self.settings.modal_volume_name
         logger.info("Uploading %s (%.0f MB) to Modal volume %s at %s", local_path, size_mb, volume_name, remote_path)
         started = time.monotonic()
-        try:
-            with self._volume().batch_upload(force=True) as batch:
-                batch.put_file(str(local_path), "/" + remote_path)
-        except errors.VolumeUploadTimeoutError as exc:
-            message = "Uploading the film to Modal timed out."
-            raise ScoutError(ErrorCode.MODAL_UPLOAD_FAILED, message, detail=_describe(exc)) from exc
-        except (errors.AuthError, errors.PermissionDeniedError) as exc:
-            raise ScoutError(ErrorCode.MODAL_AUTH_FAILED, detail=_describe(exc)) from exc
-        except Exception as exc:
-            raise ScoutError(ErrorCode.MODAL_UPLOAD_FAILED, detail=_describe(exc)) from exc
+        attempts = len(self.upload_retry_delays_s) + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                with self._volume().batch_upload(force=True) as batch:
+                    batch.put_file(str(local_path), "/" + remote_path)
+                break
+            except (errors.AuthError, errors.PermissionDeniedError) as exc:
+                raise ScoutError(ErrorCode.MODAL_AUTH_FAILED, detail=_describe(exc)) from exc
+            except Exception as exc:
+                timed_out = isinstance(exc, errors.VolumeUploadTimeoutError)
+                message = "Uploading the film to Modal timed out." if timed_out else None
+                failure = ScoutError(ErrorCode.MODAL_UPLOAD_FAILED, message, detail=_describe(exc))
+                # The film is gone (its game was deleted) or the upload was cancelled: no retry.
+                if attempt == attempts or isinstance(exc, (FileNotFoundError, CancelledError)):
+                    raise failure from exc
+                logger.warning("Upload of %s failed (attempt %d of %d): %s", remote_path, attempt, attempts, exc)
+                if not self._wait_to_retry(job_id, self.upload_retry_delays_s[attempt - 1]):
+                    raise failure from exc
         logger.info("Uploaded %s in %.0fs", remote_path, time.monotonic() - started)
+
+    def _wait_to_retry(self, job_id: str, delay: float) -> bool:
+        """Wait ``delay`` seconds, watching for a cancel; False as soon as the job must stop instead."""
+        waited = 0.0
+        while self.should_stop is None or not self.should_stop(job_id):
+            if waited >= delay:
+                return True
+            step = min(STOP_CHECK_S, delay - waited)
+            self.sleep(step)
+            waited += step
+        logger.info("Job %s is ending (cancelled, or the worker is stopping): upload not retried", job_id)
+        return False
+
+    def _expired(self, job_id: str | None, exc: BaseException) -> PollResult:
+        """The call's result expired, but the files it pointed to may still be on the volume: using
+        them saves a new GPU run (a failed job's cleanup() would delete them)."""
+        found = self._result_files(job_id) if job_id else set()
+        if TRACKING_FILENAME not in found:
+            return _failed(ErrorCode.MODAL_RESULT_EXPIRED, None, exc)
+        logger.info("The Modal result of job %s expired; using its files on the volume", job_id)
+        results = f"results/{job_id}"
+        response = {
+            "status": "ok",
+            "job_id": job_id,
+            "tracking_path": f"{results}/{TRACKING_FILENAME}",
+            "annotated_video_path": f"{results}/{ANNOTATED_FILENAME}" if ANNOTATED_FILENAME in found else None,
+        }
+        return poll_result_from_response(response)
+
+    def _result_files(self, job_id: str) -> set[str]:
+        """Names of the files in ``results/<job_id>`` on the volume; empty when there are none or it
+        cannot be listed. Retried like a download: those files are hours of paid GPU work."""
+        errors = _modal().exception
+        folder = f"results/{job_id}"
+        for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+            try:
+                entries = self._volume().listdir(folder)
+            except (FileNotFoundError, errors.NotFoundError):
+                return set()
+            except Exception as exc:
+                logger.warning("Listing %s failed (attempt %d of %d): %s", folder, attempt, DOWNLOAD_ATTEMPTS, exc)
+                if attempt < DOWNLOAD_ATTEMPTS:
+                    time.sleep(self.download_retry_delay_s * 2 ** (attempt - 1))
+            else:
+                return {PurePosixPath(entry.path).name for entry in entries}
+        return set()
 
     def _running(self, job_id: str | None) -> PollResult:
         pct, message = self._read_progress(job_id)

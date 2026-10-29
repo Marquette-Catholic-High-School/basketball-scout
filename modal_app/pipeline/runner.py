@@ -43,6 +43,11 @@ COURT_SPARSE_COVERAGE = 0.30
 OCR_SPARSE_SHARE = 0.25  # share of longer player tracks with at least one jersey read
 OCR_MIN_TRACK_S = 2.0
 PARTIAL_FILM_SHARE = 0.9  # fewer analysed frames than this share of the film: OHV stopped early
+FREE_THROWS_NOT_DETECTED_MESSAGE = (
+    "The court could not be mapped, so free throws (and the shooting fouls before them) were not detected: "
+    "each free throw counts as a 2-point attempt, so FGA and points run high. "
+    "Calibrate the court, then choose Full re-analysis."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +416,9 @@ def merge_events(perception: Perception, ohv_events: list[dict[str, Any]]) -> li
         logger.exception("supplementary event detection failed")
         perception.warn("EXTRA_EVENTS_FAILED", "Free throws, fouls and screens could not be detected for this film.")
         extra = []
+    else:
+        if not extra_events.has_court_positions(perception):  # OHV's free throws stay field-goal attempts
+            perception.warn("FREE_THROWS_NOT_DETECTED", FREE_THROWS_NOT_DETECTED_MESSAGE)
     extra = [e for e in map(_well_formed, extra) if e is not None]
     replaced = {e["attrs"].get("replaces_event_id") for e in extra} - {None}
     merged = [e for e in map(_well_formed, enriched) if e is not None and e.get("event_id") not in replaced] + extra

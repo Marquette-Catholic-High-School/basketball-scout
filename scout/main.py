@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from scout import __version__, db
 from scout.api import build_api_router
 from scout.api.errors import install_error_handlers
+from scout.api.limits import BodyLimitMiddleware
 from scout.api.pages import mount_static
 from scout.api.pages import router as pages_router
 from scout.auth import BasicAuthMiddleware, SameOriginMiddleware, log_auth_status
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the app. No filesystem or database work happens until startup.
 
-    ``settings`` drives auth, upload limits and the health check; ``scout.db`` and
-    ``scout.storage`` always read the process-wide ``get_settings()``.
+    ``settings`` drives auth, the allowed host names, upload limits and the health check;
+    ``scout.db`` and ``scout.storage`` always read the process-wide ``get_settings()``.
     """
     settings = settings or get_settings()
 
@@ -56,9 +57,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(build_api_router())
     app.include_router(pages_router)
     mount_static(app)
+    app.add_middleware(BodyLimitMiddleware)  # innermost: bodies are counted once sign-in passed
     app.add_middleware(BasicAuthMiddleware, settings=settings)
-    # Added last = runs first: a cross-site change is refused before sign-in is checked.
-    app.add_middleware(SameOriginMiddleware)
+    # Added last = runs first: an unknown server name or a cross-site change is refused
+    # before sign-in is checked.
+    app.add_middleware(SameOriginMiddleware, settings=settings)
     return app
 
 

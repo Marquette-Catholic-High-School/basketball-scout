@@ -30,6 +30,7 @@ from scout.schemas import (
     Homography,
     PipelineWarning,
     Point,
+    RawEventType,
     Roster,
     ShotZone,
     TeamSide,
@@ -45,7 +46,9 @@ SUPPORTED_SCHEMA_MAJOR = TRACKING_SCHEMA_VERSION.split(".")[0]
 MAX_LISTED_ERRORS = 5
 LOW_MATCH_RATE = 0.5
 # Pipeline warnings about a missing / sparse court mapping that a manual calibration answers.
+# Not FREE_THROWS_NOT_DETECTED: free throws are found on the GPU, so only a full re-analysis fixes that.
 COURT_MAPPING_WARNINGS = frozenset({"NO_COURT_HOMOGRAPHY", "COURT_MAPPING_SPARSE"})
+FREE_THROWS_NOT_DETECTED = "FREE_THROWS_NOT_DETECTED"
 # A stored court position this close (feet, each axis) to a calibration's projection of the
 # pixel position came from that calibration (the GPU result rounds both to 0.01).
 PROJECTED_TOLERANCE_FT = 0.05
@@ -348,13 +351,15 @@ def _data_quality(
     total = sum(weight.values())
     matched = sum(weight[a.track_id] for a in matchable if a.player_id)
     match_rate = round(matched / total, 3) if total else 0.0
+    # ``jersey``, not ``best_read``: a track that read a roster number but is not that player has none.
     unmatched = sorted(
-        {(a.side, a.jersey or a.best_read) for a in matchable if not a.player_id and (a.jersey or a.best_read)},
+        {(a.side, a.jersey) for a in matchable if not a.player_id and a.jersey},
         key=lambda k: (_SIDES.index(k[0]), boxscore.jersey_sort_key(k[1])),
     )
     primary = [r.confidence for r in built.timeline if r.source_event_id is not None and r.id == r.source_event_id]
     # After the coach calibrated, "the court could not be mapped: calibrate it" no longer applies.
     pipeline_warnings = [w for w in tracking.warnings if not (homography and w.code in COURT_MAPPING_WARNINGS)]
+    pipeline_warnings += _free_throw_warnings(tracking, calibrated=homography)
     zones_known = any(s.zone != ShotZone.UNKNOWN for s in built.shots)
     warnings = pipeline_warnings + _analysis_warnings(rosters, index, match_rate if total else None, zones_known)
     return DataQuality(
@@ -370,6 +375,28 @@ def _data_quality(
         event_confidence_mean=round(sum(primary) / len(primary), 3) if primary else None,
         warnings=warnings,
     )
+
+
+def _free_throw_warnings(tracking: TrackingResult, *, calibrated: bool) -> list[PipelineWarning]:
+    """FREE_THROWS_NOT_DETECTED for GPU results from pipelines that do not send it yet: without a
+    court mapping the GPU cannot tell a free throw from a field goal. Not when it found free throws
+    anyway (the synthetic demo film), and judged on the GPU's own warnings, so a calibrated
+    re-analysis keeps it."""
+    codes = {w.code for w in tracking.warnings}
+    if "NO_COURT_HOMOGRAPHY" not in codes or FREE_THROWS_NOT_DETECTED in codes:
+        return []
+    if any(e.type == RawEventType.FREE_THROW for e in tracking.events):
+        return []
+    fix = (
+        "Your calibration is used on this server only: choose Full re-analysis so the GPU looks for them."
+        if calibrated else "Calibrate the court, then choose Full re-analysis."
+    )
+    return [PipelineWarning(
+        code=FREE_THROWS_NOT_DETECTED,
+        message="Free throws were not detected because the court could not be mapped on the GPU: each free throw "
+        f"counts as a 2-point attempt, so FGA and points run high. {fix}",
+        severity="warning",
+    )]
 
 
 def _analysis_warnings(

@@ -495,7 +495,12 @@ class TrackAssignment(_Model):
     side: TeamSide | None = None
     role: str = "player"
     player_id: str | None = None
-    jersey: str | None = Field(default=None, description="Resolved jersey: roster jersey when matched, else best OCR read.")
+    jersey: str | None = Field(
+        default=None,
+        description="Resolved jersey: roster jersey when matched, else the best OCR read, unless that read is a "
+        "roster number on the track's side (another track is that player, or the votes were too split to name "
+        "him): then None and its stats go to the team line.",
+    )
     best_read: str | None = None
     votes: dict[str, float] = Field(default_factory=dict)
     match_score: float = 0.0
@@ -607,7 +612,10 @@ class TrackOverride(_Model):
 
 class CalibrationPoint(_Model):
     landmark: str = Field(description="Landmark name from GET /api/court/landmarks.")
-    px: Point = Field(description="Pixel position in ORIGINAL video resolution.")
+    px: Point = Field(
+        description="Pixel position in the copy of the film the coach clicked on (CourtCalibration.video_width x "
+        "video_height); the server and the GPU rescale it to the film's own resolution."
+    )
 
 
 class CourtCalibration(_Model):

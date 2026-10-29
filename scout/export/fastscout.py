@@ -186,7 +186,12 @@ MAX_TABLE_COLUMNS = 18  # FastScout Web custom tables get hard to read beyond th
 JERSEY_WORDS_PLACEHOLDER = "{jersey_words}"
 _MINUTE_FIELDS = frozenset({"min", "minutes_est"})
 _TURNOVER_STARTS = frozenset({"steal", "turnover"})
-_PARTIAL_FILM_WARNING = "FILM_PARTIALLY_ANALYSED"  # docs/TRACKING_SCHEMA.md warning code
+_PARTIAL_FILM_WARNING = "FILM_PARTIALLY_ANALYSED"  # docs/TRACKING_SCHEMA.md warning codes
+# Warnings after which OpenHoopVision's free throws are still field-goal attempts -> why, and what to do.
+_NO_FREE_THROWS_WARNINGS: dict[str, tuple[str, str]] = {
+    "FREE_THROWS_NOT_DETECTED": ("the court was not mapped", "Calibrate the court and choose Full re-analysis"),
+    "EXTRA_EVENTS_FAILED": ("the free-throw detection failed", "Run a Full re-analysis"),
+}
 
 # ---------------------------------------------------------------------------
 # Rows and fields: a "field" in the YAML names one of the getters below.
@@ -752,6 +757,7 @@ def _paste_rows(
     rows.sort(key=lambda r: (_jersey_key(r.jersey), r.name))
     warnings = [
         *_partial_film_warnings(analysis),
+        *_free_throw_warnings(analysis),
         *name_warnings,
         *_duplicate_name_warnings(rows),
         *_minutes_warnings(rows, cfg),
@@ -768,6 +774,35 @@ def _partial_film_warnings(analysis: GameAnalysis) -> list[str]:
         f"Not the whole game: {w.message}"
         for w in analysis.data_quality.warnings
         if w.code == _PARTIAL_FILM_WARNING
+    ]
+
+
+def _free_throws_missing(analysis: GameAnalysis) -> tuple[str, str] | None:
+    """(why, fix) when the pipeline could not tell free throws from field goals (docs/TRACKING_SCHEMA.md)."""
+    codes = {w.code for w in analysis.data_quality.warnings}
+    return next((note for code, note in _NO_FREE_THROWS_WARNINGS.items() if code in codes), None)
+
+
+def _free_throw_warnings(analysis: GameAnalysis) -> list[str]:
+    missing = _free_throws_missing(analysis)
+    if missing is None:
+        return []
+    why, fix = missing
+    # The pipeline infers its shooting fouls from the free-throw trips, so PF loses them too.
+    return [
+        f"Free throws could not be detected in this film ({why}): they are missing from FTM-A, and each one "
+        "counts as a 2-point field-goal attempt instead, so FGM-A and PTS run high. PF is missing the shooting "
+        f"fouls that sent players to the line. {fix} before pasting, or correct those columns in FastScout."
+    ]
+
+
+def _free_throw_team_notes(analysis: GameAnalysis) -> list[str]:
+    missing = _free_throws_missing(analysis)
+    if missing is None:
+        return []
+    return [
+        f"Free throws not detected ({missing[0]}): the score and these points count each made free throw "
+        "as a 2-point basket."
     ]
 
 
@@ -909,6 +944,7 @@ def team_helper_block(analysis: GameAnalysis, side: TeamSide = TeamSide.SCOUTED)
         f"Second-chance points: {_second_chance_points(analysis, side)}",
         f"Points off turnovers: {_points_off_turnovers(analysis, side)}",
         *_partial_film_warnings(analysis),
+        *_free_throw_team_notes(analysis),
         "From video analysis - verify against the film.",
     ]
     return "\n".join(lines)

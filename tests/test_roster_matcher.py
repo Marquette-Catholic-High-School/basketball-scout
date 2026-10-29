@@ -213,8 +213,8 @@ def test_overlapping_track_without_a_fallback_is_unrostered_with_its_best_read()
     result = _assign([_track(1, 0, (0, 900), ["23"] * 5), _track(2, 0, (300, 600), ["23", "23", "28"])], rosters)
 
     assert result[1].player_id == "scouted-23"
-    weaker = result[2]
-    assert (weaker.player_id, weaker.method, weaker.jersey, weaker.best_read) == (None, "unrostered", "23", "23")
+    weaker = result[2]  # no jersey: #23 is track 1, a second "#23" line would be a player who does not exist
+    assert (weaker.player_id, weaker.method, weaker.jersey, weaker.best_read) == (None, "unrostered", None, "23")
     assert weaker.match_score == pytest.approx(2 / 3, abs=1e-3)
 
 
@@ -273,7 +273,7 @@ def test_overrides_win_and_block_conflicting_automatic_matches():
 
     manual = result[1]
     assert (manual.player_id, manual.jersey, manual.method, manual.match_score) == ("scouted-5", "5", "manual", 1.0)
-    assert (result[2].player_id, result[2].jersey, result[2].method) == (None, "5", "unrostered")
+    assert (result[2].player_id, result[2].jersey, result[2].method) == (None, None, "unrostered")
     assert (result[3].ignored, result[3].method, result[3].player_id) == (True, "manual", None)
     assert (result[4].player_id, result[4].side, result[4].jersey, result[4].method) == (None, OTHER, "15", "manual")
     assert (result[5].jersey, result[5].method) == ("9", "unrostered")
@@ -306,7 +306,7 @@ def test_unknown_team_id_tries_both_rosters():
 
     assert (result[1].side, result[1].player_id) == (OTHER, "other-11")
     assert (result[2].side, result[2].player_id, result[2].team_id) == (SCOUTED, "scouted-4", 5)
-    assert (result[3].side, result[3].player_id, result[3].jersey, result[3].method) == (None, None, "23", "unrostered")
+    assert (result[3].side, result[3].player_id, result[3].jersey, result[3].method) == (None, None, None, "unrostered")
     assert (result[4].side, result[4].player_id, result[4].method) == (None, None, "unrostered")
 
 

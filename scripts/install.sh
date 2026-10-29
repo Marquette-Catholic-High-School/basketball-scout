@@ -950,18 +950,34 @@ install_gpu_packages() {  # only for SCOUT_PROCESSOR=local
     warn "$requirements is missing; skipping the GPU packages."
     return 0
   fi
-  info "Installing the GPU packages (several GB, this takes a while)"
-  as_user "$INSTALL_DIR/.venv/bin/python" -m pip install --quiet --disable-pip-version-check -r "$requirements"
   ohv_home=$(env_get "$ENV_FILE" OHV_HOME)
   ohv_home=${ohv_home:-/opt/openhoopvision}
   if ! valid_path "$ohv_home"; then
     die "OHV_HOME in $ENV_FILE ('$ohv_home') must be an absolute path without spaces."
   fi
+  # The folder is given to the service user (and uninstall.sh deletes it): never a shared one like /opt.
+  if [[ -e $ohv_home && ! -d $ohv_home/.git && -n $(ls -A "$ohv_home" 2>/dev/null) ]]; then
+    die "OHV_HOME in $ENV_FILE ('$ohv_home') already holds other files. Use a folder of its own, such as /opt/openhoopvision."
+  fi
+  install_opencv_libraries
+  info "Installing the GPU packages (several GB, this takes a while)"
+  as_user "$INSTALL_DIR/.venv/bin/python" -m pip install --quiet --disable-pip-version-check -r "$requirements"
   install -d -m 755 "$ohv_home"
   chown "$SERVICE_USER:$SERVICE_GROUP" "$ohv_home"
   info "Installing OpenHoopVision and its model weights into $ohv_home"
   as_user "$INSTALL_DIR/.venv/bin/python" -m modal_app.pipeline.ohv install --home "$ohv_home"
   ok "Local GPU pipeline installed"
+}
+
+install_opencv_libraries() {  # OpenCV's cv2 (opencv-python, the GUI build OHV pins) needs libGL.so.1 and glib
+  local glib=libglib2.0-0t64  # Ubuntu 24.04 and Debian 13; Debian 12 still calls it libglib2.0-0
+  info "Installing the libraries OpenCV needs (libgl1, glib)"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -q
+  if ! apt-cache show "$glib" >/dev/null 2>&1; then
+    glib=libglib2.0-0
+  fi
+  apt-get install -y -q --no-install-recommends libgl1 "$glib"
 }
 
 install_services() {

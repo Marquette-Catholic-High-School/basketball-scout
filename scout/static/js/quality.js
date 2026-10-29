@@ -15,7 +15,25 @@ function unmatchedLabel(code, teamNames) {
   return teamNames[side] ? `${teamNames[side]} ${jersey || ""}`.trim() : code;
 }
 
-export function renderQuality({ analysis, game, teamNames, onCalibrate }) {
+/**
+ * Free throws are found on the GPU, so Re-run analysis can't add them: once the court is
+ * calibrated, a full re-analysis (the film goes to the GPU again) can. The warning's own
+ * message says what to do; this is the button for it.
+ */
+function fullRunAction(game, onFullAnalysis) {
+  if (!game.calibration || !onFullAnalysis) return null; // calibrate first / no film to send
+  const busy = game.status === "queued" || game.status === "processing";
+  return el("div", { class: "notice-actions" }, el("button", {
+    type: "button",
+    class: "btn-primary",
+    text: "Full re-analysis",
+    disabled: busy,
+    title: busy ? "An analysis is already running" : "Send the film to the GPU again",
+    onClick: (e) => onFullAnalysis(e.currentTarget),
+  }));
+}
+
+export function renderQuality({ analysis, game, teamNames, onCalibrate, onFullAnalysis = null }) {
   const q = analysis.data_quality || {};
   const video = analysis.video || {};
   const pipeline = analysis.pipeline || {};
@@ -53,6 +71,7 @@ export function renderQuality({ analysis, game, teamNames, onCalibrate }) {
     warnings.length
       ? warnings.map((w) => el("div", { class: `notice notice-${SEVERITY_KIND[w.severity] || "warning"}`, role: "status" },
         el("strong", { class: "notice-title", text: w.message }),
-        el("p", { class: "notice-hint", text: w.code })))
+        el("p", { class: "notice-hint", text: w.code }),
+        w.code === "FREE_THROWS_NOT_DETECTED" ? fullRunAction(game, onFullAnalysis) : null))
       : el("p", { class: "muted", text: "No warnings." }));
 }

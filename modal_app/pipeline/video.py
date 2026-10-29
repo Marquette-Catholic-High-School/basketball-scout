@@ -13,13 +13,16 @@ and pixel coordinates scale back by ``FrameMap.scale_x/scale_y``.
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import logging
 import os
+import socket
 import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -42,6 +45,9 @@ _PROBE_TIMEOUT_S = 120
 # Codecs OpenCV decodes reliably as they are. Anything else (HEVC / 10-bit phone film,
 # ProRes, VP9 ...) is normalised to 8-bit H.264 by the pre-transcode.
 _PASSTHROUGH_CODECS = frozenset({"h264"})
+# ffmpeg stream specifier for the film itself: "V" skips attached pictures (cover art, thumbnails),
+# which some exports store as the first video stream ("v" would pick them).
+VIDEO_STREAM = "0:V:0"
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +70,7 @@ class VideoProbe:
     format_name: str | None = None
     size_bytes: int | None = None
     rotation: int = 0
+    cover_art_first: bool = False  # a cover-art stream comes before the film (OpenCV would read that one)
 
 
 def parse_rate(text: str | None) -> Fraction | None:
@@ -103,7 +110,8 @@ def parse_ffprobe_json(data: dict[str, Any], *, path: str) -> VideoProbe:
     the container's ``nb_frames`` when present, else ``duration * fps``.
     """
     streams = data.get("streams") or []
-    video = next((s for s in streams if s.get("codec_type") == "video" and not _is_cover_art(s)), None)
+    videos = [s for s in streams if s.get("codec_type") == "video"]
+    video = next((s for s in videos if not _is_cover_art(s)), None)
     if video is None:
         raise PipelineError(errors.VIDEO_INVALID, "The file has no video track.")
     fmt = data.get("format") or {}
@@ -139,6 +147,7 @@ def parse_ffprobe_json(data: dict[str, Any], *, path: str) -> VideoProbe:
         format_name=fmt.get("format_name"),
         size_bytes=int(size) if size else None,
         rotation=rotation,
+        cover_art_first=videos[0] is not video,
     )
 
 
@@ -176,17 +185,24 @@ def validate_probe(probe: VideoProbe, *, max_duration_s: float | None) -> None:
     if probe.duration_s <= 0 or probe.frame_count <= 0:
         raise PipelineError(errors.VIDEO_DECODE_FAILED, "The video has no readable frames.")
     if max_duration_s and probe.duration_s > max_duration_s:
-        raise PipelineError(
-            errors.VIDEO_TOO_LONG,
-            f"The film is {probe.duration_s / 60:.0f} minutes long; the limit is {max_duration_s / 60:.0f} minutes.",
-        )
+        film, limit = _minutes(probe.duration_s, max_duration_s)
+        raise PipelineError(errors.VIDEO_TOO_LONG, f"The film is {film} minutes long; the limit is {limit} minutes.")
+
+
+def _minutes(*seconds: float) -> list[str]:
+    """Durations in minutes, with as many decimals (up to 2) as it takes to tell them apart."""
+    for digits in (0, 1):
+        texts = [f"{s / 60:.{digits}f}" for s in seconds]
+        if len(set(texts)) == len(texts):
+            return texts
+    return [f"{s / 60:.2f}" for s in seconds]
 
 
 def check_decodable(path: str | os.PathLike[str]) -> None:
     """Decode the first few frames so corrupt files fail fast (VIDEO_DECODE_FAILED)."""
     cmd = [
         "ffmpeg", "-hide_banner", "-nostdin", "-v", "error",
-        "-i", str(path), "-map", "0:v:0", "-frames:v", "3", "-f", "null", "-",
+        "-i", str(path), "-map", VIDEO_STREAM, "-frames:v", "3", "-f", "null", "-",
     ]  # fmt: skip
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=_PROBE_TIMEOUT_S, check=False)
@@ -279,6 +295,7 @@ def plan_analysis(
         width, height = probe.width - probe.width % 2, probe.height - probe.height % 2
     resized = (width, height) != (probe.width, probe.height)
     transcode = force_transcode or step > 1 or resized or (probe.codec or "").lower() not in _PASSTHROUGH_CODECS
+    transcode = transcode or probe.cover_art_first  # OHV (OpenCV) reads a file's first video stream
     if not transcode:
         width, height = probe.width, probe.height
     analysed_fps = float(rate) if transcode else probe.fps
@@ -367,7 +384,7 @@ def build_transcode_command(src: str, dst: str, plan: AnalysisPlan) -> list[str]
     return [
         "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
         "-i", src,
-        "-map", "0:v:0", "-an", "-sn", "-dn",
+        "-map", VIDEO_STREAM, "-an", "-sn", "-dn",
         "-vf", ",".join(filters),
         "-pix_fmt", "yuv420p",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
@@ -409,14 +426,22 @@ def download_video(
     max_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
     timeout_s: float = 60.0,
     progress: FractionProgress | None = None,
+    public_only: bool = False,
 ) -> Path:
     """Stream ``url`` to ``dest`` (via ``dest.part``). Reuses a finished download.
+
+    ``public_only`` is for downloads on the server (the local processor): a link whose host
+    resolves to a private, loopback, link-local, multicast or reserved address, also after
+    a redirect, is refused, so a signed-in user cannot make the server fetch from its own
+    network (Redis, the LAN, cloud metadata). Those connections go straight to the address
+    that was checked, without a proxy.
 
     Raises PipelineError(VIDEO_DOWNLOAD_FAILED) with a coach-readable reason.
     """
     dest = Path(dest)
     if not url.lower().startswith(("http://", "https://")):
         raise PipelineError(errors.VIDEO_DOWNLOAD_FAILED, "Only http(s) video links are supported.", detail=url[:200])
+    _link_parts(url)  # no host, or a bad port: failing again later would not help
     if dest.is_file() and dest.stat().st_size > 0:
         logger.info("reusing finished download %s", dest)
         return dest
@@ -424,7 +449,9 @@ def download_video(
     last_error: PipelineError | None = None
     for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
         try:
-            _download_once(url, dest, max_bytes=max_bytes, timeout_s=timeout_s, progress=progress)
+            _download_once(
+                url, dest, max_bytes=max_bytes, timeout_s=timeout_s, progress=progress, public_only=public_only
+            )
             return dest
         except _RetryableDownloadError as exc:
             last_error = exc.error
@@ -442,12 +469,16 @@ class _RetryableDownloadError(Exception):
 
 
 def _download_once(
-    url: str, dest: Path, *, max_bytes: int, timeout_s: float, progress: FractionProgress | None
+    url: str, dest: Path, *, max_bytes: int, timeout_s: float, progress: FractionProgress | None, public_only: bool
 ) -> None:
     part = dest.with_name(dest.name + ".part")
-    request = urllib.request.Request(url, headers={"User-Agent": "basketball-scout/1.0"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+        request = urllib.request.Request(url, headers={"User-Agent": "basketball-scout/1.0"})
+        if public_only:
+            opened = _public_opener().open(request, timeout=timeout_s)
+        else:
+            opened = urllib.request.urlopen(request, timeout=timeout_s)
+        with opened as response:
             content_type = (response.headers.get("Content-Type") or "").lower()
             if content_type.startswith(("text/html", "application/json", "text/plain")):
                 raise PipelineError(
@@ -455,7 +486,7 @@ def _download_once(
                     "The link opens a web page, not a video file. Use a direct MP4 download link.",
                     detail=f"Content-Type: {content_type}",
                 )
-            total = int(response.headers.get("Content-Length") or 0)
+            total = _content_length(response.headers.get("Content-Length"))
             if total > max_bytes:
                 raise PipelineError(
                     errors.VIDEO_DOWNLOAD_FAILED, _too_large(max_bytes), detail=f"Content-Length: {total}"
@@ -492,6 +523,9 @@ def _download_once(
             errors.VIDEO_DOWNLOAD_FAILED, "The download stopped before the end of the file.", detail=repr(exc)[:500]
         )
         raise _RetryableDownloadError(stopped) from exc
+    except (ValueError, http.client.InvalidURL) as exc:  # e.g. UnicodeEncodeError for a non-ASCII link: no retry
+        detail = f"{type(exc).__name__}: {exc}"[:500]
+        raise PipelineError(errors.VIDEO_DOWNLOAD_FAILED, _INVALID_LINK, detail=detail) from exc
     except (OSError, http.client.HTTPException) as exc:  # URLError, timeouts, resets, bad replies, local disk errors
         raise _RetryableDownloadError(
             PipelineError(errors.VIDEO_DOWNLOAD_FAILED, "The video link could not be reached.", detail=str(exc)[:500])
@@ -500,5 +534,121 @@ def _download_once(
         part.unlink(missing_ok=True)
 
 
+def _content_length(value: str | None) -> int:
+    """Content-Length in bytes; 0 (unknown) when it is missing or not a number."""
+    try:
+        return max(0, int(value or 0))
+    except ValueError:
+        return 0
+
+
 def _too_large(max_bytes: int) -> str:
     return f"The video is larger than the {max_bytes / 1024**3:.0f} GB download limit."
+
+
+# -- public_only: links the server fetches for a user --------------------------------
+
+_INVALID_LINK = "The video link is not a valid web address."
+_PRIVATE_LINK = (
+    "The video link leads to a private or local network address, which this server does not download from. "
+    "Upload the film file instead."
+)
+
+
+def _is_public_address(text: str) -> bool:
+    """A global unicast address: not private, loopback, link-local, site-local, multicast or reserved."""
+    try:
+        ip = ipaddress.ip_address(text.split("%", 1)[0])  # drop an IPv6 scope ("fe80::1%eth0")
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped  # ::ffff:10.0.0.1 is 10.0.0.1
+    # fec0::/10 (IPv6 site-local, the old private range) counts as global for ipaddress.
+    site_local = isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local
+    return ip.is_global and not ip.is_multicast and not ip.is_reserved and not site_local
+
+
+def _public_addresses(host: str, port: int) -> list[str]:
+    """The addresses ``host`` resolves to; PipelineError unless every one of them is public."""
+    addresses = list(dict.fromkeys(str(info[4][0]) for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)))
+    blocked = [address for address in addresses if not _is_public_address(address)]
+    if blocked or not addresses:
+        raise PipelineError(errors.VIDEO_DOWNLOAD_FAILED, _PRIVATE_LINK, detail=f"{host} -> {', '.join(blocked)}"[:500])
+    return addresses
+
+
+def _link_parts(url: str) -> tuple[str, int]:
+    """(host, port) of an http(s) link; PipelineError when it is not a valid one."""
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise PipelineError(errors.VIDEO_DOWNLOAD_FAILED, "Only http(s) video links are supported.", detail=url[:200])
+    try:
+        port = parts.port or (443 if scheme == "https" else 80)
+    except ValueError as exc:  # port out of range or not a number
+        raise PipelineError(errors.VIDEO_DOWNLOAD_FAILED, _INVALID_LINK, detail=str(exc)[:500]) from exc
+    if not parts.hostname:
+        raise PipelineError(errors.VIDEO_DOWNLOAD_FAILED, _INVALID_LINK, detail=url[:200])
+    return parts.hostname, port
+
+
+def _check_public_url(url: str) -> None:
+    """PipelineError unless ``url`` is an http(s) link whose host resolves to public addresses only."""
+    _public_addresses(*_link_parts(url))
+
+
+def _connect_public(address: tuple[str, int], timeout: Any = None, source_address: Any = None) -> socket.socket:
+    """``socket.create_connection`` that resolves the host once, refuses it unless every address
+    is public, and connects to exactly those addresses: looking the name up again could give
+    another answer (DNS rebinding)."""
+    host, port = address
+    failure: OSError | None = None
+    for ip in _public_addresses(host, port):
+        try:
+            return socket.create_connection((ip, port), timeout, source_address)
+        except OSError as exc:
+            failure = exc
+    assert failure is not None
+    raise failure
+
+
+class _PublicHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._create_connection = _connect_public  # what connect() opens its socket with
+
+
+class _PublicHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._create_connection = _connect_public  # TLS still checks the certificate for the host name
+
+
+class _PublicHTTPHandler(urllib.request.HTTPHandler):
+    def do_open(self, http_class: Any, req: Any, **kwargs: Any) -> Any:
+        return super().do_open(_PublicHTTPConnection, req, **kwargs)
+
+
+class _PublicHTTPSHandler(urllib.request.HTTPSHandler):
+    def do_open(self, http_class: Any, req: Any, **kwargs: Any) -> Any:
+        return super().do_open(_PublicHTTPSConnection, req, **kwargs)
+
+
+class _PublicRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Checks every redirect target before following it (urllib itself would follow ftp:// too)."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+        try:
+            _check_public_url(newurl)
+        except PipelineError:
+            fp.close()
+            raise
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _public_opener() -> urllib.request.OpenerDirector:
+    """urllib opener for ``public_only`` downloads. No proxy: a proxy would look the name up
+    itself, after (and regardless of) our check."""
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _PublicHTTPHandler, _PublicHTTPSHandler, _PublicRedirectHandler
+    )

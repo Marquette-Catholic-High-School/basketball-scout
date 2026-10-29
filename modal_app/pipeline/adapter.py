@@ -55,7 +55,6 @@ FractionProgress = Callable[[float, str], None]
 
 FT = 0.3048
 TEAM_LABELS = ("dark", "light")  # OHV team id 0 / 1 (OHV sorts its two jersey clusters by lightness)
-DEFAULT_TEAM_RGB = {0: (40, 40, 40), 1: (235, 235, 235)}
 LOCKED_JERSEY_CONF = 0.9  # OHV locks a number only after several >= 0.85-confidence OCR reads agree
 CANDIDATE_JERSEY_CONF = 0.4  # provisional read that OHV has not confirmed
 JERSEY_READ_INTERVAL_S = 1.0  # at most one read per track/number per second keeps votes proportional
@@ -678,8 +677,10 @@ def _event_conf(kind: str, raw: dict[str, Any]) -> float:
     return 0.6
 
 
-def _rgb(team_colors_bgr: Sequence[Sequence[int]] | None, team: int) -> tuple[int, int, int]:
+def _rgb(team_colors_bgr: Sequence[Sequence[int]] | None, team: int) -> tuple[int, int, int] | None:
+    """The team's jersey colour from OHV's summary line; None when OHV did not print it (the
+    server then compares the colour hint with the "dark" / "light" name only)."""
     if team_colors_bgr and len(team_colors_bgr) == 2 and len(team_colors_bgr[team]) == 3:
         b, g, r = (max(0, min(255, int(v))) for v in team_colors_bgr[team])
         return (r, g, b)
-    return DEFAULT_TEAM_RGB[team]
+    return None

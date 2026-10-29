@@ -131,7 +131,8 @@ def test_verified_hash_is_cached(monkeypatch):
 
 def test_auth_disabled(monkeypatch, caplog):
     app = make_app(monkeypatch, SCOUT_AUTH_DISABLED="true")
-    with caplog.at_level(logging.WARNING, logger="scout.auth"), TestClient(app) as c:
+    # localhost: with sign-in off the server answers only to known names (see test_review2_api.py)
+    with caplog.at_level(logging.WARNING, logger="scout.auth"), TestClient(app, base_url="http://localhost") as c:
         assert c.get("/api/games").status_code == 200
         assert c.get("/api/health").json()["auth_enabled"] is False
     assert "AUTHENTICATION IS DISABLED" in caplog.text

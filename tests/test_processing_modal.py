@@ -199,6 +199,7 @@ def processor(settings) -> ModalProcessor:
     proc = get_processor(settings, name="modal")
     assert isinstance(proc, ModalProcessor)
     proc.download_retry_delay_s = 0.0
+    proc.upload_retry_delays_s = (0.0, 0.0)  # a failed upload is retried twice: no waiting in tests
     return proc
 
 

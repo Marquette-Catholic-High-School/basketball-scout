@@ -15,7 +15,7 @@ torchvision==0.27.1+cu130
 
 # OpenHoopVision (commit ec969037b2c0) dependencies, as in its requirements.lock. OpenCV is the
 # GUI build (supervision / rfdetr depend on it); on a server without a desktop, its cv2 needs
-# libGL.so.1: sudo apt-get install libgl1
+# libGL.so.1 and glib: sudo apt-get install libgl1 libglib2.0-0t64   (Debian 12: libglib2.0-0)
 rfdetr==1.10.1
 supervision==0.30.1
 numpy==2.3.5

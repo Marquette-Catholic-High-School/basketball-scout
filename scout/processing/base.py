@@ -27,6 +27,7 @@ documented in ``docs/TRACKING_SCHEMA.md`` ("Processing request/response").
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -63,6 +64,9 @@ class ProcessorOutput:
 class Processor(ABC):
     name: str = "base"
     poll_interval: float | None = None  # seconds between polls; None = SCOUT_MODAL_POLL_SECONDS
+    # Set by the worker: should_stop(job_id) is True once that job must end early (cancelled, its
+    # game deleted, the worker stopping). A long submit() checks it, e.g. before retrying an upload.
+    should_stop: Callable[[str], bool] | None = None
 
     @abstractmethod
     def submit(self, *, job_id: str, video: VideoSource, options: dict[str, Any]) -> str:

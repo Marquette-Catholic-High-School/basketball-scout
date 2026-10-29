@@ -132,8 +132,10 @@ def test_proxy_that_rewrites_host_is_matched_by_forwarded_host(client, game):
 
 
 def test_cross_site_guard_applies_without_auth(monkeypatch, game):
-    with TestClient(make_app(monkeypatch, SCOUT_AUTH_DISABLED="true")) as c:
-        assert _import_roster(c, game.id, {"Origin": EVIL}).status_code == 403
+    # localhost: with sign-in off an unknown name like "testserver" is refused before this check
+    with TestClient(make_app(monkeypatch, SCOUT_AUTH_DISABLED="true"), base_url="http://localhost") as c:
+        r = _import_roster(c, game.id, {"Origin": EVIL})
+        assert r.status_code == 403 and r.json()["error"]["code"] == "CROSS_SITE_REQUEST"
 
 
 def test_cross_site_requests_do_not_count_as_failed_sign_ins(game):

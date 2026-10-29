@@ -67,9 +67,10 @@ def test_teams_dark_is_zero_light_is_one(adapted):
     assert light == {"team_id": 1, "color_rgb": (245, 240, 240), "color_name": "light", "track_count": 2}
 
 
-def test_default_team_colors_without_ohv_summary():
+def test_no_team_rgb_without_ohv_summary():
     result = adapter.adapt_ohv(FIXTURE, _meta(), FrameMap.identity(15.0))
-    assert [t["color_rgb"] for t in result.perception.teams] == [adapter.DEFAULT_TEAM_RGB[0], adapter.DEFAULT_TEAM_RGB[1]]
+    teams = result.perception.teams
+    assert [(t["color_rgb"], t["color_name"]) for t in teams] == [(None, "dark"), (None, "light")]  # not measured
 
 
 def test_jersey_reads_one_per_second_with_confidence(adapted):

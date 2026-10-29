@@ -166,22 +166,26 @@ def test_a_stopping_worker_does_not_hand_back_a_job_it_lost(filmed_game, queue, 
     assert gpu.cancelled == [] and gpu.cleaned == []
 
 
-def test_a_requeued_job_keeps_running_here(filmed_game, queue, fakes):  # noqa: F811
-    """Redis requeue_stale clears worker_id on an expired lease; until someone else claims the
-    job it is still ours (our own claim loop may take it back), so we do not abandon it."""
-    job = submit_job(filmed_game.id, JobKind.ANALYZE, queue=queue)
+def test_a_requeued_job_keeps_running_here(filmed_game, fakes):  # noqa: F811
+    """Redis requeue_stale pushes the id of a job whose lease expired back onto the queue, but the
+    row stays `running` with its worker: until someone else claims the job it is still ours, so we
+    do not abandon it, and the stale id is dropped once the job is done."""
+    rq = RedisJobQueue(client=FakeRedis())
+    job = submit_job(filmed_game.id, JobKind.ANALYZE, queue=rq)
 
     def on_poll(n: int) -> None:
         if n == 1:
             db.update_job(job.id, lease_expires_at=time.time() - 1)
-            assert db.requeue_expired_jobs() == [job.id]
+            assert rq.requeue_stale() == 1
+            assert db.get_job(job.id).status == JobStatus.RUNNING
 
     gpu = FakeProcessor([RUNNING, DONE], on_poll=on_poll)
-    asleep = make_worker(gpu, queue)
+    asleep = make_worker(gpu, rq)
     asleep._renew_leases = lambda: None  # asleep: nothing renewed the lease
     asleep.run_once(timeout=1)
     assert db.get_job(job.id).status == JobStatus.SUCCEEDED
     assert gpu.fetched == [f"fake:{job.id}"] and len(fakes.analyze) == 1
+    assert rq.claim("w-other", timeout=0.1) is None
 
 
 # --- worker: deleted games -----------------------------------------------------------------

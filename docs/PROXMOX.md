@@ -301,13 +301,16 @@ Then install with the local processor:
 sudo scripts/install.sh --processor local
 ```
 
-That also installs `modal_app/requirements-gpu.txt` (CUDA builds of PyTorch, several GB)
+That also installs `libgl1` and glib (OpenCV needs them), `modal_app/requirements-gpu.txt`
+(CUDA builds of PyTorch, several GB)
 and OpenHoopVision with its model weights in `/opt/openhoopvision`, and makes the NVIDIA
 kernel modules (`nvidia`, `nvidia_uvm`) load at boot: the worker runs in a systemd
 sandbox that cannot load them on first use. If CUDA still reports no device under the
 service, check `ls /dev/nvidia*` (it should list `/dev/nvidia-uvm`) and reboot once.
 Local runs go one at a time, and a film being processed is lost if the worker restarts
-(retry it), so do not update in the middle of a run.
+(retry it), so do not update in the middle of a run. Video links are downloaded by the
+server itself, not through an HTTP(S) proxy set in the environment: if the VM reaches
+the internet only through a proxy, upload the film instead.
 
 ## Networking
 

@@ -256,7 +256,7 @@ _CATALOG: dict[ErrorCode, tuple[str, str, str | None, bool, int]] = {
         503,
     ),
     ErrorCode.REPORT_AUTH_FAILED: (
-        "Anthropic rejected the API key",
+        "Anthropic refused the request",
         "The Anthropic API key was rejected.",
         "Check ANTHROPIC_API_KEY in .env.",
         False,

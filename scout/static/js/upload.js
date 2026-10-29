@@ -14,6 +14,17 @@ const VIDEO_EXTENSIONS = [".mp4", ".mov", ".m4v"];
 const MAX_RETRIES = 8;
 const SPEED_WINDOW_MS = 8000;
 /**
+ * A chunk with no upload progress for this long went to a connection that died silently:
+ * it is aborted and the upload resumes from what the server has. (The server drops a
+ * chunk that sends nothing for 120 s and answers 409 UPLOAD_INCOMPLETE.)
+ */
+const STALL_MS = 60000;
+/** Timers of the stall watchdog; tests replace them to run it without waiting a minute. */
+export const watchdogTimers = {
+  set: (fn, ms) => setTimeout(fn, ms),
+  clear: (id) => clearTimeout(id),
+};
+/**
  * Errors after which this upload session can't go on: the server refused the film itself...
  * (not UPLOAD_TOO_LARGE: on a chunk that is a proxy limit, and the upload resumes once it is raised)
  */
@@ -99,13 +110,15 @@ function showFilmStep(game) {
   state.game = game;
   show(byId("game-form-section"), false);
   show(byId("film-section"), true);
-  byId("upload-title").textContent = game.has_video ? "Replace film" : "Add film";
+  const hasFilm = game.has_video || Boolean(game.video_url); // a file, or a link the GPU downloads
+  byId("upload-title").textContent = hasFilm ? "Replace film" : "Add film";
   byId("upload-subtitle").textContent = game.display_title;
   byId("film-game-name").textContent = `Game: ${game.display_title}`;
   document.title = `Film for ${game.display_title} - Basketball Scout`;
   const notices = [];
-  if (game.has_video) {
-    notices.push(notice("warning", "This game already has film", `Uploading a new file replaces ${game.video_filename || "the current film"} and runs the analysis again.`));
+  if (hasFilm) {
+    const current = game.has_video ? game.video_filename || "the current film" : "the film from the video link";
+    notices.push(notice("warning", "This game already has film", `New film replaces ${current} and runs the analysis again.`));
   }
   const pending = storageGet(storageKey(game.id));
   if (pending) {
@@ -233,6 +246,7 @@ async function runUpload() {
       try {
         const session = await putChunk(state.session.id, offset, state.file.slice(offset, end), {
           signal: state.controller.signal,
+          stall: { ms: STALL_MS, timers: watchdogTimers },
           onProgress: (loaded) => {
             state.inflight = loaded;
             renderProgress();

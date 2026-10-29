@@ -134,32 +134,65 @@ export async function pollJob(jobId, onUpdate, { intervalMs = 3000, signal } = {
   }
 }
 
+/** A chunk that sent nothing for `seconds`: the connection died without the browser noticing. */
+function stalledError(seconds) {
+  return new ApiError({
+    code: "UPLOAD_INCOMPLETE",
+    title: "The upload stalled",
+    message: `Nothing reached the server for ${seconds} seconds.`,
+    hint: "Check the network connection; the upload resumes where it stopped.",
+    retryable: true,
+  });
+}
+
 /**
  * PUT one upload chunk with XMLHttpRequest (fetch has no upload progress).
  * Resolves with the UploadSession; rejects with ApiError (status 409 carries the
  * current session in err.body) or an AbortError DOMException.
+ *
+ * stall {ms, timers: {set, clear}}: a connection that died silently leaves the request
+ * at the same percentage until the OS gives up, many minutes later. With no upload
+ * progress for `ms` the request is aborted and rejects with a retryable
+ * UPLOAD_INCOMPLETE ApiError, so the caller can resume from what the server has.
  */
-export function putChunk(uploadId, offset, blob, { onProgress, signal } = {}) {
+export function putChunk(uploadId, offset, blob, { onProgress, signal, stall = null } = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let watchdog = null;
+    let stalled = false;
+    const watch = () => {
+      if (!stall) return;
+      stall.timers.clear(watchdog);
+      watchdog = stall.timers.set(() => {
+        stalled = true;
+        xhr.abort();
+      }, stall.ms);
+    };
+    const finish = (settle, value) => {
+      if (stall) stall.timers.clear(watchdog);
+      settle(value);
+    };
     xhr.open("PUT", `/api/uploads/${encodeURIComponent(uploadId)}/chunk?offset=${offset}`);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader("Accept", "application/json");
-    xhr.upload.onprogress = (e) => onProgress?.(e.loaded);
+    xhr.upload.onprogress = (e) => {
+      watch();
+      onProgress?.(e.loaded);
+    };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          resolve(JSON.parse(xhr.responseText));
+          finish(resolve, JSON.parse(xhr.responseText));
         } catch {
-          reject(errorFromResponse(xhr.status, ""));
+          finish(reject, errorFromResponse(xhr.status, ""));
         }
       } else {
-        reject(errorFromResponse(xhr.status, xhr.responseText));
+        finish(reject, errorFromResponse(xhr.status, xhr.responseText));
       }
     };
-    xhr.onerror = () => reject(networkError());
-    xhr.ontimeout = () => reject(networkError());
-    xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
+    xhr.onerror = () => finish(reject, networkError());
+    xhr.ontimeout = () => finish(reject, networkError());
+    xhr.onabort = () => finish(reject, stalled ? stalledError(Math.round(stall.ms / 1000)) : new DOMException("Aborted", "AbortError"));
     if (signal) {
       if (signal.aborted) {
         reject(new DOMException("Aborted", "AbortError"));
@@ -168,5 +201,6 @@ export function putChunk(uploadId, offset, blob, { onProgress, signal } = {}) {
       signal.addEventListener("abort", () => xhr.abort(), { once: true });
     }
     xhr.send(blob);
+    watch();
   });
 }

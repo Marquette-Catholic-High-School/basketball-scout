@@ -1,5 +1,7 @@
 // Display names for the enums in scout/schemas.py (kept in sync by hand).
 
+import { formatAgo } from "./ui.js";
+
 export const EVENT_TYPE_LABELS = {
   shot_made: "Made shot",
   shot_missed: "Missed shot",
@@ -139,6 +141,23 @@ export function jobStageText(job) {
   if (job.kind === "report" && job.stage !== "queued") return STAGE_LABELS.reporting;
   const label = STAGE_LABELS[job.stage] || "Working";
   return job.stage === "gpu_processing" ? `${label} (${Math.round(job.progress || 0)}%)` : label;
+}
+
+/** A worker heartbeat older than this means the worker has probably stopped (as GET /api/health). */
+export const WORKER_STALE_S = 120;
+
+/**
+ * [kind, message, hint] when the background worker is not running (h: HealthStatus), else
+ * null. The games list and a game whose job waits in the queue show the same notice.
+ */
+export function workerWarning(h) {
+  if (h.worker_last_seen_s === null || h.worker_last_seen_s === undefined) {
+    return ["error", "The background worker is not running - start basketball-scout-worker.", "On the server: sudo systemctl start basketball-scout-worker (or run python -m scout.worker). Film will wait in the queue until it runs."];
+  }
+  if (h.worker_last_seen_s > WORKER_STALE_S) {
+    return ["error", `The background worker was last seen ${formatAgo(h.worker_last_seen_s)} - it may have stopped.`, "Check it with: sudo systemctl status basketball-scout-worker"];
+  }
+  return null;
 }
 
 /** Short team name for chips: "North Bay" stays, "Central Catholic" -> "Central", "St. Mary's Prep" -> "SMP". */

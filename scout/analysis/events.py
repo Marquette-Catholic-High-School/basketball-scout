@@ -22,7 +22,10 @@ Possession rules (docs/ARCHITECTURE.md "Event semantics"):
   throw, turnover or offensive rebound by that team, starts an "inferred" possession.
   A hold by the team that has just scored (a basket or its last free throw), before the
   other team did anything, does not (the and-one shooter waiting at the line, a scorer
-  handing the ball to the official).
+  handing the ball to the official). When that team gains control within 4 s of a missed
+  shot or last free throw that nobody was credited with rebounding, with no whistle in
+  between, the possession is an unseen defensive rebound instead: reason "def_rebound"
+  and a live start, but no DREB row.
 * ``transition`` -- FastScout's definition (ends within 10 s, does not follow a
   stoppage): the possession began live (defensive rebound, steal or a live-ball turnover),
   its last shot / turnover / fouled shot came within 10 s of the start (free throws with
@@ -87,6 +90,7 @@ TRANSITION_WINDOW_S = 10.0
 DEAD_BALL_S = 2.0  # a shot / turnover this long after a shooting foul: play went on, no free throws
 UNKNOWN_MADE_CONF_FACTOR = 0.5  # made == null: counted as a miss, confidence halved
 INFERRED_CONFIDENCE = 0.4  # possession changes we deduced rather than saw
+UNSEEN_REBOUND_S = 4.0  # the other team controlling the ball this soon after a miss: a defensive rebound nobody saw
 OFF_COURT_MARGIN_FT = 6.0  # shot locations further off the floor are ignored (bad homography)
 DEAD_BALL_TURNOVERS = frozenset({"travel", "out_of_bounds", "offensive_foul"})
 BALL_EVENTS = frozenset(
@@ -118,10 +122,11 @@ def player_ref(
     assignments: dict[int, TrackAssignment],
     rosters: dict[TeamSide, Roster],
 ) -> PlayerRef | None:
-    """PlayerRef for a track (roster name/jersey when matched, OCR jersey otherwise).
+    """PlayerRef for a track (roster name/jersey when matched, its resolved ``jersey`` otherwise).
 
     None for unknown, ignored and referee tracks, and for tracks with no jersey at all
-    (their stats go to the team line).
+    (their stats go to the team line). An unmatched track whose best read is a roster number
+    has no jersey (``scout.roster.matcher``): its read is not shown as a second player.
     """
     if track_id is None:
         return None
@@ -141,10 +146,9 @@ def player_ref(
                     side=side,
                     match_confidence=a.match_score,
                 )
-    jersey = a.jersey or a.best_read
-    if not jersey:
+    if not a.jersey:
         return None
-    return PlayerRef(jersey=jersey, side=a.side, match_confidence=a.match_score)
+    return PlayerRef(jersey=a.jersey, side=a.side, match_confidence=a.match_score)
 
 
 def build_timeline(
@@ -304,6 +308,8 @@ class _TimelineBuilder:
         self.score = {TeamSide.SCOUTED: 0, TeamSide.OTHER: 0}
         self.poss: _Poss | None = None
         self.last_miss: TeamSide | None = None  # side of the last missed FG / last FT
+        # (side, frame) of a missed FG / last FT that nobody has rebounded yet, with no whistle since
+        self.loose_ball: tuple[TeamSide, int] | None = None
         self.in_break = False  # between period_end and the next period_start
         self.period_pending = False  # the next possession is the first of a period
         # (fouled side, frame) from a shooting foul until that side's free throws: a dead ball
@@ -396,8 +402,8 @@ class _TimelineBuilder:
     # ------------------------------------------------------------------ lookups
     def _excluded(self, track_id: int) -> bool:
         a = self.by_track.get(track_id)
-        if a is not None and (a.ignored or a.role == "referee"):
-            return True
+        if a is not None:  # its role includes the coach's override (a "referee" who is a player)
+            return a.ignored or a.role == "referee"
         return self.index.roles.get(track_id) == "referee"
 
     def _manual_side(self, track_id: int | None) -> TeamSide | None:
@@ -473,6 +479,7 @@ class _TimelineBuilder:
             reason = "period_start"
         self.period_pending = False
         self.in_break = False
+        self.loose_ball = None  # somebody has the ball
         frame, t = max(int(frame), self.last_frame), max(t, self.last_t)
         name = self._team_name(side)
         row = TimelineEvent(
@@ -506,12 +513,29 @@ class _TimelineBuilder:
         self.poss = None
 
     def _ensure_possession(self, side: TeamSide | None, e: RawEvent) -> _Poss | None:
-        """The team acting on the ball has it: start an inferred possession if needed."""
+        """The team acting on the ball has it: start a possession (``_open_gap``) if needed."""
         if side is None:
             return None
         if self.poss is None or self.poss.side != side:
-            return self._open(side, e.frame, e.t, "inferred", conf=INFERRED_CONFIDENCE)
+            return self._open_gap(side, e.frame, e.t)
         return self.poss
+
+    def _open_gap(self, side: TeamSide, frame: int, t: float) -> _Poss:
+        """A possession for ``side`` that no event announced: an unseen defensive rebound when
+        ``side`` gained control soon after the other team's miss, else "inferred"."""
+        if self._unseen_rebound(side, frame):
+            return self._open(side, frame, t, "def_rebound", conf=INFERRED_CONFIDENCE, live_start=True)
+        return self._open(side, frame, t, "inferred", conf=INFERRED_CONFIDENCE)
+
+    def _unseen_rebound(self, side: TeamSide, frame: int) -> bool:
+        """``side`` gains control at ``frame``, within UNSEEN_REBOUND_S of the other team's missed FG /
+        last FT that nobody was credited with rebounding, with no whistle since (a timeout, a foul,
+        free throws, a period break): it took a defensive rebound the pipeline did not see (no DREB
+        row: nobody knows who took it). Any later, the ball may have gone out of bounds."""
+        loose = self.loose_ball
+        if loose is None or loose[0] == side or self.ft_owed is not None:
+            return False
+        return 0 <= frame - loose[1] <= self.index.frames_for_seconds(UNSEEN_REBOUND_S)
 
     def _just_scored(self, side: TeamSide) -> bool:
         """``side`` scored the last basket or free throw and the other team has not done anything
@@ -561,8 +585,9 @@ class _TimelineBuilder:
             if self.ft_owed is not None and side != self.ft_owed[0]:  # dead ball before / between free throws
                 continue
             if self.poss is None or self.poss.side != side:
-                t = self.index.frame_to_t(seg.start_frame)
-                self._open(side, seg.start_frame, t, "inferred", conf=INFERRED_CONFIDENCE)
+                self._open_gap(side, seg.start_frame, self.index.frame_to_t(seg.start_frame))
+            elif self.loose_ball is not None and seg.start_frame >= self.loose_ball[1]:
+                self.loose_ball = None  # the shooting team has it back: an offensive rebound nobody saw
 
     def _play_went_on(self, e: RawEvent) -> None:
         """A shot or turnover well after a shooting foul: no free throws are coming after all."""
@@ -610,6 +635,7 @@ class _TimelineBuilder:
         block_side = (self._track_side(blocker_id) if blocker_id is not None else None) or _other(side)
 
         poss = self._ensure_possession(side, e)
+        self.loose_ball = None  # the shooter had the ball
         self._note_action(side, e.t)
         kind, result = ("3PT" if three else "2PT"), ("Make" if made else "Miss")
         text = f"{self._who(shooter, side)} {kind} {result.lower()}"
@@ -653,10 +679,13 @@ class _TimelineBuilder:
         else:
             self.last_miss = side
             poss.pending = PossessionOutcome.MADE_FG if poss.made_fg else PossessionOutcome.MISSED_FG
+            if made_attr is False or blocked:  # a known miss (an unknown result may have gone in)
+                self.loose_ball = (side, e.frame)
 
     def _free_throw(self, e: RawEvent, side: TeamSide | None) -> None:
         if self.ft_owed is not None and side == self.ft_owed[0]:
             self.ft_owed = None  # the trip has started: its last miss is a live ball again
+        self.loose_ball = None  # free throws: the ball was dead
         made_attr = e.attrs.get(ATTR_MADE)
         made = made_attr is True
         poss = self.poss
@@ -689,6 +718,8 @@ class _TimelineBuilder:
         else:  # the rebound decides who has the ball next
             self.last_miss = side
             poss.pending = outcome
+            if made_attr is False:
+                self.loose_ball = (side, e.frame)
 
     def _rebound(self, e: RawEvent, side: TeamSide | None) -> None:
         if self.ft_owed is not None or e.event_id in self.dead_rebound_ids:
@@ -703,7 +734,7 @@ class _TimelineBuilder:
                           description=f"{self._who(player, side)} {label.lower()}"),
             live=True,
         )
-        self.last_miss = None
+        self.last_miss = self.loose_ball = None
         if side is not None and not offensive and (self.poss is None or self.poss.side != side):
             self._open(side, e.frame, e.t, "def_rebound", conf=e.conf, live_start=True)
 
@@ -711,8 +742,10 @@ class _TimelineBuilder:
         self._play_went_on(e)
         kind = str(e.attrs.get(ATTR_KIND) or "other")
         stealer_id = _as_int(e.attrs.get(ATTR_STOLEN_BY))
-        if stealer_id is not None and self._excluded(stealer_id):
-            stealer_id = None
+        if stealer_id is not None and (
+            self._excluded(stealer_id) or (side is not None and self._track_side(stealer_id) == side)
+        ):
+            stealer_id = None  # a referee, an ignored track, or a teammate of the player who lost it
         is_steal = kind == "steal" or stealer_id is not None
         loser, stealer = self._ref(e.track_id), self._ref(stealer_id)
         steal_side = (self._track_side(stealer_id) if stealer_id is not None else None) or _other(side)
@@ -730,8 +763,9 @@ class _TimelineBuilder:
             text = f"{self._who(stealer, steal_side)} steal" + (f" from {loser.label}" if loser else "")
             self._add(self._new_row(e, EventType.STEAL, "Steal", steal_side, suffix=":stl", player=stealer,
                                     secondary_player=loser, description=text))
-        self.last_miss = None
+        self.last_miss = self.loose_ball = None
         if side is not None:
+            # OpenHoopVision reports a turnover only for a direct change of control within 0.5 s: "other" is live
             live = is_steal or kind not in DEAD_BALL_TURNOVERS
             self._open(_other(side), e.frame, e.t, "steal" if is_steal else "turnover", conf=e.conf,
                        live_start=live, outcome=PossessionOutcome.TURNOVER)
@@ -740,6 +774,7 @@ class _TimelineBuilder:
         kind = e.attrs.get(ATTR_KIND)
         fouled_id = _as_int(e.attrs.get(ATTR_FOULED_TRACK))
         poss = self.poss
+        self.loose_ball = None  # a whistle: whoever has the ball next did not take a live rebound
         if poss is not None and kind == "shooting":
             if side != poss.side:
                 self._note_action(poss.side, e.t)  # the fouled shot or drive ends the play
@@ -780,7 +815,7 @@ class _TimelineBuilder:
         winner = side_of(self.team_map, _as_int(e.attrs.get(ATTR_WON_BY_TEAM)))
         text = f"Jump ball won by {self._team_name(winner)}" if winner is not None else "Jump ball"
         self._add(self._new_row(e, EventType.JUMP_BALL, "Jump Ball", winner, description=text), live=True)
-        self.last_miss = None
+        self.last_miss = self.loose_ball = None
         if winner is not None and (self.poss is None or self.poss.side != winner):
             self._open(winner, e.frame, e.t, "jump_ball", conf=e.conf)
 
@@ -789,7 +824,7 @@ class _TimelineBuilder:
         label = _period_label("Start of Period", e)
         self._add(self._new_row(e, EventType.PERIOD_START, label, None, description=label))
         self.in_break = False
-        self.last_miss = None
+        self.last_miss = self.loose_ball = None
         self.ft_owed = self.technical_for = None
         if side is not None:  # the pipeline knows who inbounds
             self._open(side, e.frame, e.t, "period_start", conf=e.conf)
@@ -802,10 +837,11 @@ class _TimelineBuilder:
         self._close(default=PossessionOutcome.END_OF_PERIOD)
         self.in_break = True
         self.period_pending = False
-        self.last_miss = None
+        self.last_miss = self.loose_ball = None
         self.ft_owed = self.technical_for = None
 
     def _timeout(self, e: RawEvent, side: TeamSide | None) -> None:
+        self.loose_ball = None
         if self.poss is not None:
             self.poss.stoppage_t = e.t
         text = f"Timeout {self._team_name(side)}" if side is not None else "Timeout"

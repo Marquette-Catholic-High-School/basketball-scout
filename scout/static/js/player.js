@@ -64,6 +64,8 @@ export class Player {
     this.variant = null;
     this.hasOriginal = false;
     this.hasAnnotated = false;
+    this.annotatedListed = false; // the game had an annotated copy at the last load()
+    this.chosen = false; // the coach picked a version with the Annotated / Original buttons
     this.rate = 1;
     this.captions = true;
     this.calibrating = false;
@@ -86,8 +88,8 @@ export class Player {
     });
     v.addEventListener("error", () => this.onVideoError());
 
-    byId("variant-annotated").addEventListener("click", () => this.setVariant("annotated"));
-    byId("variant-original").addEventListener("click", () => this.setVariant("original"));
+    byId("variant-annotated").addEventListener("click", () => this.chooseVariant("annotated"));
+    byId("variant-original").addEventListener("click", () => this.chooseVariant("original"));
     byId("speed-select").addEventListener("change", (e) => {
       this.rate = Number(e.target.value) || 1;
       v.defaultPlaybackRate = this.rate;
@@ -126,8 +128,13 @@ export class Player {
   /**
    * Point the player at the game's film (annotated when available). A film added as a
    * link has no original on this server, but the annotated copy made by the GPU plays.
+   * When the first analysis finishes on an open page, the player moves to its annotated
+   * copy unless the coach chose a version. renewed: a new GPU run replaced the annotated
+   * copy on the server (same URL), so it is loaded again.
    */
-  load({ hasVideo, hasAnnotated }) {
+  load({ hasVideo, hasAnnotated, renewed = false }) {
+    const arrived = Boolean(hasAnnotated) && !this.annotatedListed;
+    this.annotatedListed = Boolean(hasAnnotated);
     this.hasOriginal = Boolean(hasVideo);
     this.hasAnnotated = Boolean(hasAnnotated);
     const annotatedBtn = byId("variant-annotated");
@@ -137,8 +144,17 @@ export class Player {
     originalBtn.disabled = !this.hasOriginal;
     originalBtn.title = this.hasOriginal ? "" : "The original film isn't stored on this server (it was added as a link)";
     if (!this.hasOriginal && !this.hasAnnotated) return Promise.resolve(false);
-    if (this.variant) return Promise.resolve(true);
-    return this.setVariant(this.hasAnnotated ? "annotated" : "original", { keepTime: false });
+    if (!this.variant) return this.setVariant(this.hasAnnotated ? "annotated" : "original", { keepTime: false });
+    if (this.calibrating) return Promise.resolve(true); // calibration needs the frame it is on
+    if (arrived && this.variant === "original" && !this.chosen) return this.setVariant("annotated");
+    if (renewed && this.variant === "annotated") return this.setVariant("annotated", { reload: true });
+    return Promise.resolve(true);
+  }
+
+  /** The coach picked a version: the player stays on it when the analysis adds an annotated copy. */
+  chooseVariant(variant) {
+    this.chosen = true;
+    return this.setVariant(variant);
   }
 
   /** Data from the analysis. events: TimelineEvent[], plays: Play[], possessions: Possession[]. */
@@ -168,11 +184,11 @@ export class Player {
   }
 
   // ------------------------------------------------------------- playback
-  setVariant(variant, { keepTime = true } = {}) {
+  setVariant(variant, { keepTime = true, reload = false } = {}) {
     const target = (variant === "annotated" && this.hasAnnotated) || !this.hasOriginal ? "annotated" : "original";
     byId("variant-annotated").setAttribute("aria-pressed", String(target === "annotated"));
     byId("variant-original").setAttribute("aria-pressed", String(target === "original"));
-    if (target === this.variant && this.video.currentSrc) return Promise.resolve(true);
+    if (target === this.variant && this.video.currentSrc && !reload) return Promise.resolve(true);
     const v = this.video;
     const time = keepTime ? v.currentTime || 0 : 0;
     const wasPlaying = !v.paused;

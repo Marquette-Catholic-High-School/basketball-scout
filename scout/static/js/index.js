@@ -2,11 +2,10 @@
 
 import { api, gamePath, jobPath } from "./api.js";
 import { resolveColor } from "./colors.js";
-import { STATUS_LABELS, jobStageText } from "./labels.js";
+import { STATUS_LABELS, WORKER_STALE_S, jobStageText, workerWarning } from "./labels.js";
 import { byId, el, setChildren, showError, clearError, formatDate, formatAgo, toast, withBusy } from "./ui.js";
 
 const REFRESH_MS = 5000;
-const WORKER_STALE_S = 120;
 let refreshTimer = null;
 
 const isGameActive = (game) => game.status === "queued" || game.status === "processing";
@@ -77,7 +76,7 @@ function gameCard(game, job) {
     el("div", { class: "game-actions" },
       el("a", { class: "btn btn-small", href: url, text: "Open" }),
       el("a", { class: "btn btn-small", href: `${url}/roster`, text: "Roster" }),
-      game.has_video ? null : el("a", { class: "btn btn-small", href: `/upload?game=${encodeURIComponent(game.id)}`, text: "Add film" }),
+      game.has_video || game.video_url ? null : el("a", { class: "btn btn-small", href: `/upload?game=${encodeURIComponent(game.id)}`, text: "Add film" }),
       el("button", { type: "button", class: "btn-small btn-danger", text: "Delete", onClick: (e) => deleteGame(game, e.currentTarget) })),
     isGameActive(game) ? progressBlock(job) : null,
   );
@@ -118,12 +117,7 @@ function statusItem(label, value, ok) {
 
 /** Plain-English warnings for the coach / IT person: [kind, message, hint]. */
 function healthWarnings(h) {
-  const warnings = [];
-  if (h.worker_last_seen_s === null || h.worker_last_seen_s === undefined) {
-    warnings.push(["error", "The background worker is not running - start basketball-scout-worker.", "On the server: sudo systemctl start basketball-scout-worker (or run python -m scout.worker). Film will wait in the queue until it runs."]);
-  } else if (h.worker_last_seen_s > WORKER_STALE_S) {
-    warnings.push(["error", `The background worker was last seen ${formatAgo(h.worker_last_seen_s)} - it may have stopped.`, "Check it with: sudo systemctl status basketball-scout-worker"]);
-  }
+  const warnings = [workerWarning(h)].filter(Boolean);
   if (!h.queue_ok) warnings.push(["error", `The job queue (${h.queue_backend}) is not reachable.`, "Start Redis (sudo systemctl start redis-server) or set SCOUT_QUEUE_BACKEND=sqlite in .env."]);
   if (h.processor === "modal" && !h.modal_configured) warnings.push(["error", "Modal (the GPU service) is not configured, so film cannot be analyzed.", "Run modal token new on the server (or set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET in .env), then restart the worker."]);
   if (h.processor === "mock") warnings.push(["info", "Demo mode: SCOUT_PROCESSOR=mock creates made-up results instead of analyzing the film.", "Set SCOUT_PROCESSOR=modal in .env for real analysis."]);

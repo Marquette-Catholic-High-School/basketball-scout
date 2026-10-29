@@ -31,6 +31,14 @@ Browsers send the saved credentials with every request to this site, including a
 or background ``fetch`` that a page on ANOTHER site submits (cross-site request
 forgery). ``SameOriginMiddleware`` therefore refuses POST/PUT/PATCH/DELETE requests
 that a browser marks as coming from another site (HTTP 403), with or without auth.
+
+It also refuses requests for a server name that is not in ``SCOUT_ALLOWED_HOSTS``
+(HTTP 403). With sign-in off, a page on another site whose name is pointed at this
+server's address (DNS rebinding) is same-origin for the browser, so nothing else could
+tell it apart: it could read the rosters and delete games. With the setting empty, any
+name works while sign-in is on (the browser never sends the coach's saved password to
+the other site's name), and with sign-in off only IP addresses, ``localhost`` and this
+machine's own name do.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ import hmac
 import ipaddress
 import logging
 import secrets
+import socket
 import sys
 import time
 from collections import deque
@@ -75,6 +84,7 @@ AUTH_REQUIRED = "AUTH_REQUIRED"
 AUTH_THROTTLED = "AUTH_THROTTLED"
 AUTH_NOT_CONFIGURED = "AUTH_NOT_CONFIGURED"
 CROSS_SITE_REQUEST = "CROSS_SITE_REQUEST"
+HOST_NOT_ALLOWED = "HOST_NOT_ALLOWED"
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +155,13 @@ def log_auth_status(settings: Settings) -> None:
             "!!! AUTHENTICATION IS DISABLED (SCOUT_AUTH_DISABLED=true): anyone who can reach this server "
             "can see and delete every game. Only do this on a trusted, private network. !!!"
         )
+        if not settings.allowed_host_patterns:
+            logger.warning(
+                "SCOUT_ALLOWED_HOSTS is empty, so with sign-in off the server only answers to IP addresses, "
+                "localhost and this machine's own name (%s). Add the name coaches type to SCOUT_ALLOWED_HOSTS "
+                "to use another one.",
+                ", ".join(sorted(machine_names())) or "unknown",
+            )
         return
     problem = auth_config_problem(settings)
     if problem:
@@ -353,7 +370,11 @@ class BasicAuthMiddleware:
 
 
 class SameOriginMiddleware:
-    """Pure ASGI middleware: refuse changes that a page on another website sent.
+    """Pure ASGI middleware: refuse requests for an unknown server name, and changes that
+    a page on another website sent.
+
+    The server name comes first (``HOST_NOT_ALLOWED``, see :meth:`_refused_host`), for
+    every request but ``GET /api/health/live``.
 
     Current browsers label every request with ``Sec-Fetch-Site``; older ones send an
     ``Origin`` (or at least a ``Referer``) on a form POST. Any of these naming another
@@ -363,10 +384,24 @@ class SameOriginMiddleware:
     sign-ins.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, settings: Settings) -> None:
         self.app = app
+        self.settings = settings
+        # A port in the setting is ignored: names are compared without one.
+        self.host_patterns = [_host_name(pattern) or pattern for pattern in settings.allowed_host_patterns]
+        self.own_names = machine_names()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket") and not _is_public(scope):
+            host = self._refused_host(scope)
+            if host is not None:
+                method, path = scope.get("method", "WEBSOCKET"), scope.get("path")
+                logger.warning("Refused a %s %s for the server name %r (SCOUT_ALLOWED_HOSTS)", method, path, host[:200])
+                if scope["type"] == "websocket":
+                    await send({"type": "websocket.close", "code": 1008})
+                else:
+                    await _unknown_host_response(host)(scope, receive, send)
+                return
         if scope["type"] == "http" and scope.get("method", "GET") not in SAFE_METHODS:
             source = _cross_site_source(scope)
             if source is not None:
@@ -381,6 +416,70 @@ class SameOriginMiddleware:
                 await response(scope, receive, send)
                 return
         await self.app(scope, receive, send)
+
+    def _refused_host(self, scope: Scope) -> str | None:
+        """The server name the request was sent to, when the server does not answer to it.
+
+        ``SCOUT_ALLOWED_HOSTS`` lists the names (``*.school.org``: any subdomain). IP
+        addresses, ``localhost`` and ``*.localhost`` always pass, so the admin cannot lock
+        themselves out on the machine itself. Empty: any name while sign-in is on, and with
+        sign-in off only those and this machine's own name. A proxy that rewrites Host
+        (Apache by default) puts the browser's name in X-Forwarded-Host, so each name
+        there must pass too; a page can set that header itself, so it can only refuse a
+        request, never let one through. A request without Host is not from a browser.
+        """
+        if not self.host_patterns and self.settings.auth_enabled:
+            return None
+        host = _header(scope, b"host")
+        names = [] if host is None else [host]
+        for value in _header_values(scope, b"x-forwarded-host"):
+            names += [name.strip() for name in value.split(",") if name.strip()]
+        return next((name for name in names if not self._answers_to(_host_name(name))), None)
+
+    def _answers_to(self, name: str | None) -> bool:
+        if name is None:  # malformed
+            return False
+        if _is_ip(name) or name == "localhost" or name.endswith(".localhost"):
+            return True
+        if self.host_patterns:
+            return any(_host_matches(name, pattern) for pattern in self.host_patterns)
+        return name in self.own_names  # sign-in is off (see _refused_host)
+
+
+def machine_names() -> frozenset[str]:
+    """This computer's own names: ``socket.gethostname()``, its first label and ``<label>.local``."""
+    full = socket.gethostname().strip().lower().rstrip(".")
+    label = full.split(".", 1)[0]
+    return frozenset(name for name in (full, label, f"{label}.local" if label else "") if name)
+
+
+def _host_name(host: str) -> str | None:
+    """``Scout.Example.org:8000`` -> ``scout.example.org``, ``[::1]:8000`` -> ``::1``; None when malformed."""
+    host = host.strip().lower()
+    if host.startswith("["):
+        name, bracket, port = host[1:].partition("]")
+        if not bracket or not _is_ip(name) or (port and not (port[0] == ":" and port[1:].isdigit())):
+            return None
+        return name
+    name, _, port = host.partition(":")
+    if port and not port.isdigit():
+        return None
+    return name.rstrip(".") or None
+
+
+def _host_matches(name: str, pattern: str) -> bool:
+    """``pattern`` from SCOUT_ALLOWED_HOSTS: a name, ``*.school.org`` (its subdomains) or ``*`` (any name)."""
+    if pattern.startswith("*."):
+        return name.endswith(pattern[1:])
+    return pattern in ("*", name)
+
+
+def _is_ip(name: str) -> bool:
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return True
 
 
 def _cross_site_source(scope: Scope) -> str | None:
@@ -448,6 +547,10 @@ def _header(scope: Scope, name: bytes) -> str | None:
     return None
 
 
+def _header_values(scope: Scope, name: bytes) -> list[str]:
+    return [value.decode("latin-1") for key, value in scope.get("headers", []) if key == name]
+
+
 def _cookie(scope: Scope, name: str) -> str | None:
     for key, value in scope.get("headers", []):
         if key == b"cookie":
@@ -482,6 +585,17 @@ def _decode_basic(header: str) -> tuple[str, str] | None:
 def _error_response(status: int, code: str, title: str, message: str, *, hint: str | None = None) -> JSONResponse:
     info = ErrorInfo(code=code, title=title, message=message, hint=hint)
     return JSONResponse({"error": info.model_dump()}, status_code=status, headers={"Cache-Control": "no-store"})
+
+
+def _unknown_host_response(host: str) -> JSONResponse:
+    return _error_response(
+        403,
+        HOST_NOT_ALLOWED,
+        "Unknown server name",
+        f"This server does not answer to the name {host[:200]!r}: it is not in SCOUT_ALLOWED_HOSTS.",
+        hint="Open Basketball Scout by its usual address or its IP address, or ask the administrator to add "
+        "this name to SCOUT_ALLOWED_HOSTS in .env and restart the web app.",
+    )
 
 
 def _challenge_response() -> JSONResponse:

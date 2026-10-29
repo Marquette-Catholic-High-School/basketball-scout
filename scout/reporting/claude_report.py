@@ -63,6 +63,10 @@ _FINISHED_STOP_REASONS = frozenset({"end_turn", "stop_sequence"})
 _TIMED_OUT = "The request to Claude timed out."
 _TIMEOUT_HINT = "Try again. If it keeps timing out, raise SCOUT_CLAUDE_TIMEOUT_S in .env."
 _CONNECTION_HINT = "Check the server's internet connection and try again."
+_FILTER_HINT = (
+    "Make sure this server can reach https://api.anthropic.com (school web filters and proxies "
+    "sometimes block it), then click 'Generate report' again."
+)
 
 # ---------------------------------------------------------------------------
 # Payload
@@ -527,18 +531,26 @@ def _stream(client: Any, request: dict[str, Any]) -> Any:
                 ErrorCode.REPORT_FAILED,
                 "The answer to the report request was not a message from Claude "
                 "(a web filter or proxy may have answered instead of the Anthropic API).",
-                hint="Make sure this server can reach https://api.anthropic.com (school web filters and proxies "
-                "sometimes block it), then click 'Generate report' again.",
+                hint=_FILTER_HINT,
                 retryable=True,
                 detail=f"No message in the response (content-type {content_type!r}).",
             ) from exc
 
 
+def _api_error(exc: anthropic.APIError) -> dict[str, Any] | None:
+    """The ``error`` object of the API's JSON error body; None when the body is anything else."""
+    error = exc.body.get("error") if isinstance(exc.body, dict) else None
+    return error if isinstance(error, dict) else None
+
+
 def _api_message(exc: anthropic.APIError) -> str:
-    """The API's own error message when the body has one."""
-    body = exc.body
-    if isinstance(body, dict) and isinstance(body.get("error"), dict) and body["error"].get("message"):
-        return str(body["error"]["message"])
+    """The API's own error message when the body has one. Never a body that is not JSON: a web
+    filter or proxy can answer with a whole HTML page."""
+    error = _api_error(exc)
+    if error is not None and error.get("message"):
+        return str(error["message"])
+    if isinstance(exc, anthropic.APIStatusError) and not isinstance(exc.body, dict):
+        return f"not a JSON error from the API (content-type {exc.response.headers.get('content-type')!r})"
     return exc.message
 
 
@@ -570,8 +582,18 @@ def _is_server_error(exc: anthropic.APIError) -> bool:
 def _scout_error(exc: anthropic.APIError, model: str) -> ScoutError:
     """Map an SDK error to the coach-facing error taxonomy (most specific first)."""
     detail = _error_detail(exc)
-    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+    if isinstance(exc, anthropic.AuthenticationError):
         return ScoutError(ErrorCode.REPORT_AUTH_FAILED, detail=detail)
+    if isinstance(exc, anthropic.PermissionDeniedError) and _api_error(exc) is not None:
+        # A key the API accepts but may not use here: no access to the model, or not from this country.
+        return ScoutError(
+            ErrorCode.REPORT_AUTH_FAILED,
+            "Anthropic refused this request: the API key's organisation may not have access to this model or region.",
+            hint=f"In the Anthropic Console, check that the key's organisation can use {model} (SCOUT_CLAUDE_MODEL) "
+            "from this server's country, or set SCOUT_CLAUDE_MODEL in .env to a model it can use and restart "
+            "the worker.",
+            detail=detail,
+        )
     if isinstance(exc, anthropic.NotFoundError):
         return ScoutError(
             ErrorCode.REPORT_FAILED,
@@ -599,6 +621,14 @@ def _scout_error(exc: anthropic.APIError, model: str) -> ScoutError:
         return ScoutError(ErrorCode.REPORT_RATE_LIMITED, message, detail=detail)
     if _is_server_error(exc):
         return ScoutError(ErrorCode.REPORT_OVERLOADED, detail=detail)
+    if status_error is not None and _api_error(status_error) is None:  # e.g. a web filter's "blocked" page
+        return ScoutError(
+            ErrorCode.REPORT_FAILED,
+            f"The request to the Anthropic API failed (HTTP {status_error.status_code}) and the answer did not "
+            "come from the API: a web filter or proxy may have answered instead.",
+            hint=_FILTER_HINT,
+            detail=detail,
+        )
     if isinstance(exc, anthropic.BadRequestError):
         message = f"The Anthropic API rejected the request: {_api_message(exc)}"
         return ScoutError(ErrorCode.REPORT_FAILED, message, retryable=False, detail=detail)

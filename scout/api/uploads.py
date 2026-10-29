@@ -260,6 +260,7 @@ def _finish_upload(upload_id: str, settings: Settings, auto_start: bool) -> Film
             has_annotated_video=False,
             error=None,
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
+            calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
         )
         return _maybe_start_analysis(game, settings, auto_start)
 
@@ -357,6 +358,7 @@ def set_video_url(body: VideoUrlRequest, game: CurrentGame, settings: SettingsDe
             has_annotated_video=False,
             error=None,
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
+            calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
         )
         return _maybe_start_analysis(game, settings, auto_start)
 

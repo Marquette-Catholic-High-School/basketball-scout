@@ -213,14 +213,19 @@ def assign_tracks(
     * Otherwise match each track's votes against its side's roster.
     * Conflict resolution: two tracks on screen at the same time cannot be the same
       player. When they are, the lower-priority track falls back to its next-best
-      candidate or becomes ``unrostered`` (keeping ``best_read`` as its jersey).
-    * ``frames`` = number of samples; ``jersey`` = matched roster jersey, else best read.
+      candidate or becomes ``unrostered``.
+    * ``frames`` = number of samples; ``jersey`` = matched roster jersey, else best read,
+      except a best read that is a roster number on the track's side: that player is
+      another track (or the votes were too split to name him), so the track gets no
+      jersey and its stats go to the team line, not to a second "#23" beside "#23 Smith".
 
     Details: an override is applied even to a track the pipeline called a referee (the
-    coach has the final word); an override naming a player who is no longer on a roster
-    is ignored. A track whose team id is missing from ``team_map`` is matched against both
-    rosters and takes the side of the better match; an exact tie between the two teams'
-    players leaves it unrostered rather than guessing. Tracks choose in order of
+    coach has the final word): any choice but ``ignore`` makes it a player, and "not a
+    roster player" gives a referee track no jersey (its reads are not a player's number).
+    An override naming a player who is no longer on a roster is ignored. A track whose
+    team id is missing from ``team_map`` is matched against both rosters and takes the
+    side of the better match; an exact tie between the two teams' players leaves it
+    unrostered rather than guessing. Tracks choose in order of
     score x log(1 + frames), and every track's best candidate is settled before any
     track falls back to a weaker one, so a fallback guess never takes a player from a
     track that read that player's number. Two tracks conflict when they are on screen
@@ -252,7 +257,7 @@ def assign_tracks(
             presence = _presence(track, max_gap)
             pending.append(_Pending(index=index, base=base, presence=presence, candidates=candidates))
         else:
-            results[index] = _unrostered(base)
+            results[index] = _unrostered(base, rosters)
 
     ranked = sorted(pending, key=lambda p: (-p.priority, p.base.track_id))
     for rank in range(max((len(item.candidates) for item in ranked), default=0)):
@@ -265,7 +270,7 @@ def assign_tracks(
                 results[item.index] = _matched(item.base, choice)
     for item in ranked:
         if item.index not in results:
-            results[item.index] = _unrostered(item.base)
+            results[item.index] = _unrostered(item.base, rosters)
 
     assignments = [results[index] for index in range(len(tracking.tracks))]
     matched = sum(1 for a in assignments if a.player_id)
@@ -367,12 +372,14 @@ def _acceptable_candidates(base: TrackAssignment, rosters: dict[TeamSide, Roster
 def _apply_override(
     base: TrackAssignment, override: TrackOverride, rosters: dict[TeamSide, Roster]
 ) -> TrackAssignment | None:
-    """The coach's correction for one track; None when it names a player no longer on a roster."""
+    """The coach's correction for one track; None when it names a player no longer on a roster.
+    Anything but ``ignore`` makes the track a player, also one the pipeline called a referee."""
     side = override.side or base.side
     if override.ignore:
         return base.model_copy(update={"ignored": True, "method": "manual", "side": side})
     if override.player_id is None:  # explicitly "not a roster player", keeping (or setting) the side
-        return base.model_copy(update={"side": side, "jersey": base.best_read, "method": "manual"})
+        jersey = None if base.role == "referee" else _off_roster(base.best_read, side, rosters)
+        return base.model_copy(update={"side": side, "jersey": jersey, "role": "player", "method": "manual"})
     for side, roster in rosters.items():
         player = roster.by_id(override.player_id)
         if player is not None:
@@ -403,12 +410,26 @@ def _matched(base: TrackAssignment, choice: _Candidate) -> TrackAssignment:
     )
 
 
-def _unrostered(base: TrackAssignment) -> TrackAssignment:
-    """No roster player: show the best OCR read, scored by how dominant that read is."""
+def _unrostered(base: TrackAssignment, rosters: dict[TeamSide, Roster]) -> TrackAssignment:
+    """No roster player: show the best OCR read (unless it is a roster number), scored by how
+    dominant that read is."""
     if base.best_read is None:
         return base
     share = base.votes[base.best_read] / sum(base.votes.values())
-    return base.model_copy(update={"jersey": base.best_read, "match_score": round(share, 4), "method": "unrostered"})
+    jersey = _off_roster(base.best_read, base.side, rosters)
+    return base.model_copy(update={"jersey": jersey, "match_score": round(share, 4), "method": "unrostered"})
+
+
+def _off_roster(read: str | None, side: TeamSide | None, rosters: dict[TeamSide, Roster]) -> str | None:
+    """``read`` as the jersey of a track that is no roster player, or None when it is the number of a
+    player on the track's roster (either roster when its side is unknown; "5" counts as "05")."""
+    if read is None:
+        return None
+    sides = [side] if side is not None else list(rosters)
+    for player in (p for s in sides if s in rosters for p in rosters[s].players):
+        if jersey_similarity(read, player.jersey)[0] >= LEADING_ZERO_SIMILARITY:
+            return None
+    return read
 
 
 def _presence(track: Track, max_gap: float) -> list[tuple[int, int]]:

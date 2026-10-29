@@ -28,8 +28,9 @@ $(PY):
 dev: ## Run the web app (auto-reload) and the worker together; Ctrl-C stops both
 	PORT=$(PORT) HOST=$(HOST) scripts/dev.sh
 
+# pyproject.toml's addopts already pass -q: a second -q would hide the pass/fail count.
 test: ## Run the test suite (no GPU, network or API keys needed)
-	$(PY) -m pytest -q
+	$(PY) -m pytest
 
 run-web: ## Run only the web app on http://127.0.0.1:8000 (auto-reload; PORT=... to change)
 	$(PY) -m uvicorn scout.main:app --reload --reload-dir scout --host $(HOST) --port $(PORT)

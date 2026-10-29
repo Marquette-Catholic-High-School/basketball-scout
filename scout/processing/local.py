@@ -142,7 +142,8 @@ def _run_pipeline(
     run: _LocalRun, kind: str, source: str, options: dict[str, Any], job_id: str, filename: str
 ) -> dict[str, Any]:
     """Pipeline thread body. ``run_pipeline`` needs a local file, so a URL film is downloaded
-    first (as ``modal_app/app.py`` does on Modal) and deleted again afterwards."""
+    first (as ``modal_app/app.py`` does on Modal) and deleted again afterwards. The download
+    runs on this server, so links into its own network are refused (``public_only``)."""
     download_dir = run.output_dir / "download" if kind == "url" else None
     try:
         if download_dir is not None:
@@ -152,6 +153,7 @@ def _run_pipeline(
                     download_dir / "source.mp4",
                     max_bytes=int(options.get("max_download_bytes") or pipeline_video.DEFAULT_MAX_DOWNLOAD_BYTES),
                     progress=runner.PipelineProgress(run.report).reporter("download"),
+                    public_only=True,
                 )
             )
         return runner.run_pipeline(

@@ -1,11 +1,13 @@
 // Job panel on the game page: live progress of the latest analysis job (polled every
-// 3 s), Cancel, and a friendly error with Retry when a job fails.
+// 3 s), Cancel, a notice when no worker is there to take a queued job, and a friendly
+// error with Retry when a job fails.
 
 import { api, gamePath, isJobActive, jobPath, pollJob } from "./api.js";
-import { jobKindLabel, jobStageText } from "./labels.js";
+import { jobKindLabel, jobStageText, workerWarning } from "./labels.js";
 import { byId, clearError, el, errorBox, formatDuration, notice, setChildren, show, withBusy } from "./ui.js";
 
 const POLL_MS = 3000;
+const HEALTH_MS = 15000; // while a job is queued, ask /api/health this often whether a worker runs
 
 function elapsedSince(iso) {
   const started = Date.parse(iso || "");
@@ -77,6 +79,9 @@ export class JobPanel {
       stage: el("p", { class: "job-stage" }),
       fill: el("span", {}),
       details: el("p", { class: "small muted job-details", "aria-live": "off" }),
+      worker: el("div", {}),
+      workerProblem: null, // hint of the worker notice shown, "" for none
+      healthAt: 0, // Date.now() of the last worker check
       error: el("div", {}),
     };
     view.bar = el("div", { class: "progress", role: "progressbar", "aria-label": "Analysis progress", "aria-valuemin": "0", "aria-valuemax": "100" }, view.fill);
@@ -85,6 +90,7 @@ export class JobPanel {
       view.stage,
       view.bar,
       view.details,
+      view.worker,
       view.error,
       el("p", { class: "small muted", text: "You can close this page; processing continues on the server." }));
     return view;
@@ -109,7 +115,27 @@ export class JobPanel {
     view.bar.setAttribute("aria-valuenow", String(pct));
     view.fill.style.width = `${pct}%`;
     setText(view.details, [`${pct}% overall`, job.message, elapsed ? `running for ${elapsed}` : null].filter(Boolean).join(" · "));
+    if (job.status === "queued") {
+      this.checkWorker(view);
+    } else if (view.workerProblem) {
+      view.workerProblem = "";
+      setChildren(view.worker);
+    }
     this.onUpdate?.(job);
+  }
+
+  /** A queued job waits for the background worker: say so when none is running (as the games list does). */
+  async checkWorker(view) {
+    if (Date.now() - view.healthAt < HEALTH_MS) return;
+    view.healthAt = Date.now();
+    const health = await api.get("/api/health").catch(() => null);
+    if (this.view !== view || view.job.status !== "queued" || !health) return;
+    const warning = workerWarning(health);
+    // The notice is an alert: rewrite it when the problem changes, not with every "last seen" time.
+    const problem = warning ? warning[2] : "";
+    if (problem === view.workerProblem) return;
+    view.workerProblem = problem;
+    setChildren(view.worker, warning ? notice(warning[0], warning[1], null, warning[2]) : null);
   }
 
   renderFinal(job) {

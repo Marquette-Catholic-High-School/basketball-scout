@@ -507,10 +507,14 @@ def ohv_home(override: str | os.PathLike[str] | None = None) -> Path:
 
 
 def resolve_weights(home: Path, overrides: dict[str, str] | None = None) -> dict[str, Path]:
-    """Checkpoint paths by file name; MODEL_LOAD_FAILED when one is missing or an LFS pointer."""
+    """Checkpoint paths by file name; MODEL_LOAD_FAILED when one is missing or an LFS pointer.
+
+    Paths are absolute: OHV runs in its checkout, so it would resolve a relative override from
+    there instead of from where this process checked it.
+    """
     paths: dict[str, Path] = {}
     for weight in WEIGHTS:
-        path = Path((overrides or {}).get(weight.name) or home / "weights" / weight.name)
+        path = Path(os.path.abspath((overrides or {}).get(weight.name) or home / "weights" / weight.name))
         if not path.is_file():
             raise PipelineError(errors.MODEL_LOAD_FAILED, f"Model file {weight.name} is missing.", detail=str(path))
         if path.stat().st_size < 1024:  # Git LFS pointer files are ~130 bytes
@@ -726,6 +730,10 @@ def install_openhoopvision(home: str | os.PathLike[str] | None = None) -> Path:
     git_env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"}  # weights come from WEIGHTS urls, checksum-verified
     if not (root / ".git").is_dir():
         subprocess.run(["git", "clone", OHV_REPO_URL, str(root)], check=True, env=git_env)
+    has_commit = ["git", "-C", str(root), "cat-file", "-e", f"{OHV_COMMIT}^{{commit}}"]
+    if subprocess.run(has_commit, check=False, env=git_env, capture_output=True).returncode != 0:
+        # An older clone predates the pinned commit: checking it out would fail with "reference is not a tree".
+        subprocess.run(["git", "-C", str(root), "fetch", "--quiet", "origin"], check=True, env=git_env)
     subprocess.run(["git", "-C", str(root), "checkout", "--detach", OHV_COMMIT], check=True, env=git_env)
     for weight in WEIGHTS:
         target = root / "weights" / weight.name

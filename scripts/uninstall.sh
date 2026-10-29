@@ -4,9 +4,11 @@
 #   sudo /opt/basketball-scout/scripts/uninstall.sh [options]
 #
 # Stops and removes the two systemd services, removes the nginx site and deletes the
-# code folder (code + Python environment). The data folder (games, film, database)
-# stays, with a copy of .env in <data folder>/backups/, so running install.sh again
-# brings everything back. --purge deletes the data as well. Safe to run more than once.
+# code folder (code + Python environment), and for SCOUT_PROCESSOR=local the
+# OpenHoopVision checkout and the NVIDIA module list that install.sh added. The data
+# folder (games, film, database) stays, with a copy of .env in <data folder>/backups/, so
+# running install.sh again brings everything back. --purge deletes the data as well.
+# Safe to run more than once.
 #
 # The steps run inside main(), called on the last line, because this script deletes the
 # folder it lives in.
@@ -21,6 +23,8 @@ WORKER_UNIT=basketball-scout-worker.service
 SYSTEMD_DIR=/etc/systemd/system
 NGINX_SITE_NAME=basketball-scout
 USER_COMMENT="Basketball Scout service"
+DEFAULT_OHV_HOME=/opt/openhoopvision
+NVIDIA_MODULES_FILE=/etc/modules-load.d/basketball-scout-nvidia.conf  # install.sh --processor local
 
 # Options (see usage).
 INSTALL_DIR=""
@@ -39,6 +43,9 @@ MODAL_APP=basketball-scout
 MODAL_VOLUME=basketball-scout-data
 MODAL_DICT=basketball-scout-progress
 MODAL_ENV=""  # SCOUT_MODAL_ENVIRONMENT ("" = the workspace default)
+OHV_DIR=""    # SCOUT_PROCESSOR=local: the OpenHoopVision checkout (OHV_HOME) install.sh made ("" = none)
+OHV_KEPT=""   # why OHV_DIR is not deleted ("" = it is)
+REMOVED_LOCAL_GPU=""  # what remove_local_gpu deleted, for the summary
 
 C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_BOLD="" C_OFF=""
 
@@ -59,6 +66,7 @@ Usage: sudo scripts/uninstall.sh [options]
 
 Kept unless you ask: the data folder (plus a copy of .env in its backups/ folder), the
 service user, the Modal app, and nginx / Redis themselves (other software may use them).
+With SCOUT_PROCESSOR=local the OpenHoopVision checkout (OHV_HOME) goes with the code.
 Reinstall later with scripts/install.sh: it finds the kept data and settings.
 EOF
 }
@@ -209,17 +217,30 @@ default_install_dir() {  # the installed copy, else the checkout holding this sc
   printf '%s' "$DEFAULT_DIR"
 }
 
-check_removable() {  # check_removable PATH WHAT: never delete a system folder
+protected_reason() {  # protected_reason PATH: why PATH must never be deleted ("" = it may be)
   local protected
   for protected in / /bin /boot /dev /etc /home /lib /lib64 /media /mnt /opt /proc /root /run \
     /sbin /snap /srv /sys /tmp /usr /usr/local /var /var/lib /var/log; do
     if [[ $1 == "$protected" ]]; then
-      die "Refusing to delete $1 ($2)."
+      printf 'a system folder'
+      return 0
     fi
   done
   if [[ $1 != /*/* ]]; then
-    die "Refusing to delete $1 ($2): expected a folder like $DEFAULT_DIR."
+    printf 'expected a folder like %s' "$DEFAULT_DIR"
   fi
+}
+
+check_removable() {  # check_removable PATH WHAT: never delete a system folder
+  local reason
+  reason=$(protected_reason "$1")
+  if [[ -n $reason ]]; then
+    die "Refusing to delete $1 ($2): $reason."
+  fi
+}
+
+inside() {  # inside PATH DIR: PATH is DIR or lies inside it
+  [[ $1 == "$2" || $1 == "$2"/* ]]
 }
 
 modal_cli() {  # the Modal CLI as the service user, with .env loaded (credentials), in the app's environment
@@ -285,6 +306,31 @@ resolve() {
   if [[ $PURGE -eq 1 ]]; then
     check_removable "$DATA_DIR" "--data-dir"
   fi
+  if [[ $(env_get "$ENV_FILE" SCOUT_PROCESSOR) == local ]]; then
+    resolve_ohv_dir
+  fi
+}
+
+resolve_ohv_dir() {  # the OpenHoopVision checkout install.sh made in OHV_HOME: derived, so it goes with the code
+  local value
+  value=$(env_get "$ENV_FILE" OHV_HOME)
+  OHV_DIR=$(strip_trailing_slashes "${value:-$DEFAULT_OHV_HOME}")
+  if [[ $OHV_DIR != /* ]]; then
+    OHV_DIR="$INSTALL_DIR/$OHV_DIR"  # read from the code folder, like the app does
+  fi
+  if [[ ! -e $OHV_DIR ]] || inside "$OHV_DIR" "$INSTALL_DIR"; then
+    OHV_DIR=""  # nothing there, or it is deleted with the code folder anyway
+    return 0
+  fi
+  OHV_KEPT=$(protected_reason "$OHV_DIR")
+  if [[ -n $OHV_KEPT ]]; then
+    return 0
+  fi
+  if [[ ! -d $OHV_DIR/.git || ! -f $OHV_DIR/main.py ]]; then
+    OHV_KEPT="it does not look like an OpenHoopVision checkout"
+  elif inside "$DATA_DIR" "$OHV_DIR" || inside "$INSTALL_DIR" "$OHV_DIR"; then
+    OHV_KEPT="the data or code folder is inside it"
+  fi
 }
 
 show_plan() {
@@ -292,6 +338,14 @@ show_plan() {
   info "Services     basketball-scout-web and basketball-scout-worker: stopped, disabled, deleted"
   info "nginx        the basketball-scout site, if there is one (nginx itself stays)"
   info "Code         $INSTALL_DIR (code and Python environment)"
+  if [[ -n $OHV_DIR && -z $OHV_KEPT ]]; then
+    info "Local GPU    $OHV_DIR (OpenHoopVision and its model weights)"
+  elif [[ -n $OHV_DIR ]]; then
+    info "Local GPU    kept: $OHV_DIR ($OHV_KEPT)"
+  fi
+  if [[ -e $NVIDIA_MODULES_FILE ]]; then
+    info "Boot config  $NVIDIA_MODULES_FILE (loads the NVIDIA modules for the worker)"
+  fi
   if [[ $PURGE -eq 1 ]]; then
     info "Data         ${C_RED}DELETED${C_OFF}: $DATA_DIR (every game, film, roster and report)"
   else
@@ -430,6 +484,25 @@ backup_env() {
   ok "Saved .env (passwords and keys) as $backup"
 }
 
+remove_local_gpu() {  # SCOUT_PROCESSOR=local: install.sh's OpenHoopVision checkout and NVIDIA module list
+  if [[ -z $OHV_DIR && ! -e $NVIDIA_MODULES_FILE ]]; then
+    return 0
+  fi
+  step "Local GPU pipeline"
+  if [[ -n $OHV_DIR && -n $OHV_KEPT ]]; then
+    warn "Kept $OHV_DIR (OHV_HOME): $OHV_KEPT."
+  elif [[ -n $OHV_DIR ]]; then
+    rm -rf --one-file-system "$OHV_DIR"
+    REMOVED_LOCAL_GPU="the OpenHoopVision checkout $OHV_DIR"
+    ok "Deleted $OHV_DIR (OpenHoopVision and its model weights)"
+  fi
+  if [[ -e $NVIDIA_MODULES_FILE ]]; then
+    rm -f "$NVIDIA_MODULES_FILE"
+    REMOVED_LOCAL_GPU="${REMOVED_LOCAL_GPU:+$REMOVED_LOCAL_GPU and }$NVIDIA_MODULES_FILE"
+    ok "Deleted $NVIDIA_MODULES_FILE (it loaded the NVIDIA modules at boot for the worker)"
+  fi
+}
+
 remove_code() {
   step "Code"
   if [[ ! -e $INSTALL_DIR ]]; then
@@ -500,6 +573,12 @@ print_summary() {
     printf '  Your games are still in %s.\n' "$DATA_DIR"
     printf '  Reinstall with scripts/install.sh to use them again, or delete them: sudo rm -r %s\n' "$DATA_DIR"
   fi
+  if [[ -n $REMOVED_LOCAL_GPU ]]; then
+    printf '  Local GPU: deleted %s; the NVIDIA driver stays installed.\n' "$REMOVED_LOCAL_GPU"
+  fi
+  if [[ -n $OHV_DIR && -n $OHV_KEPT ]]; then
+    printf '  Local GPU: OHV_HOME (%s) was not deleted: %s.\n' "$OHV_DIR" "$OHV_KEPT"
+  fi
   printf '  System packages (nginx, redis-server, ffmpeg, python3) were left installed.\n'
   printf '  Remove the ones nothing else needs with: sudo apt-get purge nginx redis-server\n'
   if [[ $REMOVE_MODAL -eq 0 ]]; then
@@ -526,6 +605,7 @@ main() {
   if [[ $PURGE -eq 0 ]]; then
     backup_env
   fi
+  remove_local_gpu  # before the code, so a re-run after a failure still finds OHV_HOME in .env
   remove_code
   if [[ $PURGE -eq 1 ]]; then
     remove_data

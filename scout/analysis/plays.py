@@ -360,9 +360,10 @@ def _track_sides(
 ) -> dict[int, TeamSide]:
     by_track = {a.track_id: a for a in assignments}
     sides: dict[int, TeamSide] = {}
-    for tid in index.track_ids("player"):
+    for tid in index.track_ids(None):
         a = by_track.get(tid)
-        if a is not None and (a.ignored or a.role == "referee"):
+        role = a.role if a is not None else index.roles.get(tid)  # the assignment has the coach's override
+        if role != "player" or (a is not None and a.ignored):
             continue
         side = (a.side if a is not None else None) or team_map.get(index.team_of(tid))  # type: ignore[arg-type]
         if side is not None:
@@ -1007,8 +1008,10 @@ def _putbacks(w: _Window) -> list[_Candidate]:
 
 
 def _raw_kind(ctx: _Ctx, row: TimelineEvent) -> str | None:
+    """The raw event's ``kind`` (None when missing or malformed: attrs are unchecked JSON)."""
     raw = ctx.raw.get(row.source_event_id or "")
-    return raw.attrs.get("kind") if raw is not None else None
+    kind = raw.attrs.get("kind") if raw is not None else None
+    return kind if isinstance(kind, str) else None
 
 
 def _pipeline_putback(ctx: _Ctx, shot: TimelineEvent) -> bool:

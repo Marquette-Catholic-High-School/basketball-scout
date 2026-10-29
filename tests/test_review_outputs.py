@@ -95,7 +95,10 @@ def test_fallback_guess_does_not_take_a_player_from_a_track_that_read_his_number
     result = _assign([a, b, c], rosters)
     assert result[1].player_id == "scouted-3"
     assert (result[3].player_id, result[3].method) == ("scouted-8", "exact")
-    assert (result[2].player_id, result[2].method, result[2].jersey) == (None, "unrostered", "3")
+    # No jersey for B: "3" is A's roster number, and a second "#3" line would be a player who does not exist.
+    assert (result[2].player_id, result[2].method, result[2].jersey, result[2].best_read) == (
+        None, "unrostered", None, "3",
+    )  # fmt: skip
 
 
 # ---------------------------------------------------------------------------
