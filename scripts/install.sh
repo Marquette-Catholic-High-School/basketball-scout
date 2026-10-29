@@ -725,6 +725,7 @@ install_packages() {
     fi
   done
   if [[ -z $missing ]]; then
+    # shellcheck disable=SC2086  # $packages is a space-separated list, split on purpose
     ok "Already installed:$(printf ' %s' $packages)"
     return 0
   fi

@@ -134,10 +134,11 @@ console.log(JSON.stringify({ loaded, again, otherTeam }));
     assert out["otherTeam"] == {"note": "1 unsaved change", "saveDisabled": False, "changed": [7]}
 
 
-def test_keep_team_names_no_side_and_shows_back_as_keep_team(tmp_path):
-    """The "keep team" choice sent the side the analysis showed, so once saved it read back
-    as that team's unknown player. It names no side now: the server takes the track's own
-    team."""
+def test_keep_team_sends_the_team_shown_and_reads_back_as_that_teams_unknown_player(tmp_path):
+    """README (Rosters and jersey matching): "keep team" keeps the team the table shows, so it
+    sends that side (round four; round three sent none, and the server then took the
+    tracker's team). Saved, it reads back as that team's unknown player, the same choice:
+    nothing is pending."""
     out = run_page(
         tmp_path,
         "roster.html",
@@ -153,8 +154,8 @@ showTracks(""); // draw the table again from the saved override
 console.log(JSON.stringify({{ trackPuts, shown: shown(7), ...pending(), navigatedTo: page.window.navigatedTo || null }}));
 """,
     )
-    assert out["trackPuts"] == [{"track_id": 7, "player_id": None, "side": None, "ignore": False}]
-    assert out["shown"] == "Unknown player (keep team)"
+    assert out["trackPuts"] == [{"track_id": 7, "player_id": None, "side": "scouted", "ignore": False}]
+    assert out["shown"] == "Unknown player (Central)"
     assert (out["note"], out["saveDisabled"], out["changed"]) == ("", True, [])
     assert out["navigatedTo"] is None  # the re-run did not start (409): the page stays
 

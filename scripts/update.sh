@@ -427,6 +427,7 @@ pull_code() {
   NEW_HEAD=$(git_user rev-parse HEAD)
   # The files on disk changed (OLD_HEAD), or the services run another version (RUNNING_HEAD):
   # either way they need a restart.
+  # shellcheck disable=SC2055  # || on purpose: a difference from either one counts
   if [[ $NEW_HEAD != "$RUNNING_HEAD" || $NEW_HEAD != "$OLD_HEAD" ]]; then
     CODE_CHANGED=1
   fi

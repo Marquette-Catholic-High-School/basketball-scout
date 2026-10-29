@@ -1,7 +1,7 @@
 // Roster page: per-team roster import (CSV/XLSX) and editing, plus manual fixes for the
 // film's jersey-to-player assignments (track overrides) and "Save & re-run analysis".
 
-import { api, gamePath } from "./api.js";
+import { api, gamePath, isJobActive, jobPath, pollJob } from "./api.js";
 import { applyTeamColors } from "./colors.js";
 import { byId, clearError, el, formatBytes, formatPct, gameIdFromPath, notice, setChildren, show, showError, toast, withBusy } from "./ui.js";
 
@@ -26,16 +26,22 @@ const METHOD_LABELS = {
   exact: "Exact read", fuzzy: "Close read", partial: "Partial read", manual: "Set by you", unrostered: "Not on roster", none: "No readable jersey",
 };
 // "unrostered" with no jersey: the best read is a roster number, but the server never shows it
-// on a track that is not that player (another track is, or the reads were too split).
+// on a track that is not that player (another track is, the reads were too split, or a track
+// with no team read a number that is on both rosters).
 const UNCLEAR_MATCH = "Unclear match";
-const UNCLEAR_MATCH_TITLE = "Its best read is a roster number, but another track was matched to that player "
-  + "or the readings were too split to be sure. Assign it yourself if you know who it is.";
+const UNCLEAR_MATCH_TITLE = "Its best read is a roster number, but another track was matched to that player, "
+  + "the readings were too split to be sure, or both rosters have that number and the track has no team. "
+  + "Assign it yourself if you know who it is.";
 const IMPORT_EXTENSIONS = [".csv", ".tsv", ".txt", ".xlsx"];
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 const IGNORE = "__ignore";
 const UNKNOWN = "__none";
+const ANALYSIS_POLL_MS = 5000; // while a full analysis runs, check this often whether it has finished
+const WAIT_TITLE = "Wait for the film analysis to finish";
 
-const state = { game: null, editors: {}, tracks: [], overrides: new Map(), pending: new Map() };
+// analyzing: the ANALYZE job queued or running. It numbers the tracks again and clears their
+// assignments, so the server takes none meanwhile (409) and the page locks them.
+const state = { game: null, editors: {}, tracks: [], overrides: new Map(), pending: new Map(), analyzing: null };
 
 // ---------------------------------------------------------------------------
 // Roster editor (one per team)
@@ -270,7 +276,10 @@ function teamName(side) {
   return state.editors[side]?.teamInput.value || SIDE_TITLES[side];
 }
 
-/** The choice an override stands for: "scouted:" is the scouted team's unknown player, UNKNOWN keeps the track's team. */
+/**
+ * The choice an override stands for: "scouted:" is the scouted team's unknown player; UNKNOWN (keep team)
+ * is one that names no side, as "keep team" sends for a track the table shows with no team.
+ */
 function overrideValue(override) {
   if (!override) return "";
   if (override.ignore) return IGNORE;
@@ -283,6 +292,15 @@ function overrideValue(override) {
 
 function currentValue(trackId) {
   return state.pending.has(trackId) ? state.pending.get(trackId) : overrideValue(state.overrides.get(trackId));
+}
+
+/** Saving this choice would change nothing: it is the saved choice, or it sends the override already saved. */
+function unchanged(trackId, value) {
+  const saved = state.overrides.get(trackId);
+  if (value === overrideValue(saved)) return true;
+  if (!saved || value === "") return false;
+  const body = overrideBody(trackId, value); // e.g. "keep team" for a track saved as its team's unknown player
+  return body.ignore === Boolean(saved.ignore) && body.player_id === (saved.player_id ?? null) && body.side === (saved.side ?? null);
 }
 
 /** One <select> with every choice; cloned for each row. Each team starts with its unknown player. */
@@ -342,6 +360,7 @@ function renderTracks() {
     select.dataset.track = String(a.track_id);
     select.setAttribute("aria-label", `Assign track ${a.track_id}`);
     select.value = currentValue(a.track_id);
+    select.disabled = Boolean(state.analyzing);
     return el("tr", { class: state.pending.has(a.track_id) ? "changed" : null, "data-track": String(a.track_id) },
       el("th", { scope: "row" }, `T${a.track_id}`, a.role !== "player" ? el("span", { class: "badge", text: a.role }) : null),
       el("td", {}, a.side ? el("span", { class: `chip chip-${a.side}`, text: state.editors[a.side]?.teamInput.value || a.side }) : "–"),
@@ -361,15 +380,17 @@ function renderTracks() {
 
 function updatePendingNote() {
   const n = state.pending.size;
+  const save = byId("tracks-save");
   byId("tracks-unsaved").textContent = n ? `${n} unsaved change${n === 1 ? "" : "s"}` : "";
-  byId("tracks-save").disabled = n === 0;
+  // Not while it runs (its roster save redraws the table; withBusy enables it when done) or a full analysis does.
+  save.disabled = n === 0 || Boolean(state.analyzing) || save.getAttribute("aria-busy") === "true";
 }
 
 function onAssignmentChange(e) {
   const select = e.target.closest("select[data-track]");
   if (!select) return;
   const trackId = Number(select.dataset.track);
-  if (select.value === overrideValue(state.overrides.get(trackId))) state.pending.delete(trackId);
+  if (unchanged(trackId, select.value)) state.pending.delete(trackId);
   else state.pending.set(trackId, select.value);
   select.closest("tr").classList.toggle("changed", state.pending.has(trackId));
   updatePendingNote();
@@ -377,9 +398,11 @@ function onAssignmentChange(e) {
 
 function overrideBody(trackId, value) {
   const assignment = state.tracks.find((a) => a.track_id === trackId);
-  if (value === IGNORE) return { track_id: trackId, player_id: null, side: assignment?.side ?? null, ignore: true };
-  // "Keep team" names no side: the server takes the track's own team (none for a referee).
-  if (value === UNKNOWN) return { track_id: trackId, player_id: null, side: null, ignore: false };
+  const shownSide = assignment?.side ?? null; // the team the table shows (none for a referee)
+  if (value === IGNORE) return { track_id: trackId, player_id: null, side: shownSide, ignore: true };
+  // "Keep team" keeps the team the table shows. With no side the server takes the tracker's team,
+  // which a jersey match or an earlier choice may have changed.
+  if (value === UNKNOWN) return { track_id: trackId, player_id: null, side: shownSide, ignore: false };
   const [side, playerId] = value.split(":");
   return { track_id: trackId, player_id: playerId || null, side, ignore: false }; // "other:" = their unknown player
 }
@@ -408,7 +431,8 @@ async function saveTracksAndRerun() {
     await rerunAnalysis();
   } catch (err) {
     showError(byId("tracks-error"), err);
-    renderTracks();
+    renderTracks(); // the choices not saved yet stay pending
+    if (err.status === 409) checkForAnalysis(); // a full analysis started after the page loaded
   }
 }
 
@@ -421,7 +445,92 @@ async function rerunAnalysis() {
     showError(byId("page-error"), err, [el("a", { class: "btn", href: gameUrl, text: "Open the game page" })]);
     byId("page-error").scrollIntoView({ block: "center" });
     toast("Your changes are saved, but the analysis did not start.", "error");
+    if (err.status === 409) checkForAnalysis(); // an analysis is running: a full one clears the assignments
   }
+}
+
+/** withBusy enables its button again when the action ends; not while a full analysis runs (it may have just started). */
+async function busyUnlessAnalyzing(button, label, action) {
+  await withBusy(button, label, action);
+  if (state.analyzing) button.disabled = true;
+}
+
+// ---------------------------------------------------------------------------
+// A full analysis (ANALYZE) running
+// ---------------------------------------------------------------------------
+
+/** An ANALYZE queued or running: its new run numbers the tracks again and clears their assignments. */
+const isFullAnalysis = (job) => job?.kind === "analyze" && isJobActive(job);
+
+/** The ANALYZE put its new tracking in place (succeeded, or failed after that: the server's rule for its retry). */
+const tracksRenumbered = (job) => job.kind === "analyze"
+  && (job.status === "succeeded" || (job.status === "failed" && ["analyzing", "reporting"].includes(job.stage)));
+
+/** Lock the assignment selects, Save & re-run and Re-run analysis while a full analysis runs. */
+function lockAssignments() {
+  const locked = Boolean(state.analyzing);
+  for (const select of byId("tracks-body").querySelectorAll("select[data-track]")) select.disabled = locked;
+  byId("rerun-btn").disabled = locked;
+  for (const id of ["tracks-save", "rerun-btn"]) {
+    if (locked) byId(id).title = WAIT_TITLE;
+    else byId(id).removeAttribute("title");
+  }
+  updatePendingNote(); // Save & re-run: enabled again when there are unsaved choices
+}
+
+/**
+ * Track assignments wait for a full analysis: say so by the tracks table, lock them and poll the job.
+ * When it ends, load the game and its tracks again (after a first analysis the table appears).
+ * Rosters can be edited and saved meanwhile.
+ */
+async function waitForAnalysis(job) {
+  if (state.analyzing) return;
+  state.analyzing = job;
+  const wait = byId("tracks-wait");
+  setChildren(wait, notice("info", "Film analysis in progress",
+    "Track assignments can be made once it has finished: a full analysis numbers the players' tracks again and clears their assignments.",
+    "You can keep editing the rosters. This table updates when the analysis is done."));
+  show(wait, true);
+  lockAssignments();
+  let final;
+  try {
+    final = await pollJob(job.id, null, { intervalMs: ANALYSIS_POLL_MS });
+  } catch {
+    const box = notice("warning", "Stopped checking the film analysis",
+      "The page could not find out whether the analysis has finished, so track assignments stay locked.", "Reload the page to check again.");
+    box.append(el("div", { class: "notice-actions" }, el("button", { type: "button", text: "Reload the page", onClick: () => window.location.reload() })));
+    setChildren(wait, box);
+    return;
+  }
+  const game = await api.get(gamePath(gameId)).catch(() => null);
+  let dropped = false;
+  // Installing the new run deletes the earlier run's analysis first, so a game left without one has none of the
+  // earlier run's tracks to show, also when the job failed before its stage said it had installed.
+  if (tracksRenumbered(final) || (game && !game.has_analysis)) {
+    // The earlier run's track ids are gone, with their assignments and the choices not saved yet.
+    dropped = state.pending.size > 0;
+    state.pending.clear();
+    state.tracks = [];
+    state.overrides = new Map();
+    setChildren(byId("tracks-body"));
+    show(byId("tracks"), false);
+  }
+  if (game) state.game = game;
+  state.analyzing = null;
+  clearError(byId("tracks-error")); // the 409 that started the wait, if one did
+  clearError(byId("page-error")); // a refused Re-run analysis, if one started it
+  setChildren(wait, dropped ? notice("info", "Film analysis finished",
+    "It numbered the players' tracks again, so your unsaved track choices were dropped. Make them again in the new table.") : null);
+  show(wait, dropped);
+  lockAssignments();
+  if (state.game.has_analysis) await loadTracks();
+}
+
+/** A track change or the re-run was refused (409): if a full analysis started after the page loaded, wait for it. */
+async function checkForAnalysis() {
+  const game = await api.get(gamePath(gameId)).catch(() => null);
+  const job = game?.latest_job_id ? await api.get(jobPath(game.latest_job_id)).catch(() => null) : null;
+  if (isFullAnalysis(job)) await waitForAnalysis(job);
 }
 
 async function loadTracks() {
@@ -455,8 +564,8 @@ async function init() {
   byId("nav-game").href = gameUrl;
   byId("tracks-filter").addEventListener("change", renderTracks);
   byId("tracks-body").addEventListener("change", onAssignmentChange);
-  byId("tracks-save").addEventListener("click", (e) => withBusy(e.currentTarget, "Saving…", saveTracksAndRerun));
-  byId("rerun-btn").addEventListener("click", (e) => withBusy(e.currentTarget, "Starting…", rerunAnalysis));
+  byId("tracks-save").addEventListener("click", (e) => busyUnlessAnalyzing(e.currentTarget, "Saving…", saveTracksAndRerun));
+  byId("rerun-btn").addEventListener("click", (e) => busyUnlessAnalyzing(e.currentTarget, "Starting…", rerunAnalysis));
   window.addEventListener("beforeunload", (e) => {
     if (state.pending.size || Object.values(state.editors).some((ed) => ed.dirty)) {
       e.preventDefault();
@@ -485,7 +594,11 @@ async function init() {
     showError(byId("page-error"), err, [el("a", { class: "btn", href: "/", text: "Back to games" })]);
     return;
   }
+  // A full analysis running numbers the tracks again: assignments wait until it has finished.
+  const latest = state.game.latest_job_id ? api.get(jobPath(state.game.latest_job_id)).catch(() => null) : null;
   if (state.game.has_analysis) await loadTracks();
+  const job = await latest;
+  if (isFullAnalysis(job)) waitForAnalysis(job); // polls until the analysis ends
   if (window.location.hash === "#tracks" && !byId("tracks").hidden) byId("tracks").scrollIntoView();
 }
 

@@ -1,6 +1,6 @@
 // Job panel on the game page: live progress of the latest analysis job (polled every
 // 3 s), Cancel, a notice when no worker is there to take a queued job, and a friendly
-// error with Retry when a job fails.
+// error with Retry (Re-run analysis once the GPU results are saved) when a job fails.
 
 import { api, gamePath, isJobActive, jobPath, pollJob } from "./api.js";
 import { jobKindLabel, jobStageText, workerWarning } from "./labels.js";
@@ -158,8 +158,11 @@ export class JobPanel {
       return;
     }
     const actions = [];
-    if (job.error?.retryable !== false) {
-      actions.push(el("button", { type: "button", class: "btn-primary", text: "Retry", onClick: (e) => this.retry(job, e.currentTarget) }));
+    // An ANALYZE that failed after the GPU results were saved is retried as a REANALYZE (scout/api/jobs.py),
+    // offered also for an error that is not retryable: once the cause is fixed, that cheap re-run is what helps.
+    const rerun = job.kind === "analyze" && ["analyzing", "reporting"].includes(job.stage);
+    if (rerun || job.error?.retryable !== false) {
+      actions.push(el("button", { type: "button", class: "btn-primary", text: rerun ? "Re-run analysis" : "Retry", onClick: (e) => this.retry(job, e.currentTarget) }));
     }
     const info = job.error || { title: `${jobKindLabel(job.kind)} failed`, message: job.message || "The job stopped with an error." };
     setChildren(this.panel, errorBox({ info }, actions),

@@ -191,12 +191,13 @@ def validate_probe(probe: VideoProbe, *, max_duration_s: float | None) -> None:
 
 def _minutes(*seconds: float) -> list[str]:
     """Durations in minutes, with as many decimals (up to 2) as it takes to tell them apart;
-    closer than that (about 0.3 s), in minutes and seconds."""
+    closer than that (about 0.3 s), in minutes and seconds with up to 6 decimals (the limit,
+    minutes times 60, need not be a whole number of milliseconds)."""
     for digits in (0, 1, 2):
         texts = [f"{s / 60:.{digits}f} minutes" for s in seconds]
         if len(set(texts)) == len(texts):
             return texts
-    for digits in (1, 2, 3):
+    for digits in range(1, 7):
         parts = [divmod(round(s, digits), 60) for s in seconds]
         texts = [f"{whole:.0f} minutes {rest:.{digits}f} seconds" for whole, rest in parts]
         if len(set(texts)) == len(texts):

@@ -545,14 +545,14 @@ def test_report_jobs_from_the_generic_jobs_route_get_the_report_limits(auth_head
     [
         ("GET", "/api/docs"),
         ("GET", "/api/openapi.json"),
-        ("HEAD", "/api/health/live"),
+        ("HEAD", "/api/health"),  # HEAD /api/health/live is open too since the fourth review
         ("OPTIONS", "/api/games"),
         ("GET", "/api/health/live/"),
         ("GET", "/static/index.html"),
         ("GET", "/api/games/g_123/export/fastscout-notes"),
     ],
 )
-def test_everything_but_get_health_live_needs_sign_in(method, path):
+def test_everything_but_the_liveness_probe_needs_sign_in(method, path):
     with TestClient(create_app()) as c:
         assert c.request(method, path).status_code == 401
 

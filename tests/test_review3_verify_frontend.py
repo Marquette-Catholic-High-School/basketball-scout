@@ -1,8 +1,9 @@
 """Regression tests from the verification of the third frontend review round.
 
 They run the real Roster page in the node fake-DOM harness of ``tests/test_review_frontend.py``
-with the routes of ``tests/test_review3_frontend.py``. The fake DOM's ``click()`` does not
-skip a disabled button, so a test asserts the button is enabled before it clicks.
+with the routes of ``tests/test_review3_frontend.py``. Since round four the fake DOM's
+``click()`` skips a disabled control, as a browser does; a test still asserts the button is
+enabled before it clicks, so a failure says why.
 """
 
 from __future__ import annotations

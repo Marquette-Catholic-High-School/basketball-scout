@@ -462,9 +462,10 @@ player when it is wrong, choose a team's **Unknown player** when you know the te
 not the player (also for a track the tracker took for a referee), or mark referees and
 spectators as **Not a player**, then **Save & re-run analysis** (about a minute, no
 GPU). **Unknown player (keep team)** keeps the team the table shows. **Unclear match**
-means the best read is a roster number, but another track was
-matched to that player or the readings were too split to be sure: assign it yourself if
-you know who it is. The FastScout name column sets the exact spelling FastScout expects.
+means the best read is a roster number, but another track was matched to that player,
+the readings were too split to be sure, or both rosters have that number and the track
+has no team: assign it yourself if you know who it is. The FastScout name column sets
+the exact spelling FastScout expects.
 
 ### 3. Confirm the team colours
 
@@ -488,9 +489,10 @@ map the court, the Data quality tab warns that free throws were not detected
 warning or at the top of the game page; it sends the film to the GPU again, with your
 calibration) instead of **Re-run analysis**, which only redoes the stats on this server.
 A Full re-analysis numbers the players' tracks again, so it clears the track
-assignments you made on the Roster page; the Roster page takes new ones once it has
-finished. Cancelling it before its new results are in place keeps the earlier
-results. A new film clears the calibration, since it was clicked on the old film.
+assignments you made on the Roster page; the Roster page locks them while it runs and
+takes new ones once it has finished (choices you had not saved are dropped once its
+new tracks are in place). Cancelling it before its new results are in place keeps the
+earlier results. A new film clears the calibration, since it was clicked on the old film.
 
 ### 5. Reading the results
 
@@ -713,7 +715,7 @@ Every error shown in the app has a code. Find it here:
 | `ANALYSIS_FAILED` | Building the box score or plays failed. | Click **Re-run analysis**. If it repeats, send the job id and `journalctl -u basketball-scout-worker -n 200` to IT. |
 | `ANALYSIS_NOT_READY` | The game has not been analysed yet. | Wait for the job to finish. |
 | `CALIBRATION_INVALID` | The clicked points do not give a usable court mapping. | Click at least 4 landmarks spread over the court, not all on one line. |
-| `CONFIG_INVALID` | A settings file in `config/` (`play_rules.yaml`, `fastscout_columns.yaml`) has a typo or a wrong value type. | The message names the setting. Fix it, or restore the shipped file: `sudo -u scout git -C /opt/basketball-scout checkout -- config/<file>`. |
+| `CONFIG_INVALID` | A settings file in `config/` (`play_rules.yaml`, `fastscout_columns.yaml`) has a typo or a wrong value type. | The message names the setting. Fix it, or restore the shipped file: `sudo -u scout git -C /opt/basketball-scout checkout -- config/<file>`. If the analysis failed, click **Re-run analysis** on the game page afterwards (no GPU). |
 | `ROSTER_PARSE_FAILED` | No players could be read from the roster file. | Use a header row with a number column (#, No, Number) and a name column, or start from the roster template. |
 | `ROSTER_UNSUPPORTED_FILE` | Not a `.csv`, `.tsv`, `.txt` or `.xlsx` file. | In Excel use File > Save As > Excel Workbook (.xlsx) or CSV. |
 | `REPORT_NOT_CONFIGURED` | No Anthropic API key. | Add `ANTHROPIC_API_KEY` to `.env` and restart the worker. |

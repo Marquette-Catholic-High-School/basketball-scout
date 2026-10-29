@@ -23,9 +23,16 @@ WORKER_STALE_AFTER_S = 120.0
 router = APIRouter(tags=["system"])
 
 
+# HEAD has a route of its own, so the OpenAPI operation ids stay unique. The GET route comes first (the
+# lower decorator registers first): a 405 on this path names the methods of the first route.
+@router.head("/health/live")
 @router.get("/health/live")
 def live() -> dict[str, str]:
-    """Liveness probe (no auth, no database): the web process is up."""
+    """Liveness probe (no auth, no database): the web process is up.
+
+    Also answers HEAD, which several hosted uptime monitors send: the same headers as GET,
+    and the server (uvicorn) leaves out the body.
+    """
     return {"status": "ok"}
 
 

@@ -93,10 +93,10 @@ jersey_similarity(read, jersey) -> (score, method)
 jersey_votes(reads, *, min_conf=0.2) -> dict[str, float]
 match_votes(votes, roster, *, accept=0.5) -> (RosterPlayer | None, score, method)
 assign_tracks(tracking, team_map, rosters, overrides=None) -> list[TrackAssignment]
-# A track that is no roster player never shows a roster number (another track is that player, or
-# its votes were too split): no jersey, its stats go to the team line. Any override but ignore
-# makes the track a player, also one the pipeline called a referee (no jersey unless the
-# override names a player).
+# A track that is no roster player never shows a roster number (another track is that player, its
+# votes were too split, or it has no team and both rosters have that number): no jersey, its stats
+# go to the team line. Any override but ignore makes the track a player, also one the pipeline
+# called a referee (no jersey unless the override names a player).
 match_name(query, roster, *, threshold=80) -> (RosterPlayer | None, score)
 
 # scout.export.fastscout   (roster= defaults to the game's current roster in the database)
@@ -170,18 +170,21 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   (`external_id`, e.g. a row an older version left `queued`): that job, like a running
   one, gets `cancel_requested=1`, and the worker that claims it cancels the processor
   call and marks it `cancelled`, also when its attempts ran out (a cancel wins over
-  `WORKER_LOST`). Cancel is also checked between stages and while a failed film upload
-  waits to be retried.
+  `WORKER_LOST`). The exception is an ANALYZE whose worker died after installing its
+  new results (claimed at `analyzing` or `reporting`, `tracking.json.gz` on disk) while
+  it has attempts left: the claiming worker finishes the analysis from the installed
+  results, without downloading them again, as the next bullet says. Cancel is also
+  checked between stages and while a failed film upload waits to be retried.
 * A cancel stops an ANALYZE only until its new results are installed: a results
   download in progress is thrown away, so the game keeps its earlier tracking,
   overlay, analysis and track overrides. Once the results are installed (stage
   `analyzing`), the analysis runs to the end and the job ends `succeeded`; a cancel then
   only skips the automatic report. Either way a job warning says so: "Cancelled after
   the new GPU results were in place: the analysis was finished, the scouting report was
-  skipped." (without the report clause when no report was due). A GPU poll or a
-  results download that fails after the coach asked to cancel ends the job
-  `cancelled`, not `failed`; when another worker has taken the job over meanwhile, the
-  worker steps aside instead.
+  skipped." (without the report clause when no report was due, or when Claude was
+  already writing the report: that report is kept). A GPU poll or a results download
+  that fails after the coach asked to cancel ends the job `cancelled`, not `failed`;
+  when another worker has taken the job over meanwhile, the worker steps aside instead.
 * A film upload to the Modal volume that fails is tried twice more, after 10 s and
   30 s (not after an auth error, a film that is gone, or a cancelled upload). A cancel
   during those waits ends the job as `cancelled` within a second; a graceful stop hands
@@ -289,8 +292,10 @@ Extra rules beyond the table:
   ones are installed. When the worker installs the new tracking over the earlier
   run's, it clears the track overrides (the new run may number its tracks
   differently) and deletes the earlier run's `analysis.json` (`has_analysis` becomes
-  false until the new analysis is saved, about a minute later), so no page shows the
-  earlier run's track ids over the new tracking, also when that analysis fails;
+  false until the new analysis is saved, about a minute later), so no page loaded after
+  the install shows the earlier run's track ids over the new tracking, also when that
+  analysis fails (a Roster page opened before the Full re-analysis started keeps its
+  table until it is reloaded, or until a save is refused while the analysis runs);
   `team_id_map` stays, because OpenHoopVision's team ids are its dark/light jersey
   clusters.
 * **Uploads**: starting an upload aborts the game's open uploads that have had no data

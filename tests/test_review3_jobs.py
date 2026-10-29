@@ -150,7 +150,9 @@ def test_the_overlay_flag_follows_the_installed_files_at_once(
     filmed_game, queue, fakes, overlay_before, new_overlay, ending  # noqa: F811
 ):
     """The flag was only written with a saved analysis. A job that ended after installing a new run
-    left it true with the old overlay deleted (the Annotated player broke) or false with a new one."""
+    left it true with the old overlay deleted (the Annotated player broke) or false with a new one.
+    (Since round 4 a cancel during the download ends the job before the install: the earlier run's
+    overlay and flag stay.)"""
     _analysed(filmed_game, overlay=overlay_before)
     job = submit_job(filmed_game.id, JobKind.ANALYZE, queue=queue)
     gpu = FakeProcessor(annotated=new_overlay)
@@ -169,10 +171,12 @@ def test_the_overlay_flag_follows_the_installed_files_at_once(
     done = db.get_job(job.id)
     if ending == "analysis fails":
         assert (done.status, done.stage) == (JobStatus.FAILED, JobStage.ANALYZING)
+        in_place = new_overlay
     else:
         assert done.status == JobStatus.CANCELLED
-    assert storage.annotated_video_path(filmed_game.id).exists() is new_overlay
-    assert db.get_game(filmed_game.id).has_annotated_video is new_overlay
+        in_place = overlay_before
+    assert storage.annotated_video_path(filmed_game.id).exists() is in_place
+    assert db.get_game(filmed_game.id).has_annotated_video is in_place
 
 
 # --- the wait limit while Modal cannot be reached -----------------------------------------------

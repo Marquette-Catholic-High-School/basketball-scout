@@ -506,7 +506,9 @@ def test_architecture_documents_every_api_route():
     def norm(text: str) -> str:
         return re.sub(r"\{[^}]*\}", "{}", text)
 
-    doc = norm((DOCS / "ARCHITECTURE.md").read_text())
+    # "`GET` / `HEAD /api/health/live`" documents both methods of one path.
+    doc = re.sub(r"`([A-Z]+)` / `([A-Z]+) (/[^`\s]+)`", r"`\1 \3` / `\2 \3`", (DOCS / "ARCHITECTURE.md").read_text())
+    doc = norm(doc)
     missing = [
         f"{method.upper()} {path}"
         for path, operations in create_app().openapi()["paths"].items()
@@ -547,9 +549,10 @@ def test_tracking_schema_lists_every_pipeline_error_code_and_internal_attrs():
         "removes the key",
         "`Game.has_video` is true when a film file is stored on this server",
         "`HealthStatus.max_upload_bytes`",
-        "Raising `SCOUT_MODAL_TIMEOUT_S` above 8 hours also requires\nraising `SCOUT_MODAL_MAX_WAIT_HOURS`",
+        "Raising `SCOUT_MODAL_TIMEOUT_S` above 8 hours also requires raising `SCOUT_MODAL_MAX_WAIT_HOURS`",
     ):
-        assert needle in text, f"docs/TRACKING_SCHEMA.md lacks {needle!r}"
+        # Wherever the paragraph wraps its lines.
+        assert " ".join(needle.split()) in " ".join(text.split()), f"docs/TRACKING_SCHEMA.md lacks {needle!r}"
 
 
 def test_modal_timeout_advice_mentions_the_worker_wait_limit():

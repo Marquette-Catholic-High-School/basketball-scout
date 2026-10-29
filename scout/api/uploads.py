@@ -288,12 +288,13 @@ def _check_duration(part: Path, upload: UploadSession, settings: Settings) -> No
 
 def _durations(*seconds: float) -> list[str]:
     """Durations in minutes, with as many decimals (up to 2) as it takes to tell them apart;
-    closer than that, in minutes and seconds (as the GPU worker words VIDEO_TOO_LONG)."""
+    closer than that, in minutes and seconds, down to the microsecond ffprobe reports (as the
+    GPU worker words VIDEO_TOO_LONG)."""
     for digits in (0, 1, 2):
         texts = [f"{s / 60:.{digits}f} minutes" for s in seconds]
         if len(set(texts)) == len(texts):
             return texts
-    for digits in (1, 2, 3):
+    for digits in range(1, 7):
         parts = [divmod(round(s, digits), 60) for s in seconds]
         texts = [f"{whole:.0f} minutes {rest:.{digits}f} seconds" for whole, rest in parts]
         if len(set(texts)) == len(texts):

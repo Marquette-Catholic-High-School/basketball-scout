@@ -312,7 +312,8 @@ class Element extends Node {
   focus() { this.ownerDocument.activeElement = this; }
   blur() { if (this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body; }
   select() {}
-  click() { this.dispatchEvent(new FakeEvent("click")); }
+  // A browser ignores click() on a disabled control, as it ignores the coach's click.
+  click() { if (!this.disabled) this.dispatchEvent(new FakeEvent("click")); }
   scrollIntoView() {}
   getBoundingClientRect() {
     const r = this.rect || {};
@@ -842,7 +843,7 @@ gamePageRoutes(route, json, {
 });
 await import("./js/game.js");
 await settle();
-byId("variant-original").click();
+byId("variant-original").click(); // disabled (no original file): the click does nothing, as in a browser
 await settle();
 console.log(JSON.stringify({
   playerShown: !byId("player-main").hidden,

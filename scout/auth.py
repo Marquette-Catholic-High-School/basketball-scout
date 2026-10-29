@@ -1,8 +1,8 @@
 """HTTP Basic auth for the whole site, password hashing and a login throttle.
 
 Every request (pages, ``/static``, ``/api``) needs the coach's username and password,
-except ``GET /api/health/live`` so load balancers and uptime checks can probe the
-server. Browsers show their own sign-in box when they get the 401 challenge and then
+except ``GET`` / ``HEAD /api/health/live`` so load balancers and uptime checks can probe
+the server. Browsers show their own sign-in box when they get the 401 challenge and then
 remember the credentials for the rest of the session.
 
 Passwords can be configured two ways in ``.env``:
@@ -72,7 +72,7 @@ DEFAULT_ITERATIONS = 600_000
 SALT_BYTES = 16
 REALM = "Basketball Scout"
 CHALLENGE = f'Basic realm="{REALM}", charset="UTF-8"'
-PUBLIC_ROUTES = frozenset({("GET", "/api/health/live")})
+PUBLIC_ROUTES = frozenset({("GET", "/api/health/live"), ("HEAD", "/api/health/live")})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 NETWORK_MAX_FAILURES = 30  # per IPv6 /64 within the throttle window (see BasicAuthMiddleware)
 DEVICE_COOKIE = "scout_device"
@@ -374,7 +374,7 @@ class SameOriginMiddleware:
     a page on another website sent.
 
     The server name comes first (``HOST_NOT_ALLOWED``, see :meth:`_refused_host`), for
-    every request but ``GET /api/health/live``.
+    every request but ``GET`` / ``HEAD /api/health/live``.
 
     Current browsers label every request with ``Sec-Fetch-Site``; older ones send an
     ``Origin`` (or at least a ``Referer``) on a form POST. Any of these naming another

@@ -89,6 +89,13 @@ _DONE_MESSAGES = {
 }
 _GAME_STATUS_KINDS = frozenset({JobKind.ANALYZE, JobKind.REANALYZE})  # REPORT jobs never change game.status
 
+# Job warnings for a cancel that came after an ANALYZE installed its new results: too late to keep the
+# earlier run, so the analysis was finished (docs/ARCHITECTURE.md, "Job lifecycle").
+LATE_CANCEL_WARNING = "Cancelled after the new GPU results were in place: the analysis was finished."
+LATE_CANCEL_REPORT_SKIPPED_WARNING = (
+    "Cancelled after the new GPU results were in place: the analysis was finished, the scouting report was skipped."
+)
+
 
 class _Cancelled(Exception):
     """The coach cancelled the job (or deleted the game) while it was running."""
@@ -223,9 +230,13 @@ class Worker:
         }
         try:
             run.processor = self._processor_for(job)
-            if job.cancel_requested:  # before WORKER_LOST: the coach asked for a cancel, not a failure
+            out_of_attempts = job.attempts > job.max_attempts
+            # Before WORKER_LOST: the coach asked for a cancel, not a failure. An ANALYZE whose results were
+            # installed before its worker died finishes its analysis instead (_run_analyze), unless its
+            # workers keep dying (maybe the analysis is what kills them).
+            if job.cancel_requested and (out_of_attempts or not _installed_before_claim(job)):
                 raise _Cancelled
-            if job.attempts > job.max_attempts:
+            if out_of_attempts:
                 raise ScoutError(ErrorCode.WORKER_LOST)
             steps[job.kind](run)
         except _Paused:
@@ -248,6 +259,36 @@ class Worker:
     def _run_analyze(self, run: _Run) -> None:
         job = run.job
         self._set_game_status(job.game_id, GameStatus.PROCESSING, error=None)
+        try:
+            self._fetch_results(run)
+        except _Cancelled:
+            if not _installed_before_claim(job):
+                raise
+            # Its worker died after installing this very run: too late for a cancel to keep the earlier
+            # one, so the analysis runs from the installed results (a new download of them is thrown away).
+            self._check_owner(job.id)  # deleted with its game: nothing left to finish
+            shutil.rmtree(storage.incoming_dir(job.game_id), ignore_errors=True)
+            run.gpu_finished = True  # it finished before the install
+        # With the new run's tracking in place, stopping would leave the game without an analysis of it:
+        # a cancel no longer stops the analysis, it only skips the report.
+        analysis = self._analyze(run, PROGRESS_ANALYZING, cancellable=False)
+        report_due = self.settings.auto_report and self.settings.claude_configured
+        try:
+            self._check_cancel(job.id)  # taken over during the analysis: the new owner finishes the job
+            if report_due:
+                self._report_as_warning(run, analysis, PROGRESS_REPORTING)
+                # Taken over while Claude wrote it: as above. Cancelled meanwhile: too late to skip it.
+                if self._check_owner(job.id).cancel_requested:
+                    self._add_warnings(run, [LATE_CANCEL_WARNING])
+        except _Cancelled:  # here, or at the report's own check just before it started
+            self._check_owner(job.id)  # deleted with its game: nothing left to finish
+            self._add_warnings(run, [LATE_CANCEL_REPORT_SKIPPED_WARNING if report_due else LATE_CANCEL_WARNING])
+
+    def _fetch_results(self, run: _Run) -> None:
+        """PREPARING .. DOWNLOADING, then the install: the GPU's new results in the game folder."""
+        job = run.job
+        if job.cancel_requested:  # claimed with one: process_job lets only a job installed before through
+            raise _Cancelled
         if run.handle is None:
             handle = self._submit(run)
         else:
@@ -257,11 +298,12 @@ class Worker:
         self._check_cancel(job.id)
         self._stage(job.id, JobStage.DOWNLOADING, PROGRESS_DOWNLOADING, "Downloading results from the GPU service")
         output = self._download(run, handle)
+        # The last point a cancel stops the job: the download is thrown away and the game keeps its earlier
+        # run. Taken over during the download: the new owner installs this run (maybe did already, and the
+        # coach has fixed the new run's tracks since).
+        self._check_cancel(job.id)
         self._install_outputs(job, output)
         self._add_warnings(run, output.warnings)
-        analysis = self._analyze(run, PROGRESS_ANALYZING)
-        if self.settings.auto_report and self.settings.claude_configured:
-            self._report_as_warning(run, analysis, PROGRESS_REPORTING)
 
     def _run_reanalyze(self, run: _Run) -> None:
         self._set_game_status(run.job.game_id, GameStatus.PROCESSING, error=None)
@@ -349,6 +391,8 @@ class Worker:
             if status.state != "running":
                 run.gpu_finished = True
                 if status.state == "failed":
+                    # Cancelled meanwhile: the job ends cancelled, not failed. Taken over: not ours to fail.
+                    self._check_cancel(job.id)
                     raise status.error or ScoutError(ErrorCode.PIPELINE_FAILED)
                 return status.result or {}
             self._check_cancel(job.id)  # also notices a deleted game before we write to its job
@@ -374,46 +418,62 @@ class Worker:
         incoming = storage.incoming_dir(job.game_id)
         incoming.mkdir(parents=True, exist_ok=True)
         try:
-            output = run.processor.fetch(handle, run.result, incoming)
+            return run.processor.fetch(handle, run.result, incoming)
         except Exception:
-            self._check_owner(job.id)  # taken over meanwhile: not ours to fail (its owner downloads it)
+            # Cancelled meanwhile: the job ends cancelled, not failed. Taken over: not ours to fail (its
+            # owner downloads it).
+            self._check_cancel(job.id)
             raise
-        # Our lease ran out during the download and another worker took the job over: it installs this
-        # run (maybe did already, and the coach has fixed the new run's tracks since).
-        self._check_owner(job.id)
-        return output
 
     def _install_outputs(self, job: Job, output: ProcessorOutput) -> None:
-        """Move the downloaded results to where the rest of the app looks for them."""
+        """Move the downloaded results to where the rest of the app looks for them.
+
+        What belongs to the earlier run (its analysis, track overrides and overlay) goes before the new
+        tracking comes in, so a worker killed between two steps never leaves the new tracking with any of it.
+        """
         game_id = job.game_id
         if not output.tracking_path.exists():  # never fall back to a tracking file from an earlier run
             raise ScoutError(ErrorCode.TRACKING_RESULT_INVALID, "The GPU results did not include a tracking file.")
         tracking = storage.tracking_path(game_id)
         # ``job`` is the job as claimed: one claimed at ANALYZING or REPORTING installed this very run before
-        # its worker died, and cleared the overrides then; the coach may have fixed the new run's tracks since.
+        # its worker died, and cleared the overrides then; the coach may have fixed the new run's tracks since,
+        # and any analysis on disk is the new run's.
         replaces_earlier_run = tracking.exists() and job.stage not in (JobStage.ANALYZING, JobStage.REPORTING)
-        _move_into_place(output.tracking_path, tracking)
         if replaces_earlier_run:
-            # The new run numbers its tracks anew, so "track 12 is #23" would now name someone else.
+            # The new run numbers its tracks anew, so "track 12 is #23" would now name someone else, and the
+            # earlier analysis would show its track ids over the new tracking (also when the new analysis
+            # fails). The analysis goes first, so it never stays without the fixes it was built with.
             # team_id_map stays: OpenHoopVision's team ids are its dark/light jersey clusters.
+            storage.analysis_path(game_id).unlink(missing_ok=True)
             cleared = db.clear_track_overrides(game_id)
-            logger.info("Game %s: new tracking installed; cleared %d track override(s)", game_id, cleared)
+            logger.info("Game %s: removed the earlier run's analysis and %d track override(s)", game_id, cleared)
         annotated = storage.annotated_video_path(game_id)
-        if output.annotated_video_path is None:
+        overlay = output.annotated_video_path
+        if overlay is None or overlay.resolve() != annotated.resolve():
             annotated.unlink(missing_ok=True)  # an overlay from an earlier run would not match the new tracks
-        else:
-            _move_into_place(output.annotated_video_path, annotated)
+        _move_into_place(output.tracking_path, tracking)
+        if overlay is not None:
+            _move_into_place(overlay, annotated)
         # At once, not when the analysis is saved: a job that fails after this point must not leave
-        # the flag pointing at a removed overlay, or hide a new one.
-        self._update_game(game_id, has_annotated_video=annotated.exists())
+        # the flags pointing at removed files, or hide a new overlay.
+        changes: dict[str, Any] = {"has_annotated_video": annotated.exists()}
+        if replaces_earlier_run:
+            changes["has_analysis"] = False  # until the new analysis is saved
+        self._update_game(game_id, **changes)
         shutil.rmtree(storage.incoming_dir(game_id), ignore_errors=True)  # with what a download cut short left there
 
     # --- shared steps ---------------------------------------------------------
 
-    def _analyze(self, run: _Run, progress: float) -> GameAnalysis:
-        """ANALYZING: tracking.json.gz + rosters + track overrides -> analysis.json; the game becomes READY."""
+    def _analyze(self, run: _Run, progress: float, *, cancellable: bool = True) -> GameAnalysis:
+        """ANALYZING: tracking.json.gz + rosters + track overrides -> analysis.json; the game becomes READY.
+
+        ``cancellable=False``: an ANALYZE that installed its new results runs the analysis despite a cancel.
+        """
         job = run.job
-        self._check_cancel(job.id)
+        if cancellable:
+            self._check_cancel(job.id)
+        else:
+            self._check_owner(job.id)
         tracking_file = storage.tracking_path(job.game_id)
         if not tracking_file.exists():
             raise ScoutError(
@@ -510,22 +570,35 @@ class Worker:
 
     def _finish_failed(self, run: _Run, error: ScoutError) -> None:
         job = run.job
+        if self._taken_over(job.id):  # e.g. our analysis broke after the machine slept: its new owner runs it
+            logger.warning("Job %s: %s after another worker took it over; leaving it to them", job.id, error)
+            return
         logger.warning("Job %s failed: %s%s", job.id, error, f" ({error.detail})" if error.detail else "")
         self._release_remote(run, cancel=True)
+        self._discard_download(job)
         info = error.to_info()
         if job.kind in _GAME_STATUS_KINDS:
-            self._set_game_status(job.game_id, GameStatus.FAILED, error=info)
+            self._set_game_status(job.game_id, GameStatus.FAILED, error=info, **_file_flags(job.game_id))
         self._finish(job.id, status=JobStatus.FAILED, error=info, message=error.title, warnings=run.warnings)
 
     def _finish_cancelled(self, run: _Run) -> None:
         job = run.job
         logger.info("Job %s cancelled", job.id)
         self._release_remote(run, cancel=True)
+        self._discard_download(job)
         if job.kind in _GAME_STATUS_KINDS:
             self._restore_game_status(job.game_id)
         self._finish(
             job.id, status=JobStatus.CANCELLED, stage=JobStage.DONE, message="Cancelled", warnings=run.warnings
         )
+
+    def _discard_download(self, job: Job) -> None:
+        """An ANALYZE that ends without installing: what its download (or a killed one) left in .incoming/ goes.
+
+        Only from the finish handlers, which a worker that steps aside never reaches.
+        """
+        if job.kind == JobKind.ANALYZE:
+            shutil.rmtree(storage.incoming_dir(job.game_id), ignore_errors=True)
 
     def _release_remote(self, run: _Run, *, cancel: bool) -> None:
         """Stop a GPU call that is still running (cancel / failure) and delete remote copies."""
@@ -573,7 +646,8 @@ class Worker:
     def _restore_game_status(self, game_id: str) -> None:
         """After a cancel: READY if an earlier analysis exists, else UPLOADED (DRAFT without any film).
 
-        Decided from the files on disk, the same way the API settles a job cancelled while queued.
+        Decided from the files on disk, the same way the API settles a job cancelled while queued; the
+        file flags follow them too.
         """
         game = db.get_game(game_id)
         if game is None:
@@ -584,7 +658,7 @@ class Worker:
             status = GameStatus.UPLOADED
         else:
             status = GameStatus.DRAFT
-        self._set_game_status(game_id, status)
+        self._set_game_status(game_id, status, **_file_flags(game_id))
 
     # --- small helpers --------------------------------------------------------
 
@@ -609,19 +683,29 @@ class Worker:
             db.update_job(run.job.id, warnings=run.warnings)
 
     def _check_cancel(self, job_id: str) -> None:
+        if self._check_owner(job_id).cancel_requested:
+            raise _Cancelled
+
+    def _check_owner(self, job_id: str) -> Job:
+        """The stored job, still ours: _Cancelled when it was deleted with its game, _LeaseLost when another
+        worker has taken it over. A cancel request is left to the caller (see _check_cancel)."""
         current = db.get_job(job_id)
         if current is None:  # deleted with its game
             raise _Cancelled
         if current.worker_id not in (None, self.worker_id):  # None: handed back; we may claim it back ourselves
             raise _LeaseLost
-        if current.cancel_requested:
-            raise _Cancelled
+        return current
 
-    def _check_owner(self, job_id: str) -> None:
-        """Raise _LeaseLost when another worker has taken the job over (a cancel is left to _check_cancel)."""
-        current = db.get_job(job_id)
-        if current is not None and current.worker_id not in (None, self.worker_id):
-            raise _LeaseLost
+    def _taken_over(self, job_id: str) -> bool:
+        """Another worker owns the job now. False when it was deleted or the database is busy: the job is
+        then finished as before."""
+        try:
+            self._check_owner(job_id)
+        except _LeaseLost:
+            return True
+        except Exception:
+            return False
+        return False
 
     def _check_stop(self) -> None:
         if self._stop.is_set():
@@ -754,6 +838,26 @@ def _move_into_place(src: Path, dest: Path) -> None:
     if src.exists() and src.resolve() != dest.resolve():
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(src, dest)
+
+
+def _installed_before_claim(job: Job) -> bool:
+    """An ANALYZE claimed at ANALYZING or REPORTING (the stage moves on only after the install): a worker
+    that died since had installed this very run, so the results in the game folder are its own."""
+    return (
+        job.kind == JobKind.ANALYZE
+        and job.stage in (JobStage.ANALYZING, JobStage.REPORTING)
+        and storage.tracking_path(job.game_id).is_file()
+    )
+
+
+def _file_flags(game_id: str) -> dict[str, bool]:
+    """has_analysis / has_annotated_video as the files on disk say, for a job that ends without its
+    analysis: a worker killed in the middle of _install_outputs (or before it marked the game ready)
+    left them stale."""
+    return {
+        "has_analysis": storage.analysis_path(game_id).is_file(),
+        "has_annotated_video": storage.annotated_video_path(game_id).is_file(),
+    }
 
 
 def _short_traceback(exc: BaseException) -> str:

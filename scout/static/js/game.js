@@ -21,15 +21,17 @@ import {
 } from "./ui.js";
 
 const TAB_KEY = "scout.gameTab";
-const FULL_RUN_CONFIRM = "Send the film to the GPU again?\n\n"
-  + "A full re-analysis takes about as long as the first run and costs another GPU run. "
-  + "The current results stay on this page until it finishes.\n\n"
+/** hasResults: the page shows an analysis (one that failed after the GPU leaves none to keep). */
+const fullRunConfirm = (hasResults) => "Send the film to the GPU again?\n\n"
+  + "A full re-analysis takes about as long as the first run and costs another GPU run."
+  + (hasResults ? " The current results stay on this page until it finishes." : "") + "\n\n"
   + "It numbers the players' tracks again, so it clears the track assignments you made on the Roster page; "
   + "redo them afterwards.\n\n"
   + "(Re-run analysis only redoes the stats on this server.)";
 const gameId = gameIdFromPath();
 // filmRenewed: a GPU run finished while the page was open, so the annotated copy is a new file.
-const state = { game: null, analysis: null, court: null, health: null, filmRenewed: false };
+// analysisJob: the latest analysis job (ANALYZE / REANALYZE), if any.
+const state = { game: null, analysis: null, court: null, health: null, filmRenewed: false, analysisJob: null };
 const parts = {};
 let refreshes = 0; // only the newest refresh() may draw the page
 
@@ -112,6 +114,7 @@ async function refresh() {
   ]);
   if (token !== refreshes) return;
   state.analysis = analysis;
+  state.analysisJob = jobs.analysis;
   applyTeamColors(game, analysis?.teams || []);
   const names = teamNames(game, analysis);
 
@@ -196,14 +199,25 @@ function renderPending(game, analysis) {
     uploaded: ["This film hasn't been analyzed yet.", "Click Analyze film to send it to the GPU."],
     queued: ["Results will appear here when the analysis finishes.", "Long games can take 30-60 minutes on the GPU."],
     processing: ["Results will appear here when the analysis finishes.", "Long games can take 30-60 minutes on the GPU."],
-    failed: ["There are no results because the analysis failed.", "See the error above and use Retry once the problem is fixed."],
+    // The job panel's button reads Retry, Re-run analysis (GPU results saved) or is absent (not retryable).
+    failed: ["There are no results because the analysis failed.", "See the error above and run the analysis again once the problem is fixed."],
     ready: ["The analysis could not be loaded.", "Reload the page; if it keeps happening, re-run the analysis."],
   };
   const [message, hint] = messages[game.status] || messages.uploaded;
   setChildren(box, notice("info", null, message, hint));
 }
 
-const rerunKind = () => (state.game?.has_analysis ? "reanalyze" : "analyze");
+/**
+ * The GPU results are on the server although the game has no analysis: its latest analysis job failed after
+ * they were saved (an ANALYZE at analyzing or reporting, which the server retries as a REANALYZE; or a
+ * REANALYZE, which needs them to start). Installing a full re-analysis deletes the earlier analysis, so this
+ * is also where a failed one leaves the game. A new film since then would have made the game "uploaded".
+ */
+const gpuResultsSaved = (game, job) => game?.status === "failed" && job?.status === "failed"
+  && (job.kind === "reanalyze" || (job.kind === "analyze" && ["analyzing", "reporting"].includes(job.stage)));
+
+/** Re-run analysis (stats on this server) whenever there is tracking to redo them from; else the GPU run. */
+const rerunKind = () => (state.game?.has_analysis || gpuResultsSaved(state.game, state.analysisJob) ? "reanalyze" : "analyze");
 
 // ---------------------------------------------------------------------------
 // Header, team confirmation, analysis actions
@@ -229,12 +243,13 @@ function renderHeader(game, names) {
   film.textContent = hasFilm(game) ? "Replace film" : "Add film";
   byId("no-film-link").href = film.href;
   const busy = game.status === "queued" || game.status === "processing";
+  const rerunnable = rerunKind() === "reanalyze";
   const rerun = byId("reanalyze-btn");
-  rerun.textContent = game.has_analysis ? "Re-run analysis" : "Analyze film";
-  rerun.disabled = busy || !(hasFilm(game) || game.has_analysis);
-  rerun.title = busy ? "An analysis is already running" : game.has_analysis ? "Redo the stats on this server (about a minute, no GPU)" : "";
+  rerun.textContent = rerunnable ? "Re-run analysis" : "Analyze film";
+  rerun.disabled = busy || !(hasFilm(game) || rerunnable);
+  rerun.title = busy ? "An analysis is already running" : rerunnable ? "Redo the stats on this server (about a minute, no GPU)" : "";
   const full = byId("full-analysis-btn");
-  show(full, hasFilm(game) && game.has_analysis);
+  show(full, hasFilm(game) && rerunnable);
   full.disabled = busy;
   full.title = busy ? "An analysis is already running" : "Send the film to the GPU again";
 }
@@ -273,7 +288,7 @@ async function startJob(kind, started = null) {
  * stay on the page until the new run finishes.
  */
 async function startFullAnalysis(button) {
-  if (!window.confirm(FULL_RUN_CONFIRM)) return;
+  if (!window.confirm(fullRunConfirm(Boolean(state.analysis)))) return;
   for (const b of [button, byId("reanalyze-btn"), byId("full-analysis-btn")]) if (b) b.disabled = true; // refresh() redraws them
   await startJob("analyze", "Full re-analysis started");
 }
