@@ -178,6 +178,9 @@ route("GET", "/api/games/g_1/analysis", () => (now().analysis
   ? json(now().analysis) : fail(409, "ANALYSIS_NOT_READY", "No analysis yet")));
 route("GET", "/api/games/g_1/reports", () => json(now().reports));
 route("POST", "/api/games/g_1/jobs", (req) => { posts.push(req.body); return fail(503, "QUEUE_UNAVAILABLE", "Not here"); });
+// Start again and Retry (POST /api/jobs/{id}/retry): the job ids, answered the same way.
+const retries = [];
+route("POST", /^\\/api\\/jobs\\/j_[0-9a-f]+\\/retry$/, (req) => { retries.push(req.path.split("/")[3]); return fail(503, "QUEUE_UNAVAILABLE", "Not here"); });
 const look = () => ({
   panel: textOf($("#job-panel .notice-title")) || textOf($("#job-panel h2")),
   panelText: textOf(byId("job-panel")),
@@ -430,7 +433,7 @@ console.log(JSON.stringify({ seen, posts, confirms }));
             id="new-film-since-a-failed-re-run",
         ),
         pytest.param(
-            {"status": "failed", "has_analysis": True},
+            {"status": "failed", "has_analysis": True, "has_tracking": True},
             {"kind": "analyze", "status": "failed", "stage": "gpu_processing"},
             ["Re-run analysis", False, True],
             id="full-reanalysis-failed-on-the-gpu",

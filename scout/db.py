@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from scout import storage
 from scout.config import get_settings
 from scout.errors import ErrorCode, ScoutError
 from scout.schemas import (
@@ -37,6 +38,7 @@ from scout.schemas import (
     TeamSide,
     TrackOverride,
     UploadSession,
+    cancel_stops_job,
 )
 
 _MIGRATIONS: dict[int, str] = {
@@ -220,7 +222,7 @@ def create_game(data: GameCreate) -> Game:
 def save_game(game: Game) -> Game:
     """Insert or replace a game document (bumps ``updated_at``)."""
     now = utcnow()
-    game = game.model_copy(update={"updated_at": now, "created_at": game.created_at or now})
+    game = _with_tracking_flag(game.model_copy(update={"updated_at": now, "created_at": game.created_at or now}))
     with session() as conn:
         conn.execute(
             """INSERT INTO games(id, data, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
@@ -230,10 +232,22 @@ def save_game(game: Game) -> Game:
     return game
 
 
+def _with_tracking_flag(game: Game) -> Game:
+    """``has_tracking`` as the game folder says: true exactly when tracking.json.gz is there.
+
+    Read from the disk with every game instead of trusting the stored copy, so games saved before
+    the field existed, a data folder restored from a backup and a worker killed between moving the
+    tracking in and saving the flag all read right, without a migration step. It costs one stat per
+    game. The worker and the film routes still store it whenever the file comes or goes.
+    """
+    has_tracking = storage.tracking_path(game.id).is_file()
+    return game if game.has_tracking == has_tracking else game.model_copy(update={"has_tracking": has_tracking})
+
+
 def get_game(game_id: str) -> Game | None:
     with session() as conn:
         row = conn.execute("SELECT data FROM games WHERE id = ?", (game_id,)).fetchone()
-    return Game.model_validate_json(row["data"]) if row else None
+    return _with_tracking_flag(Game.model_validate_json(row["data"])) if row else None
 
 
 def require_game(game_id: str) -> Game:
@@ -246,11 +260,11 @@ def require_game(game_id: str) -> Game:
 def list_games() -> list[Game]:
     with session() as conn:
         rows = conn.execute("SELECT data FROM games ORDER BY created_at DESC").fetchall()
-    return [Game.model_validate_json(r["data"]) for r in rows]
+    return [_with_tracking_flag(Game.model_validate_json(r["data"])) for r in rows]
 
 
 def update_game(game_id: str, **changes: Any) -> Game:
-    """Atomically merge ``changes`` (Game field names) into a stored game."""
+    """Atomically merge ``changes`` (Game field names) into a stored game (``has_tracking`` follows the disk)."""
     with session() as conn, transaction(conn):
         row = conn.execute("SELECT data FROM games WHERE id = ?", (game_id,)).fetchone()
         if row is None:
@@ -259,7 +273,7 @@ def update_game(game_id: str, **changes: Any) -> Game:
         merged = current.model_dump()
         merged.update(changes)
         merged["updated_at"] = utcnow()
-        game = Game.model_validate(merged)
+        game = _with_tracking_flag(Game.model_validate(merged))
         conn.execute(
             "UPDATE games SET data = ?, status = ?, updated_at = ? WHERE id = ?",
             (game.model_dump_json(), game.status.value, _iso(game.updated_at), game_id),
@@ -452,12 +466,18 @@ def heartbeat_job(job_id: str, worker_id: str, lease_seconds: float) -> bool:
     return cur.rowcount > 0
 
 
+CANCELLING_MESSAGE = "Cancelling..."
+TOO_LATE_TO_CANCEL_MESSAGE = "Cancel requested: too late to stop this job, so it will finish."
+
+
 def request_cancel(job_id: str) -> Job:
     """Cancel a queued job immediately; flag a running job so its worker stops it.
 
     A queued job that already has a processor handle (``external_id``: a GPU call that may still
     be running, as an older version's Redis reaper left them) is flagged like a running one, so the
-    worker that claims it cancels the call, deletes the remote files and settles the game.
+    worker that claims it cancels the call, deletes the remote files and settles the game. A job at
+    a stage a cancel no longer stops it at (``cancel_stops_job``) is flagged too, so its worker skips
+    a report it was still to write, and its message says it will finish.
     """
     with session() as conn, transaction(conn):
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -472,9 +492,10 @@ def request_cancel(job_id: str) -> Job:
                 (JobStage.DONE.value, now_iso, now_iso, job_id),
             )
         elif job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+            message = CANCELLING_MESSAGE if cancel_stops_job(job.kind, job.stage) else TOO_LATE_TO_CANCEL_MESSAGE
             conn.execute(
-                "UPDATE jobs SET cancel_requested = 1, message = 'Cancelling...', updated_at = ? WHERE id = ?",
-                (now_iso, job_id),
+                "UPDATE jobs SET cancel_requested = 1, message = ?, updated_at = ? WHERE id = ?",
+                (message, now_iso, job_id),
             )
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     return _job_from_row(row)

@@ -2,8 +2,8 @@
 // 3 s), Cancel, a notice when no worker is there to take a queued job, and a friendly
 // error with Retry (Re-run analysis once the GPU results are saved) when a job fails.
 
-import { api, gamePath, isJobActive, jobPath, pollJob } from "./api.js";
-import { jobKindLabel, jobStageText, workerWarning } from "./labels.js";
+import { api, isJobActive, jobPath, pollJob } from "./api.js";
+import { jobKindLabel, jobStageText, tooLateToStop, workerWarning } from "./labels.js";
 import { byId, clearError, el, errorBox, formatDuration, notice, setChildren, show, withBusy } from "./ui.js";
 
 const POLL_MS = 3000;
@@ -15,31 +15,34 @@ function elapsedSince(iso) {
 }
 
 /**
- * What Cancel asks first. Once an ANALYZE has installed its new results (stage analyzing or
- * reporting) a cancel no longer stops it: the analysis is finished and only the automatic
- * report is skipped, unless Claude is already writing it (scout/worker.py, _run_analyze).
+ * What Cancel asks first. A job a cancel no longer stops (tooLateToStop) runs to the end: the
+ * question says what the cancel still does (scout/worker.py). It skips a report not started yet,
+ * which an ANALYZE writes only when the server is set up for it, and keeps one Claude is writing.
  */
 function cancelQuestion(job) {
-  if (job.kind === "analyze" && job.stage === "analyzing") {
-    return "Too late to stop the analysis: the new GPU results are already in place, so it will finish.\n\n"
-      + "Cancelling now only skips the automatic scouting report.";
+  if (!tooLateToStop(job)) return "Stop this job? You can start it again later.";
+  if (job.kind === "report") {
+    return "Too late to cancel: Claude is already writing the scouting report.\n\n"
+      + "It will finish on its own, and the report is kept.";
   }
-  if (job.kind === "analyze" && job.stage === "reporting") {
+  if (job.stage === "reporting") {
     return "Too late to cancel: the analysis is finished and Claude is already writing the scouting report.\n\n"
       + "The job will finish on its own, and the report is kept.";
   }
-  return "Stop this job? You can start it again later.";
+  if (job.kind === "reanalyze") {
+    return "Too late to stop the re-analysis: it is already redoing the stats (about a minute), so it will finish.\n\n"
+      + (job.params?.report ? "Cancelling now only skips the automatic scouting report." : "There is nothing left to cancel.");
+  }
+  return "Too late to stop the analysis: the new GPU results are already in place, so it will finish.\n\n"
+    + "Cancelling now only skips the automatic scouting report, if one was going to be written.";
 }
-
-/** A cancel no longer stops this job: it carries on to the end (see cancelQuestion). */
-const tooLateToStop = (job) => job.kind === "analyze" && ["analyzing", "reporting"].includes(job.stage);
 
 export class JobPanel {
   /**
    * onChange(job) runs when a job finishes or a new one is started, so the page can reload;
    * onUpdate(job) runs with every poll of a running job (the page header shows its progress);
-   * restartConfirm(job) is what Start again asks before it starts the cancelled job again
-   * (null: it starts at once).
+   * restartConfirm(job) is what Start again (a cancelled job) and Retry (a failed one) ask
+   * before the server starts the job again (null: it starts at once).
    */
   constructor({ onChange, onUpdate = null, restartConfirm = null }) {
     this.panel = byId("job-panel");
@@ -130,16 +133,18 @@ export class JobPanel {
     const setText = (node, text) => {
       if (node.textContent !== text) node.textContent = text;
     };
-    // Asked too late to stop it: it carries on, so the panel says what it does, not "Cancelling…" (nor the server's message).
+    // Asked too late to stop it: it carries on, so the panel shows its stage and "Cancel requested", not "Cancelling…".
+    // After any cancel request the server's message is left out, as on the games list: the stage line and button say it.
     const late = job.cancel_requested && tooLateToStop(job);
     setText(view.title, `${jobKindLabel(job.kind)} in progress`);
-    setText(view.stage, jobStageText(late ? { ...job, cancel_requested: false } : job));
+    setText(view.stage, jobStageText(job));
     setText(view.cancel, late ? "Cancel requested" : job.cancel_requested ? "Cancelling…" : "Cancel");
     view.cancel.disabled = Boolean(job.cancel_requested);
     view.bar.classList.toggle("progress-indeterminate", job.status === "queued");
     view.bar.setAttribute("aria-valuenow", String(pct));
     view.fill.style.width = `${pct}%`;
-    setText(view.details, [`${pct}% overall`, late ? null : job.message, elapsed ? `running for ${elapsed}` : null].filter(Boolean).join(" · "));
+    const message = job.cancel_requested ? null : job.message;
+    setText(view.details, [`${pct}% overall`, message, elapsed ? `running for ${elapsed}` : null].filter(Boolean).join(" · "));
     if (job.status === "queued") {
       this.checkWorker(view);
     } else if (view.workerProblem) {
@@ -179,7 +184,7 @@ export class JobPanel {
     show(this.panel, true);
     if (job.status === "cancelled") {
       setChildren(this.panel, notice("info", `${jobKindLabel(job.kind)} was cancelled`, "Start it again whenever you are ready."),
-        el("button", { type: "button", class: "btn-primary", text: "Start again", onClick: (e) => this.restart(job, e.currentTarget) }));
+        el("button", { type: "button", class: "btn-primary", text: "Start again", onClick: (e) => this.retry(job, e.currentTarget) }));
       return;
     }
     const actions = [];
@@ -211,14 +216,14 @@ export class JobPanel {
     }
   }
 
+  /**
+   * Start again and Retry: the server starts the job again with its kind and params, or an ANALYZE that failed
+   * after its GPU results were saved as a REANALYZE (scout/api/jobs.py, retry_job).
+   */
   async retry(job, button) {
-    await this.start(button, () => api.post(jobPath(job.id, "/retry")));
-  }
-
-  async restart(job, button) {
     const question = this.restartConfirm?.(job);
     if (question && !window.confirm(question)) return;
-    await this.start(button, () => api.post(gamePath(job.game_id, "/jobs"), { kind: job.kind }));
+    await this.start(button, () => api.post(jobPath(job.id, "/retry")));
   }
 
   async start(button, request) {

@@ -37,7 +37,7 @@ card.querySelector("button[data-remove]").click(); // Smith was a wrong entry; t
 const after = (text) => ({{ picked: pickText(7, text), ...pending() }});
 const choices = {{
   keepTeam: after("Unknown player (keep team)"),
-  smith: after("#23 Sam Smith"), // what the server still holds
+  smith: after("#23 Sam Smith (removed, not saved yet)"), // what the server still holds (marked since round six)
   automatic: after("Automatic (best jersey match)"),
 }};
 byId("tracks-save").click();

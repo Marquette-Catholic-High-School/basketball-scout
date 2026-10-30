@@ -72,9 +72,9 @@ def _js(value: object) -> str:
             "analyze",
             id="only-run-failed-on-the-gpu",
         ),
-        pytest.param({}, None, "Re-run analysis", "reanalyze", id="analysed"),
+        pytest.param({"has_tracking": True}, None, "Re-run analysis", "reanalyze", id="analysed"),
         pytest.param(
-            {"status": "failed", "has_analysis": False},
+            {"status": "failed", "has_analysis": False, "has_tracking": True},
             {"kind": "analyze", "status": "failed", "stage": "analyzing"},
             "Re-run analysis",
             "reanalyze",
@@ -135,7 +135,7 @@ let phase = "uploaded";
 const run = () => job({ id: "j_2", ...(phase === "ready" ? { status: "succeeded", stage: "done", progress: 100 }
   : { status: "running", stage: "gpu_processing", progress: 40 }) });
 gamePageRoutes(route, json, {
-  gameBody: () => game(phase === "ready" ? { latest_job_id: "j_2" }
+  gameBody: () => game(phase === "ready" ? { has_tracking: true, latest_job_id: "j_2" }
     : { status: phase === "uploaded" ? "uploaded" : "processing", has_analysis: false, latest_job_id: phase === "uploaded" ? null : "j_2" }),
   analysisBody: analysis(),
 });
@@ -185,7 +185,8 @@ def test_double_click_on_the_calibration_button_starts_one_job(tmp_path):
         + """
 let started = false;
 const rerun = job({ id: "j_2", kind: "reanalyze", status: "running", stage: "analyzing", progress: 50 });
-gamePageRoutes(route, json, { gameBody: () => game(started ? { status: "processing", latest_job_id: "j_2" } : {}), analysisBody: analysis() });
+gamePageRoutes(route, json, { gameBody: () => game({ has_tracking: true, ...(started ? { status: "processing", latest_job_id: "j_2" } : {}) }),
+  analysisBody: analysis() });
 route("GET", "/api/games/g_1/jobs", () => json(started ? [rerun] : []));
 route("GET", "/api/jobs/j_2", json(rerun));
 route("POST", "/api/games/g_1/jobs", (req) => {
@@ -277,13 +278,17 @@ console.log(JSON.stringify({ header: look().header, buttons, calibrations, posts
 # ---------------------------------------------------------------------------
 
 
-def _cancel_question_says(question: str, stage: str | None) -> None:
-    """The confirm for a cancel of an ANALYZE at ``stage`` (None: another job) says what the worker then
-    does with it (scout/worker.py, _run_analyze)."""
-    if stage == "analyzing":
+def _cancel_question_says(question: str, stage: str | None, kind: str = "analyze") -> None:
+    """The confirm for a cancel of a ``kind`` job at ``stage`` (None: another stage) says what the worker then
+    does with it (scout/worker.py). Round 6: the ANALYZE question at analyzing holds whether or not a report is
+    due, and a REANALYZE at analyzing (here one without a report to write) says it will finish too."""
+    if kind == "reanalyze" and stage == "analyzing":
+        assert question.startswith("Too late to stop the re-analysis")
+        assert question.endswith("There is nothing left to cancel.")
+    elif stage == "analyzing":
         assert question.startswith("Too late to stop the analysis")
         assert "the new GPU results are already in place, so it will finish" in question
-        assert question.endswith("Cancelling now only skips the automatic scouting report.")
+        assert question.endswith("Cancelling now only skips the automatic scouting report, if one was going to be written.")
     elif stage == "reporting":
         assert question.startswith("Too late to cancel")
         assert "the analysis is finished and Claude is already writing the scouting report" in question
@@ -307,8 +312,8 @@ def test_cancel_confirm_says_what_a_cancel_does_at_that_stage(tmp_path, kind, st
     or reporting": the new results are installed, so the analysis is finished and a cancel only skips
     the automatic report (one Claude is already writing is kept). It always asked "Stop this job? You can
     start it again later." (the analyzing and reporting cases failed on HEAD). Up to the download a
-    cancel stops an ANALYZE, and a REANALYZE keeps its question too (guards). Declining sends nothing;
-    OK sends the cancel."""
+    cancel stops an ANALYZE (guards); since round 6 a REANALYZE at analyzing says it will finish too.
+    Declining sends nothing; OK sends the cancel."""
     out = run_page(
         tmp_path,
         "game.html",
@@ -338,10 +343,10 @@ console.log(JSON.stringify({ confirms, declined, cancels, button: textOf($("#job
     )
     first, second = out["confirms"]
     assert first == second
-    _cancel_question_says(first, stage if kind == "analyze" else None)
+    _cancel_question_says(first, stage, kind)
     assert out["declined"] == {"cancels": 0, "button": "Cancel"}
     # Too late to stop it: the job carries on, so the button no longer says "Cancelling…" (round 5, integration).
-    late = kind == "analyze" and stage in ("analyzing", "reporting")
+    late = stage in ("analyzing", "reporting")
     assert (out["cancels"], out["button"]) == (1, "Cancel requested" if late else "Cancelling…")
 
 
@@ -413,7 +418,8 @@ def test_start_again_on_a_cancelled_full_reanalysis_asks_first(tmp_path, analysi
     """ARCHITECTURE (Job lifecycle): "Start again on a cancelled Full re-analysis asks first, like the Full
     re-analysis button (the film goes to the GPU again and the track assignments are cleared)". It posted
     the ANALYZE at once (fails on HEAD). The question is the button's own, with "the current results stay"
-    only when the page shows results; declining posts nothing, OK posts the ANALYZE."""
+    only when the page shows results; declining posts nothing, OK sends the server's retry of the job (round 6:
+    POST /api/jobs/{id}/retry, which restarts it with its kind and params)."""
     out = run_page(
         tmp_path,
         "game.html",
@@ -424,7 +430,7 @@ def test_start_again_on_a_cancelled_full_reanalysis_asks_first(tmp_path, analysi
 const cancelled = job({ kind: "analyze", status: "cancelled", stage: "done", progress: 40, message: "Cancelled" });
 let started = false;
 gamePageRoutes(route, json, {
-  gameBody: () => game(started ? { status: "queued", latest_job_id: "j_2" } : { latest_job_id: "j_1" }),
+  gameBody: () => game({ has_tracking: true, ...(started ? { status: "queued", latest_job_id: "j_2" } : { latest_job_id: "j_1" }) }),
   jobs: [cancelled],
   analysisBody: analysis(),
 });
@@ -432,6 +438,8 @@ if (!analysisLoads) route("GET", "/api/games/g_1/analysis", fail(500, "INTERNAL_
 route("GET", "/api/games/g_1/jobs", () => json(started ? [job({ id: "j_2" }), cancelled] : [cancelled]));
 route("GET", "/api/jobs/j_2", json(job({ id: "j_2", status: "running", stage: "gpu_processing", progress: 12 })));
 route("POST", "/api/games/g_1/jobs", (req) => { posts.push(req.body); started = true; return json(job({ id: "j_2" }), 201); });
+const retries = [];
+route("POST", "/api/jobs/j_1/retry", (req) => { retries.push(req.path); started = true; return json(job({ id: "j_2" })); });
 await import("./js/game.js");
 await settle();
 globalThis.confirmAnswer = false;
@@ -441,11 +449,11 @@ const startAgain = () => $$("#job-panel button").find((b) => textOf(b) === "Star
 const offered = { title: textOf($("#job-panel .notice-title")), buttons: $$("#job-panel button").map(textOf) };
 startAgain().click();
 await settle();
-const declined = { posts: posts.length, buttons: $$("#job-panel button").map(textOf) };
+const declined = { retries: retries.length, buttons: $$("#job-panel button").map(textOf) };
 globalThis.confirmAnswer = true;
 startAgain()?.click();
 await settle();
-console.log(JSON.stringify({ offered, confirms, declined, posts, panel: textOf($("#job-panel h2")) }));
+console.log(JSON.stringify({ offered, confirms, declined, posts, retries, panel: textOf($("#job-panel h2")) }));
 """,
     )
     assert out["offered"] == {"title": "Film analysis was cancelled", "buttons": ["Start again"]}
@@ -454,8 +462,8 @@ console.log(JSON.stringify({ offered, confirms, declined, posts, panel: textOf($
     assert "GPU again" in button_question
     assert "clears the track assignments you made on the Roster page" in button_question
     assert ("current results stay" in button_question) is analysis_loads
-    assert out["declined"] == {"posts": 0, "buttons": ["Start again"]}
-    assert out["posts"] == [{"kind": "analyze"}]
+    assert out["declined"] == {"retries": 0, "buttons": ["Start again"]}
+    assert (out["posts"], out["retries"]) == ([], ["/api/jobs/j_1/retry"])  # round 6: the server's retry
     assert out["panel"] == "Film analysis in progress"
 
 
@@ -463,7 +471,7 @@ console.log(JSON.stringify({ offered, confirms, declined, posts, panel: textOf($
     ("game_over", "kind"),
     [
         pytest.param({"status": "uploaded", "has_analysis": False}, "analyze", id="first-analysis"),
-        pytest.param({}, "reanalyze", id="re-run-analysis"),
+        pytest.param({"has_tracking": True}, "reanalyze", id="re-run-analysis"),
     ],
 )
 def test_guard_start_again_starts_other_cancelled_jobs_at_once(tmp_path, game_over, kind):
@@ -479,6 +487,8 @@ const cancelled = job({{ kind: {_js(kind)}, status: "cancelled", stage: "done", 
 gamePageRoutes(route, json, {{ gameBody: game({{ ...{_js(game_over)}, latest_job_id: "j_1" }}), jobs: [cancelled], analysisBody: analysis() }});
 route("GET", "/api/jobs/j_2", json(job({{ id: "j_2", kind: {_js(kind)}, status: "running", stage: "analyzing", progress: 12 }})));
 route("POST", "/api/games/g_1/jobs", (req) => {{ posts.push(req.body); return json(job({{ id: "j_2", kind: req.body.kind }}), 201); }});
+const retries = [];
+route("POST", "/api/jobs/j_1/retry", (req) => {{ retries.push(req.path); return json(job({{ id: "j_2", kind: {_js(kind)} }})); }});
 """
         + """
 await import("./js/game.js");
@@ -486,10 +496,10 @@ await settle();
 globalThis.confirmAnswer = false; // a question would stop it
 $$("#job-panel button").find((b) => textOf(b) === "Start again").click();
 await settle();
-console.log(JSON.stringify({ confirms, posts }));
+console.log(JSON.stringify({ confirms, posts, retries }));
 """,
     )
-    assert out == {"confirms": [], "posts": [{"kind": kind}]}
+    assert out == {"confirms": [], "posts": [], "retries": ["/api/jobs/j_1/retry"]}  # round 6: the server's retry
 
 
 @pytest.mark.parametrize("earlier_run", [True, False], ids=["full-reanalysis", "first-analysis"])
@@ -529,16 +539,16 @@ await settle();
 const startAgain = () => $$("#job-panel button").find((b) => textOf(b) === "Start again");
 startAgain().click();
 await settle();
-const declined = posts.length;
+const declined = retries.length;
 globalThis.confirmAnswer = true;
 startAgain()?.click();
 await settle();
-console.log(JSON.stringify({ seen, confirms, declined, posts }));
+console.log(JSON.stringify({ seen, confirms, declined, posts, retries }));
 """,
     )
     seen = out["seen"]
     assert (seen["panel"], seen["panelButtons"]) == ("Film analysis was cancelled", ["Start again"])
-    assert out["posts"] == [{"kind": "analyze"}]
+    assert (out["posts"], out["retries"]) == ([], [cancelled["id"]])  # round 6: the server's retry
     if earlier_run:
         assert seen["header"] == ["Re-run analysis", False, True]
         button_question = out["confirms"][0]
@@ -549,10 +559,11 @@ console.log(JSON.stringify({ seen, confirms, declined, posts }));
         assert seen["header"] == ["Analyze film", False, False]
         assert (out["confirms"], out["declined"]) == ([], 1)
 
-    # What the page posts, as the real server runs it.
+    # What the page sends, as the real server runs it: an ANALYZE again.
     gpu_runs = list(scout.gpu_runs)
-    started = client.post(f"/api/games/{game_id}/jobs", json=out["posts"][0])
-    assert started.status_code == 201, started.text
+    started = client.post(f"/api/jobs/{out['retries'][0]}/retry")
+    assert started.status_code == 200, started.text
+    assert started.json()["kind"] == "analyze"
     assert _run(scout, started.json())["status"] == "succeeded"
     assert scout.gpu_runs == [*gpu_runs, started.json()["id"]]  # the film went to the GPU again
     assert client.get(f"/api/games/{game_id}/tracks").json()["overrides"] == []  # the track fix went

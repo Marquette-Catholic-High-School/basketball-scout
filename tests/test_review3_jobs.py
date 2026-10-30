@@ -117,8 +117,9 @@ def test_a_resumed_full_reanalysis_clears_them_once_it_installs(filmed_game, que
 @pytest.mark.parametrize("stage", [JobStage.ANALYZING, JobStage.REPORTING])
 def test_installing_the_same_run_again_keeps_the_fixes_made_for_it(filmed_game, queue, fakes, stage):  # noqa: F811
     """Its worker died after installing this run and clearing the old fixes (killed while Claude
-    wrote the report, say). The coach then fixed a track of the NEW run; the next worker fetches
-    and installs the same run again, and must not throw that fix away."""
+    wrote the report, say). The coach then fixed a track of the NEW run; the next worker fetched
+    and installed the same run again, and must not throw that fix away. (Since round 6 it goes
+    straight on to the analysis from the installed results instead.)"""
     _analysed(filmed_game)  # the tracking on disk is this run's by now
     db.clear_track_overrides(filmed_game.id)
     new_fix = db.set_track_override(filmed_game.id, TrackOverride(track_id=3, side=TeamSide.OTHER))
@@ -127,7 +128,7 @@ def test_installing_the_same_run_again_keeps_the_fixes_made_for_it(filmed_game, 
     make_worker(gpu, queue).run_once(timeout=1)
 
     assert db.get_job(job.id).status == JobStatus.SUCCEEDED
-    assert gpu.fetched == [f"fake:{job.id}"]  # installed again
+    assert gpu.fetched == []  # not downloaded or installed again
     assert fakes.analyze[0]["overrides"] == [new_fix] and db.list_track_overrides(filmed_game.id) == [new_fix]
 
 

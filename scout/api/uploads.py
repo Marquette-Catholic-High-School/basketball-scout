@@ -261,6 +261,7 @@ def _finish_upload(upload_id: str, settings: Settings, auto_start: bool) -> Film
             status=GameStatus.UPLOADED,
             has_analysis=False,
             has_annotated_video=False,
+            has_tracking=False,
             error=None,
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
             calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
@@ -374,6 +375,7 @@ def set_video_url(body: VideoUrlRequest, game: CurrentGame, settings: SettingsDe
             status=GameStatus.UPLOADED,
             has_analysis=False,
             has_annotated_video=False,
+            has_tracking=False,
             error=None,
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
             calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one

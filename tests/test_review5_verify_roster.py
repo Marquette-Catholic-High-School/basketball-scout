@@ -111,6 +111,7 @@ def test_choices_kept_after_a_refused_rerun_go_when_the_tracks_reloaded_are_othe
 route("POST", "/api/games/g_1/jobs", () => (["queued", "running"].includes(latest.status)
   ? fail(409, "CONFLICT", "Conflict", {{ message: "This game's film is being analysed right now." }})
   : json(job({{ kind: "reanalyze" }}), 201)));
+gameOver = {{ has_tracking: true }}; // its GPU results are on the server: the roster save offers Re-run analysis
 await openPage({RUN_A_JS});
 $$("#roster-columns section")[0].querySelectorAll("button").find((b) => textOf(b) === "Save roster").click();
 await settle();

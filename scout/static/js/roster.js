@@ -41,7 +41,10 @@ const WAIT_TITLE = "Wait for the film analysis to finish";
 
 // analyzing: the ANALYZE job queued or running. It numbers the tracks again and clears their
 // assignments, so the server takes none meanwhile (409) and the page locks them.
-const state = { game: null, editors: {}, tracks: [], overrides: new Map(), pending: new Map(), analyzing: null };
+// removedChoices: the tracks whose unsaved choice went with its player (no longer on the roster).
+const state = {
+  game: null, editors: {}, tracks: [], overrides: new Map(), pending: new Map(), analyzing: null, removedChoices: new Set(),
+};
 
 // ---------------------------------------------------------------------------
 // Roster editor (one per team)
@@ -87,6 +90,8 @@ class RosterEditor {
       this.rows.splice(Number(button.dataset.remove), 1);
       this.markDirty();
       this.renderRows();
+      dropChoicesOfRemovedPlayers(); // the unsaved track choices for that player go, and the page says which tracks
+      renderTracks(); // a saved assignment to that player shows it as removed until the roster is saved
     });
     this.status = el("span", { class: "unsaved", "aria-live": "polite" });
     this.error = el("div", { "aria-live": "assertive" });
@@ -127,7 +132,7 @@ class RosterEditor {
 
   load(roster) {
     this.rows = roster.players.map((p) => ({ ...p }));
-    this.savedIds = new Set(roster.players.map((p) => p.id)); // the roster on the server, before any unsaved edit
+    this.saved = new Map(roster.players.map((p) => [p.id, { ...p }])); // the roster on the server, before any unsaved edit
     this.teamInput.value = roster.team_name || "";
     this.dirty = false;
     this.status.textContent = "";
@@ -203,7 +208,7 @@ class RosterEditor {
     try {
       const roster = await api.put(gamePath(gameId, `/rosters/${this.side}`), { team_name: this.teamInput.value.trim(), players });
       this.load(roster);
-      onRosterSaved();
+      await onRosterSaved();
       return true;
     } catch (err) {
       showError(this.error, err);
@@ -232,7 +237,7 @@ class RosterEditor {
       const result = await api.upload(gamePath(gameId, `/rosters/${this.side}/import?mode=${mode}`), form);
       this.load(result.roster);
       this.showImportResult(file.name, result);
-      onRosterSaved();
+      await onRosterSaved();
     } catch (err) {
       this.importResult.replaceChildren();
       showError(this.error, err);
@@ -252,10 +257,24 @@ class RosterEditor {
   }
 }
 
-function onRosterSaved() {
+/** A roster saved or imported: the choices for players it no longer has go, and the game and tracks are read again. */
+async function onRosterSaved() {
   toast("Roster saved");
-  if (state.game?.has_analysis) show(byId("rerun-banner"), true);
+  dropChoicesOfRemovedPlayers(); // e.g. an import without that player, or a row emptied before the save
   renderTracks();
+  // Re-run analysis needs the film's GPU results on the server, which the game says now: another tab may have added a
+  // new film, and an analysis that failed after they were saved can run again. The server also removed the saved
+  // assignments of the players who left the roster: show what it has.
+  const [game, data] = await Promise.all([
+    api.get(gamePath(gameId)).catch(() => null),
+    state.tracks.length ? api.get(gamePath(gameId, "/tracks")).catch(() => null) : null,
+  ]);
+  if (game) state.game = game;
+  show(byId("rerun-banner"), Boolean(state.game?.has_tracking));
+  if (data && sameTracking(data.assignments || [])) { // tracks numbered again are for Save & re-run to find
+    state.overrides = overridesById(data.overrides);
+    renderTracks();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,8 +305,42 @@ function overrideValue(override) {
   if (!override.player_id) return override.side ? `${override.side}:` : UNKNOWN;
   // Saving the roster drops an override whose player left it; the server then matches the track automatically.
   // Until then (a player removed but not saved yet) the override still holds, so look in the saved rosters.
-  const side = ["scouted", "other"].find((s) => state.editors[s]?.savedIds.has(override.player_id));
+  const side = ["scouted", "other"].find((s) => state.editors[s]?.saved.has(override.player_id));
   return side ? `${side}:${override.player_id}` : "";
+}
+
+/** The choice names a player who is no longer on that team's roster (removed, or not in the roster saved or imported). */
+function namesRemovedPlayer(value) {
+  const [side, playerId] = value.split(":");
+  return Boolean(playerId) && !rosterPlayers(side).some((p) => p.id === playerId);
+}
+
+/** A saved assignment to a player removed from the roster but not saved yet: the select still shows them, marked so. */
+function removedPlayerOption(value) {
+  const [side, playerId] = value.split(":");
+  const player = namesRemovedPlayer(value) ? state.editors[side]?.saved.get(playerId) : null;
+  return player ? el("option", { value, text: `${playerLabel(player)} (removed, not saved yet)` }) : null;
+}
+
+/** The unsaved choices for players no longer on the roster go (the server would refuse them), and the page says which tracks. */
+function dropChoicesOfRemovedPlayers() {
+  const gone = [...state.pending.keys()].filter((trackId) => namesRemovedPlayer(state.pending.get(trackId)));
+  for (const trackId of gone) {
+    state.pending.delete(trackId);
+    state.removedChoices.add(trackId);
+  }
+  if (gone.length) sayRemovedChoices();
+}
+
+/** Which tracks lost their unsaved choice with its player, by the tracks table; nothing when none did. */
+function sayRemovedChoices(hint) {
+  const tracks = [...state.removedChoices].sort((a, b) => a - b).map((id) => `T${id}`);
+  const list = tracks.length > 1 ? `${tracks.slice(0, -1).join(", ")} and ${tracks[tracks.length - 1]}` : tracks[0];
+  // "Was removed": still true once the player is back (typed in again, or in a roster file imported later).
+  setChildren(byId("tracks-dropped"), tracks.length ? notice("warning", "Track choices dropped", tracks.length === 1
+    ? `Your unsaved choice for track ${list} was dropped: its player was removed from the roster.`
+    : `Your unsaved choices for tracks ${list} were dropped: their players were removed from the roster.`, hint) : null);
+  show(byId("tracks-dropped"), tracks.length > 0);
 }
 
 function currentValue(trackId) {
@@ -309,7 +362,7 @@ function assignmentTemplate() {
     el("option", { value: "", text: "Automatic (best jersey match)" }),
     el("option", { value: UNKNOWN, text: "Unknown player (keep team)" }),
     el("option", { value: IGNORE, text: "Not a player (referee, coach, fan…)" }),
-    ["scouted", "other"].map((side) => el("optgroup", { label: teamName(side) },
+    ["scouted", "other"].map((side) => el("optgroup", { label: teamName(side), "data-side": side },
       el("option", { value: `${side}:`, text: `Unknown player (${teamName(side)})` }),
       rosterPlayers(side).map((p) => el("option", { value: `${side}:${p.id}`, text: playerLabel(p) })))));
 }
@@ -357,9 +410,12 @@ function renderTracks() {
   const template = assignmentTemplate();
   const rows = sortedTracks().filter((a) => trackVisible(a, filter)).map((a) => {
     const select = template.cloneNode(true);
+    const value = currentValue(a.track_id);
+    const removed = removedPlayerOption(value);
+    if (removed) select.querySelector(`optgroup[data-side="${value.split(":")[0]}"]`).append(removed);
     select.dataset.track = String(a.track_id);
     select.setAttribute("aria-label", `Assign track ${a.track_id}`);
-    select.value = currentValue(a.track_id);
+    select.value = value;
     select.disabled = Boolean(state.analyzing);
     return el("tr", { class: state.pending.has(a.track_id) ? "changed" : null, "data-track": String(a.track_id) },
       el("th", { scope: "row" }, `T${a.track_id}`, a.role !== "player" ? el("span", { class: "badge", text: a.role }) : null),
@@ -409,11 +465,19 @@ function overrideBody(trackId, value) {
 
 async function saveTracksAndRerun() {
   clearError(byId("tracks-error"));
+  if (byId("tracks-dropped").querySelector(".notice-hint")) sayRemovedChoices(); // clicked again: its "click again" goes
+  const choices = state.pending.size;
   for (const editor of Object.values(state.editors)) {
     if (editor.dirty && !(await editor.save())) {
       showError(byId("tracks-error"), { info: { title: "Roster not saved", message: "Fix the roster problem above first, then save again." } });
       return;
     }
+  }
+  // The roster saved has no player some choices named (a row emptied), so those went and the notice by the table says
+  // which tracks: send nothing yet, so the coach sees it before the page moves on to the game page, and says what is left.
+  if (state.pending.size < choices) {
+    if (state.pending.size) sayRemovedChoices("Your other track choices are not saved yet: click Save & re-run analysis again.");
+    return;
   }
   // The choices are for the tracks the table shows: read them again first. A Full re-analysis since the page loaded
   // (from another tab) numbers them again, and the server would put the choices on the new tracks: other players.
@@ -507,17 +571,17 @@ async function tracksNumberedAgain(data) {
   dropTracks();
   setTracks(data);
   updatePendingNote();
-  sayNumberedAgain();
+  showByTracks(numberedAgainNotice());
   if (byId("tracks").hidden) byId("tracks-gone").scrollIntoView({ block: "nearest" }); // the table, and the button clicked, went
 }
 
 /** The choices went because the tracks were numbered again since the page loaded: say so by the new table, or where it was. */
-function sayNumberedAgain() {
+function numberedAgainNotice() {
   const message = "The players' tracks were numbered again since this page was opened (for example by a full analysis "
     + "from another tab), so your unsaved track choices were dropped.";
-  showByTracks(byId("tracks").hidden
+  return byId("tracks").hidden
     ? gamePageNotice("Film analysed again", message, "There are no tracks to assign now: see the game page.")
-    : notice("warning", "Film analysed again", message, "Make them again in the new table."));
+    : notice("warning", "Film analysed again", message, "Make them again in the new table.");
 }
 
 /** The earlier run's track ids are gone, with their assignments and the choices not saved yet (true when there were some). */
@@ -526,7 +590,10 @@ function dropTracks() {
   state.pending.clear();
   state.tracks = [];
   state.overrides = new Map();
+  state.removedChoices.clear(); // the track ids it names went too
+  sayRemovedChoices();
   setChildren(byId("tracks-body"));
+  byId("tracks-count").textContent = "";
   show(byId("tracks"), false);
   return dropped;
 }
@@ -543,6 +610,13 @@ function showByTracks(box) {
 function gamePageNotice(title, message, hint) {
   const box = notice("warning", title, message, hint);
   box.append(el("div", { class: "notice-actions" }, el("a", { class: "btn", href: `/games/${encodeURIComponent(gameId)}`, text: "Open the game page" })));
+  return box;
+}
+
+/** A notice whose way on is reloading the page. */
+function reloadNotice(title, message, hint) {
+  const box = notice("warning", title, message, hint);
+  box.append(el("div", { class: "notice-actions" }, el("button", { type: "button", text: "Reload the page", onClick: () => window.location.reload() })));
   return box;
 }
 
@@ -571,55 +645,91 @@ function lockAssignments() {
 
 /**
  * Track assignments wait for a full analysis: say so by the tracks table, lock them and poll the job.
- * When it ends, load the game and its tracks again (after a first analysis the table appears).
+ * When it ends, load the game and its tracks again (after a first analysis the table appears). When another tab
+ * cancelled it and started another full analysis meanwhile, wait for that one too, the table still locked.
  * Rosters can be edited and saved meanwhile.
  */
 async function waitForAnalysis(job) {
   if (state.analyzing) return;
-  state.analyzing = job;
-  const wait = byId("tracks-wait");
-  setChildren(wait, notice("info", "Film analysis in progress",
-    "Track assignments can be made once it has finished: a full analysis numbers the players' tracks again and clears their assignments.",
-    "You can keep editing the rosters. This table updates when the analysis is done."));
-  show(wait, true);
-  lockAssignments();
-  let final;
-  try {
-    final = await pollJob(job.id, null, { intervalMs: ANALYSIS_POLL_MS });
-  } catch {
-    const box = notice("warning", "Stopped checking the film analysis",
-      "The page could not find out whether the analysis has finished, so track assignments stay locked.", "Reload the page to check again.");
-    box.append(el("div", { class: "notice-actions" }, el("button", { type: "button", text: "Reload the page", onClick: () => window.location.reload() })));
-    setChildren(wait, box);
-    return;
+  let dropped = false; // the unsaved choices went when an analysis waited for ended
+  let said = null; // what the end of the one before said: it stays in view while the page waits for the next
+  for (;;) {
+    state.analyzing = job;
+    const wait = byId("tracks-wait");
+    const waiting = notice("info", "Film analysis in progress",
+      "Track assignments can be made once it has finished: a full analysis numbers the players' tracks again and clears their assignments.",
+      "You can keep editing the rosters. This table updates when the analysis is done.");
+    if (said) showByTracks(said);
+    if (said && !byId("tracks").hidden) wait.append(waiting);
+    else setChildren(wait, waiting);
+    show(wait, true);
+    lockAssignments();
+    let final;
+    try {
+      final = await pollJob(job.id, null, { intervalMs: ANALYSIS_POLL_MS });
+    } catch {
+      waiting.remove();
+      // By the table, or where it was: with no table (a first analysis, or one before that left none) its card is hidden.
+      (byId("tracks").hidden ? byId("tracks-gone") : wait).append(reloadNotice("Stopped checking the film analysis",
+        "The page could not find out whether the analysis has finished, so track assignments stay locked.", "Reload the page to check again."));
+      return;
+    }
+    const game = await api.get(gamePath(gameId)).catch(() => null);
+    const latest = game?.latest_job_id && game.latest_job_id !== job.id ? await api.get(jobPath(game.latest_job_id)).catch(() => null) : null;
+    const next = isFullAnalysis(latest) ? latest : null;
+    const tableShown = !byId("tracks").hidden;
+    const hadRows = tableShown && state.tracks.length > 0;
+    // Installing the new run deletes the earlier run's analysis first, so a game left without one has none of the
+    // earlier run's tracks to show, also when the job failed before its stage said it had installed.
+    if (tracksRenumbered(final) || (game && !game.has_analysis)) dropped = dropTracks() || dropped;
+    if (game) state.game = game;
+    state.analyzing = next; // the next full analysis keeps the table locked
+    clearError(byId("tracks-error")); // the 409 that started the wait, if one did
+    clearError(byId("page-error")); // a refused Re-run analysis, if one started it
+    if (!next) {
+      showByTracks(null);
+      lockAssignments();
+    }
+    // Choices still kept are for the tracks the table showed, which a full analysis before this one may have numbered again.
+    let box;
+    if (state.game.has_analysis && (await loadTracks())) {
+      dropped = true;
+      box = numberedAgainNotice();
+    } else {
+      box = finishedNotice(dropped, tableShown, hadRows);
+    }
+    if (!next) {
+      showByTracks(box);
+      return;
+    }
+    said = box || said;
+    job = next;
   }
-  const game = await api.get(gamePath(gameId)).catch(() => null);
-  const tableShown = !byId("tracks").hidden;
-  let dropped = false;
-  // Installing the new run deletes the earlier run's analysis first, so a game left without one has none of the
-  // earlier run's tracks to show, also when the job failed before its stage said it had installed.
-  if (tracksRenumbered(final) || (game && !game.has_analysis)) dropped = dropTracks();
-  if (game) state.game = game;
-  state.analyzing = null;
-  clearError(byId("tracks-error")); // the 409 that started the wait, if one did
-  clearError(byId("page-error")); // a refused Re-run analysis, if one started it
-  showByTracks(null);
-  lockAssignments();
-  // Choices still kept are for the tracks the table showed, which a full analysis before this one may have numbered again.
-  if (state.game.has_analysis && (await loadTracks())) {
-    sayNumberedAgain();
-    return;
-  }
+}
+
+/**
+ * What the end of a full analysis says by the tracks table, or where it was; null when there is nothing to say.
+ * dropped: the unsaved choices went. tableShown: the page showed the table when the analysis ended; hadRows: with tracks.
+ */
+function finishedNotice(dropped, tableShown, hadRows) {
+  const hidden = byId("tracks").hidden;
+  // The new run's tracks could not be read: the card shows that error and no rows, so there is no table to use.
+  const unread = !hidden && !state.tracks.length;
   // With no new table (the analysis failed after installing its run) its card stays hidden: say so where it was,
   // also when no choices went (the wait said this table would update).
-  const tableWent = tableShown && byId("tracks").hidden;
-  if (!dropped && !tableWent) return;
-  showByTracks(byId("tracks").hidden
-    ? gamePageNotice("Film analysis finished without results", dropped
+  if (!dropped && !(tableShown && hidden) && !unread) return null;
+  if (hidden) {
+    return gamePageNotice("Film analysis finished without results", dropped
       ? "A full analysis numbers the players' tracks again, so your unsaved track choices were dropped."
-      : "There are no tracks to assign now.", "See the game page for what went wrong.")
-    : notice("info", "Film analysis finished",
-      "It numbered the players' tracks again, so your unsaved track choices were dropped. Make them again in the new table."));
+      : "There are no tracks to assign now.", "See the game page for what went wrong.");
+  }
+  const renumbered = "It numbered the players' tracks again";
+  if (unread) {
+    // The rows shown went because it numbered the tracks again; with none shown (a first analysis) nothing went.
+    const message = dropped ? `${renumbered}, so your unsaved track choices were dropped.` : hadRows ? `${renumbered}.` : null;
+    return reloadNotice("Film analysis finished", message, "Reload the page to see the new table.");
+  }
+  return notice("info", "Film analysis finished", `${renumbered}, so your unsaved track choices were dropped. Make them again in the new table.`);
 }
 
 /** A track change or the re-run was refused (409): if a full analysis started after the page loaded, wait for it. */
@@ -652,8 +762,9 @@ async function loadTracks() {
     }
     return false;
   }
-  // Numbered again since the choices were made: on the new tracks with those numbers they would name other players.
-  const dropped = state.pending.size > 0 && !sameTracking(data.assignments || []) && dropTracks();
+  // Numbered again since the table was loaded: on the new tracks with those numbers the choices kept would name other
+  // players, and the notice of the choices that went with their player other tracks.
+  const dropped = !sameTracking(data.assignments || []) && dropTracks();
   setTracks(data);
   return dropped;
 }

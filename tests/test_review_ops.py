@@ -485,7 +485,7 @@ def test_architecture_documents_the_review_requested_contracts():
         "`AUTH_THROTTLED` (429 with `Retry-After`",
         "`AUTH_NOT_CONFIGURED` (503",
         "Only one REPORT job per game",
-        "clears the\n  track overrides",
+        "and clears the track overrides, the coach's team-colour choice",  # a new film (re-wrapped in round 6)
         "`track_id` in the body is optional",
         "newest job first",
         "GET /api/games/{id}/export/fastscout-notes?side=scouted",

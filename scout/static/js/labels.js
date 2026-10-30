@@ -131,13 +131,25 @@ export function jobKindLabel(kind) {
   return JOB_KIND_LABELS[kind] || "Job";
 }
 
-/** Plain-English job stage, e.g. "Analyzing on the GPU (42%)". */
+/** The stages from which a cancel no longer stops a job of each kind (scout.schemas.cancel_stops_job). */
+const TOO_LATE_TO_CANCEL = {
+  analyze: ["analyzing", "reporting"], // its new results are installed
+  reanalyze: ["analyzing", "reporting"], // its analysis has started
+  report: ["reporting"], // Claude is writing the report
+};
+
+/** A cancel no longer stops this job: it runs to the end, and a cancel only skips a report it was still to write. */
+export function tooLateToStop(job) {
+  return Boolean(TOO_LATE_TO_CANCEL[job.kind]?.includes(job.stage));
+}
+
+/** Plain-English job stage, e.g. "Analyzing on the GPU (42%)"; a job a cancel no longer stops keeps its stage. */
 export function jobStageText(job) {
   if (!job) return "";
   if (job.status === "succeeded") return "Finished";
   if (job.status === "failed") return "Failed";
   if (job.status === "cancelled") return "Cancelled";
-  if (job.cancel_requested) return "Cancelling…";
+  if (job.cancel_requested && !tooLateToStop(job)) return "Cancelling…";
   if (job.kind === "report" && job.stage !== "queued") return STAGE_LABELS.reporting;
   const label = STAGE_LABELS[job.stage] || "Working";
   return job.stage === "gpu_processing" ? `${label} (${Math.round(job.progress || 0)}%)` : label;

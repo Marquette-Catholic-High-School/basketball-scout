@@ -208,10 +208,12 @@ def test_a_reanalysis_or_a_report_still_stops_for_a_cancel(filmed_game, queue, f
     assert _state(game.id) == earlier and db.get_game(game.id).status == GameStatus.READY
 
 
-def test_a_reanalysis_cancelled_during_its_analysis_still_skips_the_report_as_cancelled(
+def test_a_reanalysis_cancelled_during_its_analysis_finishes_it_and_skips_the_report(
     filmed_game, queue, fakes, monkeypatch  # noqa: F811
 ):
-    """(Guard.) A REANALYZE keeps its cancel behaviour: no report, and the job ends cancelled."""
+    """No report. Until round 6 the job then ended cancelled over the analysis it had saved; since then a
+    cancel no longer stops a REANALYZE once its analysis has started (docs/ARCHITECTURE.md, "Job
+    lifecycle"): it succeeds, and the job warning says the report was skipped."""
     settings = _settings(monkeypatch, auto_report=True)
     _analysed(filmed_game)
     job = submit_job(filmed_game.id, JobKind.REANALYZE, {"report": True}, queue=queue)
@@ -219,7 +221,8 @@ def test_a_reanalysis_cancelled_during_its_analysis_still_skips_the_report_as_ca
     make_worker(FakeProcessor(), queue, settings).run_once(timeout=1)
 
     done = db.get_job(job.id)
-    assert (done.status, done.warnings) == (JobStatus.CANCELLED, [])
+    skipped = "Cancelled after the analysis had started: the analysis was finished, the scouting report was skipped."
+    assert (done.status, done.warnings) == (JobStatus.SUCCEEDED, [skipped])
     assert len(fakes.analyze) == 1 and fakes.reports == []
     assert db.get_game(filmed_game.id).status == GameStatus.READY
 
@@ -471,7 +474,7 @@ def test_a_full_reanalysis_shows_no_analysis_until_its_own_is_saved(
     make_worker(NewRun(annotated=True), queue).run_once(timeout=1)
 
     assert db.get_job(job.id).status == JobStatus.SUCCEEDED
-    assert {"has_annotated_video": True, "has_analysis": False} in updates
+    assert {"has_annotated_video": True, "has_tracking": True, "has_analysis": False} in updates
     assert earlier_analysis_on_disk == [False]
     stored = db.get_game(game.id)
     assert (stored.status, stored.has_analysis, stored.has_annotated_video) == (GameStatus.READY, True, True)
@@ -480,13 +483,14 @@ def test_a_full_reanalysis_shows_no_analysis_until_its_own_is_saved(
 
 
 def test_a_first_analysis_installs_as_before(filmed_game, queue, fakes, monkeypatch):  # noqa: F811
-    """(Guard.) Nothing to replace: the install only sets the overlay flag."""
+    """(Guard.) Nothing to replace: the install only sets the overlay and tracking flags (has_tracking since
+    round 6)."""
     updates = _game_updates(monkeypatch)
     job = submit_job(filmed_game.id, JobKind.ANALYZE, queue=queue)
     make_worker(NewRun(annotated=True), queue).run_once(timeout=1)
 
     assert db.get_job(job.id).status == JobStatus.SUCCEEDED
-    assert {"has_annotated_video": True} in updates
+    assert {"has_annotated_video": True, "has_tracking": True} in updates
     assert all(changes.get("has_analysis") is not False for changes in updates)
     stored = db.get_game(filmed_game.id)
     assert (stored.status, stored.has_analysis, stored.has_annotated_video) == (GameStatus.READY, True, True)

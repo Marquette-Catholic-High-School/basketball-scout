@@ -14,7 +14,8 @@ and the coach's browser polls it, so every step updates ``stage``, ``progress`` 
 
 A restart never pays for a second GPU run: the processor handle (the Modal
 FunctionCall id) is saved on the job right after submit, and a claimed job that
-already has one resumes polling instead of resubmitting. On SIGTERM the worker stops
+already has one resumes polling instead of resubmitting (or, if its worker died after
+installing the results, goes straight on to the analysis). On SIGTERM the worker stops
 claiming, jobs waiting on the GPU leave their polling loop without failing and their
 lease is expired on the spot, so the next worker picks them up at once. A worker that
 dies without warning is covered by the lease: it runs out and another worker re-claims
@@ -62,6 +63,7 @@ from scout.schemas import (
     Roster,
     TeamSide,
     TrackingResult,
+    cancel_stops_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,12 @@ LATE_CANCEL_WARNING = "Cancelled after the new GPU results were in place: the an
 LATE_CANCEL_REPORT_SKIPPED_WARNING = (
     "Cancelled after the new GPU results were in place: the analysis was finished, the scouting report was skipped."
 )
+# The same for a REANALYZE whose analysis had started, and for a REPORT that Claude had started writing.
+LATE_REANALYZE_CANCEL_WARNING = "Cancelled after the analysis had started: the analysis was finished."
+LATE_REANALYZE_CANCEL_REPORT_SKIPPED_WARNING = (
+    "Cancelled after the analysis had started: the analysis was finished, the scouting report was skipped."
+)
+LATE_REPORT_CANCEL_WARNING = "Cancelled after Claude had started writing the report: the report was kept."
 
 
 class _Cancelled(Exception):
@@ -231,10 +239,11 @@ class Worker:
         try:
             run.processor = self._processor_for(job)
             out_of_attempts = job.attempts > job.max_attempts
-            # Before WORKER_LOST: the coach asked for a cancel, not a failure. An ANALYZE whose results were
-            # installed before its worker died finishes its analysis instead (_run_analyze), unless its
-            # workers keep dying (maybe the analysis is what kills them).
-            if job.cancel_requested and (out_of_attempts or not _installed_before_claim(job)):
+            # Before WORKER_LOST: the coach asked for a cancel, not a failure. A job whose worker died past the
+            # point a cancel stops it at (an ANALYZE whose results it had installed, a REANALYZE whose analysis
+            # it had started, a REPORT Claude was writing) runs to the end instead, as the coach was told,
+            # unless its workers keep dying (maybe the job is what kills them).
+            if job.cancel_requested and (out_of_attempts or not _claimed_too_late_to_cancel(job)):
                 raise _Cancelled
             if out_of_attempts:
                 raise ScoutError(ErrorCode.WORKER_LOST)
@@ -259,35 +268,24 @@ class Worker:
     def _run_analyze(self, run: _Run) -> None:
         job = run.job
         self._set_game_status(job.game_id, GameStatus.PROCESSING, error=None)
-        try:
-            self._fetch_results(run)
-        except _Cancelled:
-            if not _installed_before_claim(job):
-                raise
-            # Its worker died after installing this very run: too late for a cancel to keep the earlier
-            # one, so the analysis runs from the installed results (a new download of them is thrown away).
-            self._check_owner(job.id)  # deleted with its game: nothing left to finish
-            shutil.rmtree(storage.incoming_dir(job.game_id), ignore_errors=True)
+        if _installed_before_claim(job):
+            # Its worker died after installing this very run: the analysis goes on from the installed results,
+            # with or without a cancel. Polling the call and downloading them again would put the stage back
+            # to gpu_processing, where a graceful stop hands the job back as one not installed yet.
+            shutil.rmtree(storage.incoming_dir(job.game_id), ignore_errors=True)  # a stale worker's download of them
             run.gpu_finished = True  # it finished before the install
+        else:
+            self._fetch_results(run)
         # With the new run's tracking in place, stopping would leave the game without an analysis of it:
         # a cancel no longer stops the analysis, it only skips the report.
         analysis = self._analyze(run, PROGRESS_ANALYZING, cancellable=False)
         report_due = self.settings.auto_report and self.settings.claude_configured
-        try:
-            self._check_cancel(job.id)  # taken over during the analysis: the new owner finishes the job
-            if report_due:
-                self._report_as_warning(run, analysis, PROGRESS_REPORTING)
-                # Taken over while Claude wrote it: as above. Cancelled meanwhile: too late to skip it.
-                if self._check_owner(job.id).cancel_requested:
-                    self._add_warnings(run, [LATE_CANCEL_WARNING])
-        except _Cancelled:  # here, or at the report's own check just before it started
-            self._check_owner(job.id)  # deleted with its game: nothing left to finish
-            self._add_warnings(run, [LATE_CANCEL_REPORT_SKIPPED_WARNING if report_due else LATE_CANCEL_WARNING])
+        self._report_after_analysis(run, analysis, report_due, LATE_CANCEL_WARNING, LATE_CANCEL_REPORT_SKIPPED_WARNING)
 
     def _fetch_results(self, run: _Run) -> None:
         """PREPARING .. DOWNLOADING, then the install: the GPU's new results in the game folder."""
         job = run.job
-        if job.cancel_requested:  # claimed with one: process_job lets only a job installed before through
+        if job.cancel_requested:  # claimed with one: process_job ended it unless it was installed (no fetch then)
             raise _Cancelled
         if run.handle is None:
             handle = self._submit(run)
@@ -307,12 +305,39 @@ class Worker:
 
     def _run_reanalyze(self, run: _Run) -> None:
         self._set_game_status(run.job.game_id, GameStatus.PROCESSING, error=None)
-        analysis = self._analyze(run, PROGRESS_SHORT_JOB_START)
-        if run.job.params.get("report"):
-            self._report_as_warning(run, analysis, PROGRESS_REPORTING)
+        # A cancel stops it until the analysis starts (here, or before its worker died); after that it only
+        # skips the report (params.report).
+        cancellable = not _claimed_too_late_to_cancel(run.job)
+        analysis = self._analyze(run, PROGRESS_SHORT_JOB_START, cancellable=cancellable)
+        report_due = bool(run.job.params.get("report"))
+        self._report_after_analysis(
+            run, analysis, report_due, LATE_REANALYZE_CANCEL_WARNING, LATE_REANALYZE_CANCEL_REPORT_SKIPPED_WARNING
+        )
 
     def _run_report(self, run: _Run) -> None:
-        self._write_report(run, None, PROGRESS_SHORT_JOB_START)
+        # A cancel stops it until Claude starts writing (here, or before its worker died).
+        cancellable = not _claimed_too_late_to_cancel(run.job)
+        self._write_report(run, None, PROGRESS_SHORT_JOB_START, cancellable=cancellable)
+        # Cancelled while Claude wrote it: too late to skip it, so it is kept. Taken over: the new owner finishes.
+        if self._check_owner(run.job.id).cancel_requested:
+            self._add_warnings(run, [LATE_REPORT_CANCEL_WARNING])
+
+    def _report_after_analysis(
+        self, run: _Run, analysis: GameAnalysis, report_due: bool, late: str, late_report_skipped: str
+    ) -> None:
+        """Once the analysis has started a cancel no longer stops the job: it only skips the report Claude has
+        not started writing yet, and the job warning ``late`` or ``late_report_skipped`` says so."""
+        job = run.job
+        try:
+            self._check_cancel(job.id)  # taken over during the analysis: the new owner finishes the job
+            if report_due:
+                self._report_as_warning(run, analysis, PROGRESS_REPORTING)
+                # Taken over while Claude wrote it: as above. Cancelled meanwhile: too late to skip it.
+                if self._check_owner(job.id).cancel_requested:
+                    self._add_warnings(run, [late])
+        except _Cancelled:  # here, or at the report's own checks just before Claude started
+            self._check_owner(job.id)  # deleted with its game: nothing left to finish
+            self._add_warnings(run, [late_report_skipped if report_due else late])
 
     # --- ANALYZE steps --------------------------------------------------------
 
@@ -456,7 +481,7 @@ class Worker:
             _move_into_place(overlay, annotated)
         # At once, not when the analysis is saved: a job that fails after this point must not leave
         # the flags pointing at removed files, or hide a new overlay.
-        changes: dict[str, Any] = {"has_annotated_video": annotated.exists()}
+        changes: dict[str, Any] = {"has_annotated_video": annotated.exists(), "has_tracking": tracking.is_file()}
         if replaces_earlier_run:
             changes["has_analysis"] = False  # until the new analysis is saved
         self._update_game(game_id, **changes)
@@ -467,7 +492,10 @@ class Worker:
     def _analyze(self, run: _Run, progress: float, *, cancellable: bool = True) -> GameAnalysis:
         """ANALYZING: tracking.json.gz + rosters + track overrides -> analysis.json; the game becomes READY.
 
-        ``cancellable=False``: an ANALYZE that installed its new results runs the analysis despite a cancel.
+        ``cancellable=False``: an ANALYZE that installed its new results, or a REANALYZE whose worker died
+        after its analysis had started (claimed at analyzing or reporting), runs the analysis despite a
+        cancel. A REANALYZE stops for a cancel only until this stage is written: from then on
+        db.request_cancel tells the coach it is too late (``cancel_stops_job``).
         """
         job = run.job
         if cancellable:
@@ -481,7 +509,9 @@ class Worker:
                 "There is no tracking data for this game yet, so it cannot be analysed.",
                 hint="Upload the film and run the full analysis first.",
             )
-        self._stage(job.id, JobStage.ANALYZING, progress, "Building the timeline, plays and box score")
+        staged = self._stage(job.id, JobStage.ANALYZING, progress, "Building the timeline, plays and box score")
+        if cancellable and staged.cancel_requested:  # asked for before the stage was written: still in time
+            raise _Cancelled
         tracking = pipeline.load_tracking(tracking_file)
         game = db.require_game(job.game_id)
         rosters = db.get_rosters(game.id)
@@ -529,16 +559,28 @@ class Worker:
             logger.exception("Job %s: scouting report crashed", run.job.id)
             self._add_warnings(run, [f"Scouting report not generated: {ScoutError(ErrorCode.INTERNAL_ERROR).title}"])
 
-    def _write_report(self, run: _Run, analysis: GameAnalysis | None, progress: float) -> None:
-        """REPORTING: ask Claude for the scouting report and store it."""
+    def _write_report(
+        self, run: _Run, analysis: GameAnalysis | None, progress: float, *, cancellable: bool = True
+    ) -> None:
+        """REPORTING: ask Claude for the scouting report and store it.
+
+        A cancel skips the report only until this stage is written (from then on db.request_cancel tells
+        the coach it is too late): it ends a REPORT job, and only skips the report after an analysis.
+        ``cancellable=False``: a REPORT whose worker died while Claude wrote it is written despite a cancel.
+        """
         job = run.job
-        self._check_cancel(job.id)
+        if cancellable:
+            self._check_cancel(job.id)
+        else:
+            self._check_owner(job.id)
         if analysis is None:
             path = storage.analysis_path(job.game_id)
             if not path.exists():
                 raise ScoutError(ErrorCode.ANALYSIS_NOT_READY)
             analysis = pipeline.load_analysis(path)
-        self._stage(job.id, JobStage.REPORTING, progress, "Writing the scouting report with Claude")
+        staged = self._stage(job.id, JobStage.REPORTING, progress, "Writing the scouting report with Claude")
+        if cancellable and staged.cancel_requested:  # asked for before the stage was written: still in time
+            raise _Cancelled
         record = claude_report.generate_report(
             analysis,
             db.require_game(job.game_id),
@@ -672,9 +714,11 @@ class Worker:
             logger.warning("Job %s names unknown processor %r; using %s", job.id, job.processor, self.processor.name)
             return self.processor
 
-    def _stage(self, job_id: str, stage: JobStage, progress: float, message: str) -> None:
+    def _stage(self, job_id: str, stage: JobStage, progress: float, message: str) -> Job:
+        """Write the job's new stage; returns the stored job as of that write (its ``cancel_requested`` says
+        whether a cancel came before it, see db.request_cancel)."""
         logger.info("Job %s: %s - %s", job_id, stage.value, message)
-        db.update_job(job_id, stage=stage, progress=progress, message=message)
+        return db.update_job(job_id, stage=stage, progress=progress, message=message)
 
     def _add_warnings(self, run: _Run, warnings: list[str]) -> None:
         new = [w for w in warnings if w not in run.warnings]
@@ -850,13 +894,23 @@ def _installed_before_claim(job: Job) -> bool:
     )
 
 
+def _claimed_too_late_to_cancel(job: Job) -> bool:
+    """Claimed at a stage a cancel no longer stops the job at (``cancel_stops_job``, the rule the coach's
+    cancel answer follows): a worker that died since had got past the point of no return, so the job runs
+    to the end. An ANALYZE also needs the results it installed (_installed_before_claim)."""
+    if job.kind == JobKind.ANALYZE:
+        return _installed_before_claim(job)
+    return not cancel_stops_job(job.kind, job.stage)
+
+
 def _file_flags(game_id: str) -> dict[str, bool]:
-    """has_analysis / has_annotated_video as the files on disk say, for a job that ends without its
-    analysis: a worker killed in the middle of _install_outputs (or before it marked the game ready)
-    left them stale."""
+    """has_analysis / has_annotated_video / has_tracking as the files on disk say, for a job that ends
+    without its analysis: a worker killed in the middle of _install_outputs (or before it marked the game
+    ready) left them stale."""
     return {
         "has_analysis": storage.analysis_path(game_id).is_file(),
         "has_annotated_video": storage.annotated_video_path(game_id).is_file(),
+        "has_tracking": storage.tracking_path(game_id).is_file(),
     }
 
 

@@ -2,7 +2,7 @@
 
 import { api, gamePath, jobPath } from "./api.js";
 import { resolveColor } from "./colors.js";
-import { STATUS_LABELS, WORKER_STALE_S, jobStageText, workerWarning } from "./labels.js";
+import { STATUS_LABELS, WORKER_STALE_S, jobStageText, tooLateToStop, workerWarning } from "./labels.js";
 import { byId, el, setChildren, showError, clearError, formatDate, formatAgo, toast, withBusy } from "./ui.js";
 
 const REFRESH_MS = 5000;
@@ -86,8 +86,11 @@ function progressBlock(job) {
   const pct = job ? Math.round(job.progress || 0) : 0;
   const bar = el("div", { class: `progress${job ? "" : " progress-indeterminate"}`, role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(pct), "aria-label": "Processing progress" },
     el("span", { style: { width: `${pct}%` } }));
+  // After a cancel request the job's own message is left out: the stage says "Cancelling…", or for a job a cancel
+  // no longer stops (it runs to the end) the stage stays and "Cancel requested" follows.
+  const note = job?.cancel_requested ? (tooLateToStop(job) ? "Cancel requested" : null) : job?.message;
   return el("div", { class: "game-progress" },
-    el("div", { class: "progress-text", text: job ? `${jobStageText(job)} · ${pct}%${job.message ? ` · ${job.message}` : ""}` : "Waiting for the worker…" }),
+    el("div", { class: "progress-text", text: job ? [jobStageText(job), `${pct}%`, note].filter(Boolean).join(" · ") : "Waiting for the worker…" }),
     bar);
 }
 

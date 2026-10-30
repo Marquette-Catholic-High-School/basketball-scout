@@ -63,7 +63,7 @@ let phase = "uploaded";
 const run = () => job({ id: "j_2", ...(phase === "ready" ? { status: "succeeded", stage: "done", progress: 100 }
   : { status: "running", stage: "gpu_processing", progress: 40 }) });
 gamePageRoutes(route, json, {
-  gameBody: () => game(phase === "ready" ? { latest_job_id: "j_2" }
+  gameBody: () => game(phase === "ready" ? { has_tracking: true, latest_job_id: "j_2" }
     : { status: phase === "uploaded" ? "uploaded" : "processing", has_analysis: false, latest_job_id: phase === "uploaded" ? null : "j_2" }),
   analysisBody: analysis(),
 });
@@ -107,7 +107,7 @@ console.log(JSON.stringify({ started, finished: textOf(button()), posts }));
             id="never-analysed",
         ),
         pytest.param(
-            {},
+            {"has_tracking": True},
             "Re-run analysis",
             "Calibration removed. Re-run the analysis to go back to automatic court detection.",
             id="analysed",
@@ -210,7 +210,7 @@ seen.fullQuestion = confirms.splice(0)[0] || null;
 const startAgain = $$("#job-panel button").find((b) => textOf(b) === "Start again");
 if (startAgain) startAgain.click();
 await settle();
-seen.startAgain = { offered: Boolean(startAgain), confirms: confirms.splice(0), posts: posts.splice(0) };
+seen.startAgain = { offered: Boolean(startAgain), confirms: confirms.splice(0), posts: posts.splice(0), retries: retries.splice(0) };
 console.log(JSON.stringify(seen));
 """
 
@@ -258,10 +258,11 @@ def test_every_game_shape_names_and_starts_the_same_job_in_the_header_and_the_ca
     if shape == "full-reanalysis-cancelled-while-queued":
         assert out["fullQuestion"] and "GPU again" in out["fullQuestion"]
         assert start_again["confirms"] == [out["fullQuestion"]]  # the Full re-analysis button's question
-        assert start_again["posts"] == []
+        assert (start_again["posts"], start_again["retries"]) == ([], [])
     elif shape == "first-analysis-cancelled-while-queued":
         assert (out["fullQuestion"], start_again["confirms"]) == (None, [])
-        assert start_again["posts"] == [{"kind": "analyze"}]
+        # Round 6: Start again sends the server's retry of the cancelled job (its kind and params).
+        assert (start_again["posts"], start_again["retries"]) == ([], [game["latest_job_id"]])
 
     # What the calibration's button posts, as the real server runs it.
     gpu_runs = list(scout.gpu_runs)

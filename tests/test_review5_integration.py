@@ -130,9 +130,9 @@ for (const [name, next, click] of STEPS) {
 console.log(JSON.stringify({ looks, sent, navigatedTo: page.window.navigatedTo || null }));
 """
 
-# Tab B, the game page, on GAME_PAGE_JS (``phases.during``; job posts are recorded in ``posts`` and
-# answered 503). ACTIONS are the coach's clicks; confirms are accepted. ``writes`` lists the other
-# requests that change something (the calibration, a cancel).
+# Tab B, the game page, on GAME_PAGE_JS (``phases.during``; job posts are recorded in ``posts``, Start
+# again and Retry in ``retries``, all answered 503). ACTIONS are the coach's clicks; confirms are accepted.
+# ``writes`` lists the other requests that change something (the calibration, a cancel).
 GAME_TAB_JS = """
 const writes = [];
 route("GET", "/api/court/landmarks", json({ court: {}, landmarks }));
@@ -155,7 +155,7 @@ for (const action of ACTIONS) {
   await settle();
   looks[action] = look();
 }
-console.log(JSON.stringify({ looks, confirms, posts, writes }));
+console.log(JSON.stringify({ looks, confirms, posts, retries, writes }));
 """
 
 
@@ -238,9 +238,10 @@ def _start_full_reanalysis(tmp_path, scout, game_id: str, trigger: str) -> dict:
     assert (loaded["panel"], loaded["panelButtons"]) == ("Film analysis was cancelled", ["Start again"])
     [question] = out["confirms"]
     assert _is_full_run_question(question), question  # the Full re-analysis button's own question
-    assert out["posts"] == [{"kind": "analyze"}]
-    started = client.post(f"/api/games/{game_id}/jobs", json=out["posts"][0])
-    assert started.status_code == 201, started.text
+    assert (out["posts"], out["retries"]) == ([], [full["id"]])  # round 6: the server's retry of the cancelled job
+    started = client.post(f"/api/jobs/{full['id']}/retry")
+    assert started.status_code == 200, started.text
+    assert started.json()["kind"] == "analyze"
     return started.json()
 
 

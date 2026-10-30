@@ -2,7 +2,7 @@
 // optional coach focus, history, Markdown download and print.
 
 import { api, gamePath, pollJob } from "./api.js";
-import { jobStageText } from "./labels.js";
+import { jobStageText, tooLateToStop } from "./labels.js";
 import { byId, clearError, el, formatDateTime, notice, setChildren, show, showError, toast } from "./ui.js";
 
 const LIST_SECTIONS = [
@@ -156,7 +156,10 @@ export class Report {
     const status = byId("report-status");
     button.disabled = true;
     const update = (j) => {
-      status.textContent = `${jobStageText(j)}… This usually takes one to three minutes.`;
+      // A cancel stops the report until Claude starts writing it; after that it is finished and kept.
+      if (!j.cancel_requested) status.textContent = `${jobStageText(j)}… This usually takes one to three minutes.`;
+      else if (tooLateToStop(j)) status.textContent = `${jobStageText(j)}… Cancel requested: Claude is already writing it, so it will finish and be kept.`;
+      else status.textContent = jobStageText(j);
     };
     update(job);
     try {

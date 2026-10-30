@@ -44,12 +44,17 @@ const analysisRunning = (game) => game.status === "queued" || game.status === "p
 /** The GPU could not find free throws (no court positions); a GPU run with a calibration can. */
 const freeThrowsMissing = (analysis) => Boolean(analysis?.data_quality?.warnings?.some((w) => w.code === "FREE_THROWS_NOT_DETECTED"));
 
+/** A job that failed after the GPU results were installed: the server retries such an ANALYZE as a REANALYZE. */
+const failedPastTheGpu = (job) => job.status === "failed" && ["analyzing", "reporting"].includes(job.stage);
+
 /**
  * An ANALYZE job that got past the GPU installed a new annotated copy (same URL): it succeeded,
  * or failed afterwards (the server's rule for retrying it as a REANALYZE, which keeps that copy).
  */
-const replacedAnnotatedCopy = (job) => job?.kind === "analyze"
-  && (job.status === "succeeded" || (job.status === "failed" && ["analyzing", "reporting"].includes(job.stage)));
+const replacedAnnotatedCopy = (job) => job?.kind === "analyze" && (job.status === "succeeded" || failedPastTheGpu(job));
+
+/** Start again or Retry of this job sends the film to the GPU: an ANALYZE, unless the server retries it as a REANALYZE. */
+const retriedOnTheGpu = (job) => job.kind === "analyze" && !failedPastTheGpu(job);
 
 function teamNames(game, analysis) {
   const name = (side) => analysis?.teams?.find((t) => t.side === side)?.name;
@@ -200,10 +205,19 @@ function renderPending(game, analysis) {
     setChildren(box, errorBox({ info: game.error }));
     return;
   }
+  // A Re-run analysis only redoes the stats on this server; an ANALYZE waits for the GPU.
+  const running = state.analysisJob?.kind === "reanalyze"
+    ? ["Results will appear here when the analysis finishes.", "Re-run analysis takes about a minute on this server."]
+    : ["Results will appear here when the analysis finishes.", "Long games can take 30-60 minutes on the GPU."];
   const messages = {
-    uploaded: ["This film hasn't been analyzed yet.", "Click Analyze film to send it to the GPU."],
-    queued: ["Results will appear here when the analysis finishes.", "Long games can take 30-60 minutes on the GPU."],
-    processing: ["Results will appear here when the analysis finishes.", "Long games can take 30-60 minutes on the GPU."],
+    // The GPU results can be here without an analysis (a failure after the GPU, or a Full re-analysis cancelled
+    // after one): the header then offers Re-run analysis.
+    uploaded: game.has_tracking
+      ? ["The GPU results for this film are saved, but the stats have not been built from them yet.",
+        "Click Re-run analysis to build them on this server (about a minute, no GPU)."]
+      : ["This film hasn't been analyzed yet.", "Click Analyze film to send it to the GPU."],
+    queued: running,
+    processing: running,
     // The job panel's button reads Retry, Re-run analysis (GPU results saved) or is absent (not retryable).
     failed: ["There are no results because the analysis failed.", "See the error above and run the analysis again once the problem is fixed."],
     ready: ["The analysis could not be loaded.", "Reload the page; if it keeps happening, re-run the analysis."],
@@ -213,16 +227,10 @@ function renderPending(game, analysis) {
 }
 
 /**
- * The GPU results are on the server although the game has no analysis: its latest analysis job failed after
- * they were saved (an ANALYZE at analyzing or reporting, which the server retries as a REANALYZE; or a
- * REANALYZE, which needs them to start). Installing a full re-analysis deletes the earlier analysis, so this
- * is also where a failed one leaves the game. A new film since then would have made the game "uploaded".
+ * Re-run analysis (stats on this server) whenever the GPU results are on the server (Game.has_tracking), also
+ * when a cancel or a failure left the game without an analysis; else the GPU run.
  */
-const gpuResultsSaved = (game, job) => game?.status === "failed" && job?.status === "failed"
-  && (job.kind === "reanalyze" || (job.kind === "analyze" && ["analyzing", "reporting"].includes(job.stage)));
-
-/** Re-run analysis (stats on this server) whenever there is tracking to redo them from; else the GPU run. */
-const rerunKind = () => (state.game?.has_analysis || gpuResultsSaved(state.game, state.analysisJob) ? "reanalyze" : "analyze");
+const rerunKind = () => (state.game?.has_tracking ? "reanalyze" : "analyze");
 
 // ---------------------------------------------------------------------------
 // Header, team confirmation, analysis actions
@@ -382,8 +390,9 @@ function init() {
       refresh();
     },
     onUpdate: showJobStatus,
-    // Start again on a cancelled Full re-analysis sends the film to the GPU again: it asks first, like its button.
-    restartConfirm: (job) => (job.kind === "analyze" && rerunKind() === "reanalyze" ? fullRunConfirm(Boolean(state.analysis)) : null),
+    // Start again on a cancelled Full re-analysis, and Retry on one that failed before its new results were installed,
+    // send the film to the GPU again (and clear the track assignments): they ask first, like its button.
+    restartConfirm: (job) => (state.game?.has_tracking && retriedOnTheGpu(job) ? fullRunConfirm(Boolean(state.analysis)) : null),
   });
   parts.calibration = new Calibration({
     player: parts.player,

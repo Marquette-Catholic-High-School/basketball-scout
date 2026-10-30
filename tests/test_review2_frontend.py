@@ -77,7 +77,8 @@ def test_full_reanalysis_sends_the_film_to_the_gpu_again_and_keeps_the_results(t
 let started = false;
 let status = "queued";
 gamePageRoutes(route, json, {
-  gameBody: () => game(started ? { status: status === "succeeded" ? "ready" : "processing", latest_job_id: "j_2" } : {}),
+  gameBody: () => game(started ? { status: status === "succeeded" ? "ready" : "processing", has_tracking: true, latest_job_id: "j_2" }
+    : { has_tracking: true }),
   analysisBody: analysis({ timeline: [event] }),
 });
 route("GET", "/api/games/g_1/jobs", () => json(started ? [job({ id: "j_2", status })] : []));
@@ -125,10 +126,13 @@ console.log(JSON.stringify({ before, posts, confirms, during, after }));
 @pytest.mark.parametrize(
     ("over", "shown"),
     [
-        ({}, True),  # uploaded film + analysis
-        ({"has_video": False, "video_url": "https://example.com/film.mp4", "has_annotated_video": True}, True),
-        ({"has_analysis": False, "status": "uploaded"}, False),  # nothing to re-run yet: "Analyze film"
-        ({"has_video": False, "video_url": None, "has_annotated_video": True}, False),  # no film left to send
+        ({"has_tracking": True}, True),  # uploaded film + analysis
+        (
+            {"has_video": False, "video_url": "https://example.com/film.mp4", "has_annotated_video": True, "has_tracking": True},
+            True,
+        ),
+        ({"has_analysis": False, "has_tracking": False, "status": "uploaded"}, False),  # nothing to re-run yet: "Analyze film"
+        ({"has_video": False, "video_url": None, "has_annotated_video": True, "has_tracking": True}, False),  # no film left to send
     ],
     ids=["upload", "link", "no-analysis", "no-film"],
 )
@@ -157,7 +161,7 @@ def test_full_reanalysis_needs_the_coachs_ok_and_rerun_keeps_its_meaning(tmp_pat
         "/games/g_1",
         GAME_JS
         + """
-gamePageRoutes(route, json, { gameBody: game(), analysisBody: analysis() });
+gamePageRoutes(route, json, { gameBody: game({ has_tracking: true }), analysisBody: analysis() });
 route("POST", "/api/games/g_1/jobs", (req) => { posts.push(req.body); return json(job({ id: "j_2", kind: req.body.kind }), 201); });
 await import("./js/game.js");
 await settle();
@@ -235,7 +239,7 @@ def test_saving_a_calibration_brings_up_full_reanalysis_without_a_reload(tmp_pat
         GAME_JS
         + CALIBRATION_JS
         + """
-gamePageRoutes(route, json, { gameBody: game(), analysisBody: analysis({ data_quality: quality([freeThrows]) }) });
+gamePageRoutes(route, json, { gameBody: game({ has_tracking: true }), analysisBody: analysis({ data_quality: quality([freeThrows]) }) });
 route("GET", "/api/court/landmarks", json({ court: {}, landmarks }));
 route("PUT", "/api/games/g_1/calibration", (req) => json({ ...calibration, points: req.body.points }));
 route("DELETE", "/api/games/g_1/calibration", { status: 204 });

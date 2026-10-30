@@ -485,9 +485,9 @@ the court lines by itself; the **Data quality** tab says whether it did. If not,
 the camera **never moved** (tripod, no pan or zoom): **Calibrate court**, find a frame
 with clear floor lines, pick a landmark, click exactly where it is, add at least 4
 points spread across the court, **Save calibration**, then **Re-run analysis**
-(**Analyze film** for a game that has not been analysed yet). For a panning camera
-there is nothing to calibrate; zones stay approximate. Set the gym's length in
-`config/court.yaml` if you know it.
+(**Analyze film** for a game whose film has not been through the GPU yet). For a
+panning camera there is nothing to calibrate; zones stay approximate. Set the gym's
+length in `config/court.yaml` if you know it.
 
 Free throws are found on the GPU and need court positions. If the first run could not
 map the court, the Data quality tab warns that free throws were not detected

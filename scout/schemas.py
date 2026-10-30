@@ -687,6 +687,11 @@ class Game(_Model):
     has_video: bool = False
     has_annotated_video: bool = False
     has_analysis: bool = False
+    has_tracking: bool = Field(
+        default=False,
+        description="tracking.json.gz (the GPU results) is in the game folder, so a REANALYZE can start. "
+        "scout.db reads it from the disk with every game.",
+    )
     calibration: CourtCalibration | None = None
     latest_job_id: str | None = None
     error: ErrorInfo | None = None
@@ -753,6 +758,26 @@ class Job(_Model):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+# The stages from which a cancel no longer stops a job of each kind (docs/ARCHITECTURE.md, "Job lifecycle").
+_TOO_LATE_TO_CANCEL: dict[JobKind, frozenset[JobStage]] = {
+    JobKind.ANALYZE: frozenset({JobStage.ANALYZING, JobStage.REPORTING}),  # its new results are installed
+    JobKind.REANALYZE: frozenset({JobStage.ANALYZING, JobStage.REPORTING}),  # its analysis has started
+    JobKind.REPORT: frozenset({JobStage.REPORTING}),  # Claude is writing the report
+}
+
+
+def cancel_stops_job(kind: JobKind, stage: JobStage) -> bool:
+    """True while a cancel still stops a queued or running job of ``kind`` at ``stage``.
+
+    False for an ANALYZE or REANALYZE at ``analyzing`` or ``reporting`` and for a REPORT at
+    ``reporting``: such a job runs to the end, and a cancel only skips a report it was still to
+    write. Only the kind and the stage decide (``done`` is not a stage it is too late at: a finished
+    job has nothing left to stop, and ``db.request_cancel`` leaves it alone). ``tooLateToStop`` in
+    ``static/js/labels.js`` is the same rule for the pages.
+    """
+    return stage not in _TOO_LATE_TO_CANCEL[kind]
 
 
 class UploadInit(_Model):

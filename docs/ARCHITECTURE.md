@@ -174,12 +174,14 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   (`external_id`, e.g. a row an older version left `queued`): that job, like a running
   one, gets `cancel_requested=1`, and the worker that claims it cancels the processor
   call and marks it `cancelled`, also when its attempts ran out (a cancel wins over
-  `WORKER_LOST`). The exception is an ANALYZE whose worker died after installing its
-  new results (claimed at `analyzing` or `reporting`, `tracking.json.gz` on disk) while
-  it has attempts left: the claiming worker finishes the analysis from the installed
-  results, as the bullet above says, and the cancel works as the next bullet says.
-  Cancel is also checked between stages and while a failed film upload waits to be
-  retried.
+  `WORKER_LOST`). The exceptions, while they have attempts left, are an ANALYZE whose
+  worker died after installing its new results (claimed at `analyzing` or `reporting`,
+  `tracking.json.gz` on disk) and a REANALYZE or REPORT whose worker died at a stage a
+  cancel no longer stops it at (`cancel_stops_job`): the claiming worker finishes the
+  job (an ANALYZE from the installed results, as the bullet above says), and the cancel
+  only skips a report that this worker has not started; a REPORT still writes its
+  report (see the next two bullets). Cancel is also checked between stages and while a
+  failed film upload waits to be retried.
 * A cancel stops an ANALYZE only until its new results are installed: a results
   download in progress is thrown away, so the game keeps its earlier tracking,
   overlay, analysis and track overrides. Once the results are installed (stage
@@ -190,6 +192,9 @@ downloading_results → analyzing → reporting → done`. `progress` is 0–100
   already writing the report: that report is kept). A GPU poll or a results download
   that fails after the coach asked to cancel ends the job `cancelled`, not `failed`;
   when another worker has taken the job over meanwhile, the worker steps aside instead.
+  A cancel that arrives while the downloaded results are being moved into place (a
+  moment at the end of `downloading_results`) is already too late: it is answered
+  "Cancelling...", but the job ends as above.
 * A cancel stops a REANALYZE only until its analysis starts (stage `analyzing`), and a
   REPORT only until Claude starts writing (stage `reporting`). After that the job runs
   to the end and ends `succeeded`; a cancel then only skips the report a REANALYZE was
@@ -320,8 +325,9 @@ Extra rules beyond the table:
 * **Full re-analysis** (an ANALYZE of a game that already has GPU results:
   `has_tracking` is true) sends the film and the court calibration to the GPU again;
   the old results stay until the new ones are installed. The game page offers **Re-run
-  analysis** and **Full re-analysis** whenever `has_tracking` is true (**Analyze film**
-  otherwise). When the worker installs the new tracking over the earlier
+  analysis** whenever `has_tracking` is true, with **Full re-analysis** beside it when
+  the game has film (an uploaded file or a video link); **Analyze film** otherwise. When
+  the worker installs the new tracking over the earlier
   run's, it clears the track overrides (the new run may number its tracks
   differently) and deletes the earlier run's `analysis.json` (`has_analysis` becomes
   false until the new analysis is saved, about a minute later), so no page shows the

@@ -106,20 +106,22 @@ def test_a_job_cancelled_after_its_worker_died_past_the_install_finishes_the_ana
     assert storage.annotated_video_path(game.id).read_bytes() == INSTALLED_OVERLAY
 
 
-def test_a_cancel_during_a_new_download_of_installed_results_finishes_the_analysis(
-    filmed_game, queue, fakes  # noqa: F811
+def test_a_cancel_during_the_analysis_of_installed_results_finishes_the_analysis(
+    filmed_game, queue, fakes, monkeypatch  # noqa: F811
 ):
-    """The next worker downloads the installed run again; the coach cancels meanwhile. Throwing that
-    download away left the game with the new tracking and no analysis of it, as above."""
+    """The next worker downloaded the installed run again and the coach cancelled meanwhile: throwing that
+    download away left the game with the new tracking and no analysis of it, as above. Since round 6 the
+    next worker downloads nothing (docs/ARCHITECTURE.md, "Job lifecycle"); a cancel during its analysis
+    still finishes it."""
     game = _analysed(filmed_game)
     job = _installed_then_died(game, queue, JobStage.ANALYZING)
-    gpu = NewRun(annotated=True)  # its download brings NEW_OVERLAY
-    gpu.fetch = _cancel_when(job.id, gpu.fetch)
+    gpu = NewRun(annotated=True)  # a download would bring NEW_OVERLAY
+    monkeypatch.setattr(pipeline, "analyze_game", _cancel_when(job.id, pipeline.analyze_game))
     make_worker(gpu, queue).run_once(timeout=1)
 
     done = db.get_job(job.id)
     assert (done.status, done.error, done.warnings) == (JobStatus.SUCCEEDED, None, [LATE_CANCEL])
-    assert gpu.fetched == [f"fake:{job.id}"] and not storage.incoming_dir(game.id).exists()  # thrown away
+    assert gpu.polled == gpu.fetched == [] and not storage.incoming_dir(game.id).exists()
     assert storage.annotated_video_path(game.id).read_bytes() == INSTALLED_OVERLAY
     assert fakes.analyze[0]["tracking"].job_id == job.id and _installed_tracking_job(game.id) == job.id
     stored = db.get_game(game.id)
@@ -305,8 +307,9 @@ def test_a_cancel_during_the_download_keeps_the_earlier_run_on_every_processor(
     assert db.get_game(game.id).status == GameStatus.READY and fakes.analyze == []
 
 
-def test_the_installed_results_are_used_only_for_a_cancelled_job(filmed_game, queue, fakes):  # noqa: F811
-    """(Guard.) Without a cancel, a job claimed after its install downloads the run again, as before."""
+def test_the_installed_results_are_used_without_a_cancel_too(filmed_game, queue, fakes):  # noqa: F811
+    """Until round 6, without a cancel a job claimed after its install downloaded the run again. Since then
+    it goes straight on to the analysis from the installed results (docs/ARCHITECTURE.md, "Job lifecycle")."""
     game = _analysed(filmed_game)
     job = _installed_then_died(game, queue, JobStage.ANALYZING)
     gpu = NewRun(annotated=True)
@@ -314,6 +317,6 @@ def test_the_installed_results_are_used_only_for_a_cancelled_job(filmed_game, qu
 
     done = db.get_job(job.id)
     assert (done.status, done.warnings) == (JobStatus.SUCCEEDED, [])
-    assert gpu.fetched == [f"fake:{job.id}"]
-    assert storage.annotated_video_path(game.id).read_bytes() == NEW_OVERLAY
+    assert gpu.polled == gpu.fetched == []
+    assert storage.annotated_video_path(game.id).read_bytes() == INSTALLED_OVERLAY
     assert db.get_game(game.id).has_analysis is True

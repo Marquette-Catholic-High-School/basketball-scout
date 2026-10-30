@@ -19,10 +19,11 @@ JONES_OVERRIDE_JS = '{ track_id: 7, player_id: "p_2", side: "other", ignore: fal
 
 # The Roster page while a full analysis may run: ``analysisJob`` is the game's latest job
 # (j_1), ``setJob`` changes what GET /api/jobs/j_1 answers, ``locked()`` reads the lock.
+# The game's GPU results stay on the server until a new run's are in place (has_tracking).
 ANALYSIS_JS = """
 let analysisJob = null;
 const setJob = (over) => { analysisJob = over && job({ id: "j_1", kind: "analyze", status: "running", stage: "gpu_processing", progress: 40, ...over }); };
-route("GET", "/api/games/g_1", () => json(game(analysisJob ? { status: "processing", latest_job_id: "j_1" } : {})));
+route("GET", "/api/games/g_1", () => json(game({ has_tracking: true, ...(analysisJob ? { status: "processing", latest_job_id: "j_1" } : {}) })));
 route("GET", "/api/jobs/j_1", () => (analysisJob ? json(analysisJob) : fail(404, "NOT_FOUND", "Not found")));
 const wait = () => (byId("tracks-wait") && !byId("tracks-wait").hidden ? textOf(byId("tracks-wait")) : null);
 const locked = () => ({

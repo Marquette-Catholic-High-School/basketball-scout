@@ -77,7 +77,7 @@ export class Calibration {
    * court: CourtConfig dict; landmarks: {name: [x, y]}; calibration: saved CourtCalibration
    * or null; fullRunAdvised: the GPU found no free throws, so after saving the panel offers
    * a full re-analysis; rerunKind: the job onReanalyze() starts, "reanalyze" (Re-run
-   * analysis) or "analyze" (Analyze film, for a game that has not been analysed yet);
+   * analysis) or "analyze" (Analyze film, for a game without GPU results: game.js rerunKind);
    * busy: an analysis job is queued or running, so the result's buttons wait, as the header's.
    */
   setup({ court, landmarks, calibration, fullRunAdvised = false, rerunKind = "reanalyze", busy = false }) {
