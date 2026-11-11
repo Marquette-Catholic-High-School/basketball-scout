@@ -160,12 +160,20 @@ Inside the VM:
 
 ```bash
 sudo apt update && sudo apt full-upgrade -y
-sudo apt install -y qemu-guest-agent && sudo systemctl start qemu-guest-agent
+sudo apt install -y qemu-guest-agent                   # starts by itself after the reboot
 sudo timedatectl set-timezone America/Chicago          # your time zone
 cat /etc/apt/apt.conf.d/20auto-upgrades                # unattended-upgrades: on by default
 sudo ufw allow OpenSSH && sudo ufw allow 80/tcp && sudo ufw enable   # 8000/tcp without nginx
 sudo reboot
 ```
+
+`ufw enable` asks "Command may disrupt existing ssh connections. Proceed with
+operation (y|n)?": answer `y` (the first rule keeps SSH open). The guest agent needs the
+VM's **QEMU Guest Agent** option (`--agent enabled=1` above, or *Options* in the web
+UI); it then starts by itself at boot. Without the option, `sudo systemctl start
+qemu-guest-agent` waits 90 seconds and fails with "A dependency job ... failed": turn
+the option on, then shut the VM down and start it again (a reboot from inside is not
+enough).
 
 Ubuntu Server installs `unattended-upgrades` and applies security updates by default;
 the file above should contain `APT::Periodic::Unattended-Upgrade "1";` (if not:

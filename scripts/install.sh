@@ -65,6 +65,9 @@ ENV_BACKED_UP=0
 MODAL_DEPLOY_RESULT=""
 NEXT_STEP=0
 STOCK_SITE_DISABLED=0
+JOBS_BLOCKED=0
+KEY_VALUE=""
+KEY_SECRET=""
 
 C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_BOLD="" C_OFF=""
 
@@ -181,6 +184,80 @@ ask() {  # ask PROMPT [secret]: one line from the terminal (hidden when "secret"
     read -r answer </dev/tty || answer=""
   fi
   printf '%s' "$answer"
+}
+
+clean_key_input() {  # clean_key_input TEXT: a pasted key without "NAME=" (or "export NAME=") or quotes around it
+  local value=$1 assignment='^(export[[:space:]]+)?[A-Z][A-Z0-9_]*=(.*)$' first quote
+  value=${value//$'\r'/}
+  if [[ $value =~ $assignment ]]; then
+    value=${BASH_REMATCH[2]}
+  fi
+  first=${value:0:1}
+  if [[ ${#value} -ge 2 && ($first == '"' || $first == "'") && ${value: -1} == "$first" ]]; then
+    value=${value:1:${#value}-2}
+  fi
+  # Curly quotes from a document or a chat message (UTF-8 bytes, so bash 3.2 matches them too).
+  for quote in $'\xe2\x80\x98' $'\xe2\x80\x99' $'\xe2\x80\x9c' $'\xe2\x80\x9d'; do
+    value=${value#"$quote"}
+    value=${value%"$quote"}
+  done
+  printf '%s' "$value"
+}
+
+modal_token_from_command() {  # modal_token_from_command TEXT: "ID SECRET" from a pasted `modal token set --token-id ID --token-secret SECRET`
+  local id_re='--token-id[= ]+([^ ;]+)' secret_re='--token-secret[= ]+([^ ;]+)' id="" secret=""
+  if [[ $1 =~ $id_re ]]; then
+    id=$(clean_key_input "${BASH_REMATCH[1]}")
+  fi
+  if [[ $1 =~ $secret_re ]]; then
+    secret=$(clean_key_input "${BASH_REMATCH[1]}")
+  fi
+  if [[ -n $id && -n $secret ]]; then
+    printf '%s %s' "$id" "$secret"
+  fi
+}
+
+read_key() {  # read_key LABEL PREFIX PROMPT [secret]: sets KEY_VALUE (empty = skipped), asking again when it looks wrong
+  local label=$1 prefix=$2 prompt=$3 hidden=${4:-} raw value pair id secret kept="" tries=0
+  KEY_VALUE=""
+  KEY_SECRET=""  # the Modal secret, when the pasted line held the ID and the secret
+  while ((tries < 3)); do
+    tries=$((tries + 1))
+    raw=$(ask "$prompt" "$hidden")
+    if [[ -z $raw ]]; then
+      return 0
+    fi
+    pair=$(modal_token_from_command "$raw")
+    if [[ -n $pair && ($prefix == ak- || $prefix == as-) ]]; then
+      # The Modal dashboard shows the new token as a `modal token set ...` command line.
+      id=${pair%% *}
+      secret=${pair#* }
+      if ! valid_secret "$id" || ! valid_secret "$secret" || [[ $id != ak-* || $secret != as-* ]]; then
+        warn "That 'modal token set' line has no usable token ID (ak-...) and secret (as-...). Copy it again."
+        continue
+      fi
+      if [[ $prefix == ak- ]]; then
+        KEY_VALUE=$id
+        KEY_SECRET=$secret
+        ok "Took the token ID and the secret from the pasted command"
+      else
+        KEY_VALUE=$secret
+      fi
+      return 0
+    fi
+    value=$(clean_key_input "$raw")
+    if ! valid_secret "$value"; then
+      warn "That is not a $label: it has spaces or quotes in it. Copy just the key."
+    elif [[ $value != "$prefix"* && $value != "$kept" ]]; then
+      warn "A $label starts with $prefix, so check that you copied the right value."
+      warn "Paste it again (the same value again keeps it), or press Enter to skip."
+      kept=$value
+    else
+      KEY_VALUE=$value
+      return 0
+    fi
+  done
+  warn "Skipped the $label. You can add it later (see the next steps at the end)."
 }
 
 # --- Validation ------------------------------------------------------------------------
@@ -419,7 +496,8 @@ render_template() {  # render_template SRC DEST KEY=VALUE...: replace each @KEY@
 
 as_user() {  # run a command as the service user, from the install folder (which must exist)
   # env -C instead of a ( cd ...; ) subshell, so a failure still reaches the ERR trap.
-  runuser -u "$SERVICE_USER" -- env -C "$INSTALL_DIR" HOME="$SERVICE_HOME" GIT_TERMINAL_PROMPT=0 "$@"
+  # GIT_PAGER=cat: on a terminal, git would show its output in a pager that waits for q.
+  runuser -u "$SERVICE_USER" -- env -C "$INSTALL_DIR" HOME="$SERVICE_HOME" GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat "$@"
 }
 
 record_state() {  # record_state running|modal: remember the live commit (scripts/update.sh reads it)
@@ -487,11 +565,13 @@ print("-".join("".join(secrets.choice(alphabet) for _ in range(5)) for _ in rang
 PY
 }
 
-modal_credentials_present() {  # a Modal token in .env, typed in this run, or in ~/.modal.toml
+modal_credentials_present() {  # a Modal token in .env (or the settings a reinstall restores), typed in this run, or in ~/.modal.toml
+  local settings
   if [[ -n $MODAL_ID && -n $MODAL_SECRET ]]; then
     return 0
   fi
-  if [[ -n $(env_get "$ENV_FILE" MODAL_TOKEN_ID) && -n $(env_get "$ENV_FILE" MODAL_TOKEN_SECRET) ]]; then
+  settings=$(existing_settings)
+  if [[ -n $(env_get "$settings" MODAL_TOKEN_ID) && -n $(env_get "$settings" MODAL_TOKEN_SECRET) ]]; then
     return 0
   fi
   if [[ -n $SERVICE_HOME && -f $SERVICE_HOME/.modal.toml ]]; then
@@ -503,6 +583,7 @@ modal_credentials_present() {  # a Modal token in .env, typed in this run, or in
 # --- Steps ------------------------------------------------------------------------------
 
 resolve_settings() {  # fill in options left empty from an earlier install, else defaults
+  local settings
   ENV_FILE="$INSTALL_DIR/.env"
   if [[ -z $SERVICE_USER ]]; then
     SERVICE_USER=$(installed_unit_value User)
@@ -511,10 +592,12 @@ resolve_settings() {  # fill in options left empty from an earlier install, else
   SERVICE_HOME=$(user_home "$SERVICE_USER")
   SERVICE_HOME=${SERVICE_HOME:-/home/$SERVICE_USER}
   resolve_data_dir
+  # After uninstall.sh, configure_env restores the saved .env: plan and ask with it already.
+  settings=$(existing_settings)
   if [[ -z $PORT ]]; then
-    PORT=$(env_get "$ENV_FILE" SCOUT_PORT)
+    PORT=$(env_get "$settings" SCOUT_PORT)
     if [[ -n $PORT ]] && ! valid_port "$PORT"; then
-      warn "SCOUT_PORT=$PORT in $ENV_FILE is not usable; using $DEFAULT_PORT."
+      warn "SCOUT_PORT=$PORT in $settings is not usable; using $DEFAULT_PORT."
       PORT=""
     fi
     PORT=${PORT:-$DEFAULT_PORT}
@@ -525,13 +608,13 @@ resolve_settings() {  # fill in options left empty from an earlier install, else
       DOMAIN=$(existing_nginx_domain)
     fi
   fi
-  if [[ $(env_get "$ENV_FILE" SCOUT_QUEUE_BACKEND) == redis ]]; then
+  if [[ $(env_get "$settings" SCOUT_QUEUE_BACKEND) == redis ]]; then
     WITH_REDIS=1
   fi
   if [[ $WITH_NGINX -eq 1 ]]; then
     BIND_HOST=127.0.0.1
   fi
-  EFFECTIVE_PROCESSOR=${PROCESSOR:-$(env_get "$ENV_FILE" SCOUT_PROCESSOR)}
+  EFFECTIVE_PROCESSOR=${PROCESSOR:-$(env_get "$settings" SCOUT_PROCESSOR)}
   EFFECTIVE_PROCESSOR=${EFFECTIVE_PROCESSOR:-modal}
 }
 
@@ -678,26 +761,36 @@ show_plan() {
   info "Film processing    $EFFECTIVE_PROCESSOR"
   if [[ -f $ENV_FILE ]]; then
     info "Settings           keeping $ENV_FILE (only missing settings and your options are added)"
+  elif [[ -n $(latest_env_backup) ]]; then
+    info "Settings           restoring the ones uninstall.sh saved ($(latest_env_backup))"
   fi
 }
 
 ask_for_missing_keys() {
+  local settings
   if ! can_ask; then
     return 0
   fi
-  if [[ -z $ANTHROPIC_KEY && -z $(env_get "$ENV_FILE" ANTHROPIC_API_KEY) ]]; then
+  settings=$(existing_settings)
+  if [[ -z $ANTHROPIC_KEY && -z $(env_get "$settings" ANTHROPIC_API_KEY) ]]; then
     step "Claude scouting report"
     info "The written report needs an Anthropic API key (console.anthropic.com > API Keys)."
-    ANTHROPIC_KEY=$(ask "Paste the key (input hidden), or press Enter to skip: " secret)
+    read_key "Anthropic API key" sk-ant- "Paste the key (input hidden), or press Enter to skip: " secret
+    ANTHROPIC_KEY=$KEY_VALUE
   fi
   if [[ $EFFECTIVE_PROCESSOR == modal ]] && ! modal_credentials_present; then
     step "Modal (serverless GPU)"
-    info "Film is analysed on Modal's GPUs. Create a token in the Modal dashboard (Settings > API Tokens)."
-    MODAL_ID=$(ask "Token ID (ak-...), or press Enter to skip: ")
-    if [[ -n $MODAL_ID ]]; then
-      MODAL_SECRET=$(ask "Token secret (as-..., input hidden): " secret)
+    info "Film is analysed on Modal's GPUs. Create a token in the Modal dashboard (Settings > API Tokens);"
+    info "you can paste the whole 'modal token set ...' line it shows."
+    read_key "Modal token ID" ak- "Token ID (ak-..., input hidden: the pasted line holds the secret), or press Enter to skip: " secret
+    MODAL_ID=$KEY_VALUE
+    MODAL_SECRET=$KEY_SECRET
+    if [[ -n $MODAL_ID && -z $MODAL_SECRET ]]; then
+      read_key "Modal token secret" as- "Token secret (as-..., input hidden): " secret
+      MODAL_SECRET=$KEY_VALUE
     fi
-    if [[ -z $MODAL_SECRET ]]; then
+    if [[ -n $MODAL_ID && -z $MODAL_SECRET ]]; then
+      info "No token secret, so the Modal token was skipped."
       MODAL_ID=""
     fi
   fi
@@ -850,6 +943,14 @@ latest_env_backup() {  # newest .env saved by uninstall.sh in the data folder (n
     fi
   done
   printf '%s' "$latest"
+}
+
+existing_settings() {  # the settings an earlier install left: .env, else the copy uninstall.sh saved ("" = none)
+  if [[ -f $ENV_FILE ]]; then
+    printf '%s' "$ENV_FILE"
+  else
+    latest_env_backup
+  fi
 }
 
 backup_env_once() {
@@ -1092,15 +1193,107 @@ wait_for_health() {
   if systemctl is-active --quiet "$WORKER_UNIT"; then
     ok "Worker is running"
   else
-    warn "The worker is not running. Logs: journalctl -u ${WORKER_UNIT%.service} -n 100"
+    JOBS_BLOCKED=1
+    warn "The worker is not running, so no job can run. Logs: journalctl -u ${WORKER_UNIT%.service} -n 100"
   fi
+  # A reload returns before nginx's new workers take over: for a moment the old ones still
+  # serve the previous site (a 404 from the stock site right after a first install).
   if [[ $WITH_NGINX -eq 1 ]]; then
-    if curl -fsS --max-time 5 -o /dev/null -H "Host: ${DOMAIN:-localhost}" "http://127.0.0.1/api/health/live" 2>/dev/null; then
+    if retry_for 15 nginx_forwards; then
       ok "nginx forwards to the app"
     else
       warn "The app does not answer through nginx on port 80. Check: sudo nginx -t; journalctl -u nginx -n 50"
     fi
   fi
+  report_job_health
+}
+
+report_job_health() {  # say what /api/health sees that stops jobs (JOBS_BLOCKED=1 when something does)
+  local problems kind problem blocked=0
+  problems=$(health_problems)
+  if [[ $problems == "?"* ]]; then
+    info "Could not check that jobs can run: ${problems#?$'\t'}. The status panel on the app's home page shows it."
+    return 0
+  fi
+  while IFS=$'\t' read -r kind problem; do
+    case $kind in
+      block)
+        blocked=1
+        warn "Jobs cannot run: $problem."
+        ;;
+      note) warn "$problem." ;;
+    esac
+  done <<<"$problems"
+  if [[ $blocked -eq 1 ]]; then
+    JOBS_BLOCKED=1
+  elif [[ $JOBS_BLOCKED -eq 0 ]]; then
+    ok "Jobs can run (the job queue answers)"
+  fi
+}
+
+retry_for() {  # retry_for SECONDS COMMAND...: run COMMAND every second until it works or the time is up
+  local deadline=$((SECONDS + $1))
+  shift
+  until "$@"; do
+    if ((SECONDS >= deadline)); then
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+nginx_forwards() {
+  curl -fsS --max-time 5 -o /dev/null -H "Host: ${DOMAIN:-localhost}" "http://127.0.0.1/api/health/live" 2>/dev/null
+}
+
+health_problems() {  # what /api/health reports, one "block<TAB>..." or "note<TAB>..." per line; "?<TAB>why" = could not ask
+  local user password config="" body
+  if ! is_true "$(env_get "$ENV_FILE" SCOUT_AUTH_DISABLED)"; then
+    # The app signs in with the hash when there is one, so a plain password next to it fails
+    # (and would count as a failed sign-in from this machine).
+    if [[ -n $(env_get "$ENV_FILE" SCOUT_AUTH_PASSWORD_HASH) ]]; then
+      printf '?\t%s\n' "the sign-in uses SCOUT_AUTH_PASSWORD_HASH, which this script cannot sign in with"
+      return 0
+    fi
+    password=$(env_get "$ENV_FILE" SCOUT_AUTH_PASSWORD)
+    if [[ -z $password ]]; then
+      printf '?\t%s\n' "there is no SCOUT_AUTH_PASSWORD in $ENV_FILE"
+      return 0
+    fi
+    user=$(env_get "$ENV_FILE" SCOUT_AUTH_USERNAME)
+    user=${user:-coach}
+    user=${user//\\/\\\\}
+    user=${user//\"/\\\"}
+    password=${password//\\/\\\\}
+    password=${password//\"/\\\"}
+    config="user = \"$user:$password\""  # on stdin, so the password stays out of ps
+  fi
+  if ! body=$(printf '%s\n' "$config" | curl -fsS --max-time 10 -K - "http://127.0.0.1:$PORT/api/health" 2>/dev/null); then
+    printf '?\t%s\n' "the app did not answer /api/health with the sign-in from $ENV_FILE"
+    return 0
+  fi
+  printf '%s' "$body" | python3 -c '
+import json, sys
+health = json.load(sys.stdin)
+if health.get("queue_ok") is False:
+    backend = health.get("queue_backend") or "?"
+    hint = "sudo systemctl status redis-server" if backend == "redis" else "journalctl -u basketball-scout-web -n 50"
+    print(f"block\tthe job queue ({backend}) does not answer (check: {hint})")
+if health.get("ffmpeg_available") is False:
+    fix = "fix: sudo apt-get install -y ffmpeg"
+    if health.get("processor") == "local":  # only the local GPU pipeline runs ffmpeg on this server
+        print(f"block\tffmpeg is missing, so no film can be prepared ({fix})")
+    else:
+        print(f"note\tffmpeg is missing, so uploads skip the film length check ({fix})")
+' 2>/dev/null || printf '?\t%s\n' "the answer from /api/health could not be read"
+}
+
+ufw_allows() {  # ufw_allows RULE: the firewall already lets RULE in (e.g. 80/tcp, also as "80")
+  # Outgoing and forwarding rules read "ALLOW OUT" and "ALLOW FWD"; only incoming ones count.
+  ufw status 2>/dev/null | awk -v rule="$1" -v port="${1%/tcp}" '
+    ($1 == rule || $1 == port) && $2 == "ALLOW" && $3 != "OUT" && $3 != "FWD" { found = 1 }
+    END { exit found ? 0 : 1 }
+  '
 }
 
 run_modal_deploy() {
@@ -1156,7 +1349,11 @@ print_summary() {
   local user rule="$PORT/tcp" venv="$INSTALL_DIR/.venv"
   user=$(env_get "$ENV_FILE" SCOUT_AUTH_USERNAME)
   printf '\n%s======================================================================%s\n' "$C_GREEN" "$C_OFF"
-  printf '%s  Basketball Scout is installed and running%s\n' "$C_BOLD" "$C_OFF"
+  if [[ $JOBS_BLOCKED -eq 1 ]]; then
+    printf '%s  Basketball Scout is installed, but jobs cannot run yet: see the warnings above%s\n' "$C_YELLOW" "$C_OFF"
+  else
+    printf '%s  Basketball Scout is installed and running%s\n' "$C_BOLD" "$C_OFF"
+  fi
   printf '%s======================================================================%s\n\n' "$C_GREEN" "$C_OFF"
   printf '  Open        %s\n' "$(app_url)"
   printf '  Username    %s\n' "${user:-coach}"
@@ -1205,7 +1402,9 @@ print_summary() {
     rule="80/tcp"
   fi
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-    next_step "The ufw firewall is on. Let coaches in with:" "sudo ufw allow $rule"
+    if ! ufw_allows "$rule"; then
+      next_step "The ufw firewall is on. Let coaches in with:" "sudo ufw allow $rule"
+    fi
   else
     next_step "Optional firewall (allows SSH first so you do not lock yourself out):" \
       "sudo ufw allow OpenSSH && sudo ufw allow $rule && sudo ufw enable"

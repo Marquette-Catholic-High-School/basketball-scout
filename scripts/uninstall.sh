@@ -46,6 +46,8 @@ MODAL_ENV=""  # SCOUT_MODAL_ENVIRONMENT ("" = the workspace default)
 OHV_DIR=""    # SCOUT_PROCESSOR=local: the OpenHoopVision checkout (OHV_HOME) install.sh made ("" = none)
 OHV_KEPT=""   # why OHV_DIR is not deleted ("" = it is)
 REMOVED_LOCAL_GPU=""  # what remove_local_gpu deleted, for the summary
+MODAL_USED=0      # this server had a Modal token or deployed the GPU app (the summary's Modal notes)
+ANTHROPIC_USED=0  # this server had an Anthropic API key
 
 C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_BOLD="" C_OFF=""
 
@@ -285,6 +287,14 @@ resolve() {
   value=$(env_get "$ENV_FILE" SCOUT_MODAL_PROGRESS_DICT)
   MODAL_DICT=${value:-$MODAL_DICT}
   MODAL_ENV=$(env_get "$ENV_FILE" SCOUT_MODAL_ENVIRONMENT)
+  # Read now: the code (with .git, where install.sh/update.sh record a deploy) goes before the summary.
+  if [[ -n $(env_get "$ENV_FILE" MODAL_TOKEN_ID) || -f $INSTALL_DIR/.git/basketball-scout-modal ]] ||
+    [[ -n $SERVICE_HOME && -f $SERVICE_HOME/.modal.toml ]]; then
+    MODAL_USED=1
+  fi
+  if [[ -n $(env_get "$ENV_FILE" ANTHROPIC_API_KEY) ]]; then
+    ANTHROPIC_USED=1
+  fi
 
   check_removable "$INSTALL_DIR" "--dir"
   if [[ -d $INSTALL_DIR && ! -f $INSTALL_DIR/scout/main.py && ! -f $INSTALL_DIR/deploy/systemd/$WEB_UNIT ]]; then
@@ -358,7 +368,7 @@ show_plan() {
   fi
   if [[ $REMOVE_MODAL -eq 1 ]]; then
     info "Modal        the app $MODAL_APP is stopped; you are asked about the volume $MODAL_VOLUME"
-  else
+  elif [[ $MODAL_USED -eq 1 ]]; then
     info "Modal        kept (the GPU app costs nothing while idle)"
   fi
 }
@@ -566,6 +576,7 @@ remove_user() {
 }
 
 print_summary() {
+  local packages
   printf '\n%s======================================================================%s\n' "$C_GREEN" "$C_OFF"
   printf '%s  Basketball Scout was removed%s\n' "$C_BOLD" "$C_OFF"
   printf '%s======================================================================%s\n' "$C_GREEN" "$C_OFF"
@@ -579,14 +590,34 @@ print_summary() {
   if [[ -n $OHV_DIR && -n $OHV_KEPT ]]; then
     printf '  Local GPU: OHV_HOME (%s) was not deleted: %s.\n' "$OHV_DIR" "$OHV_KEPT"
   fi
-  printf '  System packages (nginx, redis-server, ffmpeg, python3) were left installed.\n'
-  printf '  Remove the ones nothing else needs with: sudo apt-get purge nginx redis-server\n'
-  if [[ $REMOVE_MODAL -eq 0 ]]; then
-    printf '  The GPU app is still deployed on Modal. Remove it with: modal app stop %s -y%s\n' \
+  packages=$(installed_packages nginx redis-server)
+  printf '  System packages (%s) were left installed.\n' "${packages:+${packages// /, }, }ffmpeg, python3"
+  if [[ -n $packages ]]; then
+    printf '  Not reinstalling? Remove the ones nothing else needs with: sudo apt-get purge %s\n' "$packages"
+  fi
+  if [[ $REMOVE_MODAL -eq 0 && $MODAL_USED -eq 1 ]]; then
+    printf '  The GPU app may still be deployed on Modal. Remove it with: modal app stop %s -y%s\n' \
       "$MODAL_APP" "${MODAL_ENV:+ --env $MODAL_ENV}"
   fi
-  printf '  No longer needed? Revoke the Modal token (Modal dashboard) and the Anthropic API key\n'
-  printf '  (console.anthropic.com) that this server used.\n\n'
+  if [[ $MODAL_USED -eq 1 && $ANTHROPIC_USED -eq 1 ]]; then
+    printf '  No longer needed? Revoke the Modal token (Modal dashboard) and the Anthropic API key\n'
+    printf '  (console.anthropic.com) that this server used.\n'
+  elif [[ $MODAL_USED -eq 1 ]]; then
+    printf '  No longer needed? Revoke the Modal token this server used (Modal dashboard).\n'
+  elif [[ $ANTHROPIC_USED -eq 1 ]]; then
+    printf '  No longer needed? Revoke the Anthropic API key this server used (console.anthropic.com).\n'
+  fi
+  printf '\n'
+}
+
+installed_packages() {  # installed_packages NAME...: the ones dpkg has installed, space-separated
+  local name found=""
+  for name in "$@"; do
+    if dpkg-query -W -f='${Status}' "$name" 2>/dev/null | grep -q "ok installed"; then
+      found="$found $name"
+    fi
+  done
+  printf '%s' "${found# }"
 }
 
 main() {

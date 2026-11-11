@@ -203,7 +203,8 @@ require_root() {
 
 as_user() {  # run a command as the service user, from the install folder
   # env -C instead of a ( cd ...; ) subshell, so a failure still reaches the ERR trap.
-  runuser -u "$SERVICE_USER" -- env -C "$INSTALL_DIR" HOME="$SERVICE_HOME" GIT_TERMINAL_PROMPT=0 "$@"
+  # GIT_PAGER=cat: on a terminal, git would show a long change list in a pager that waits for q.
+  runuser -u "$SERVICE_USER" -- env -C "$INSTALL_DIR" HOME="$SERVICE_HOME" GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat "$@"
 }
 
 as_user_with_env() {  # same, with .env loaded the way the app loads it (python-dotenv)
@@ -558,6 +559,74 @@ wait_for_health() {
   else
     die "The worker did not start. Logs: journalctl -u basketball-scout-worker -n 100"
   fi
+  report_job_health
+}
+
+report_job_health() {  # say what /api/health sees that stops jobs
+  local problems kind problem blocked=0
+  problems=$(health_problems)
+  if [[ $problems == "?"* ]]; then
+    info "Could not check that jobs can run: ${problems#?$'\t'}. The status panel on the app's home page shows it."
+    return 0
+  fi
+  while IFS=$'\t' read -r kind problem; do
+    case $kind in
+      block)
+        blocked=1
+        warn "Jobs cannot run: $problem."
+        ;;
+      note) warn "$problem." ;;
+    esac
+  done <<<"$problems"
+  if [[ $blocked -eq 0 ]]; then
+    ok "Jobs can run (the job queue answers)"
+  fi
+}
+
+health_problems() {  # what /api/health reports, one "block<TAB>..." or "note<TAB>..." per line; "?<TAB>why" = could not ask
+  local user password config="" body disabled
+  disabled=$(env_get "$ENV_FILE" SCOUT_AUTH_DISABLED)
+  case $(printf '%s' "$disabled" | tr '[:upper:]' '[:lower:]') in
+    true | 1 | yes | on | y | t) ;;  # sign-in switched off (pydantic-style booleans, as install.sh)
+    *)
+      # The app signs in with the hash when there is one, so a plain password next to it fails
+      # (and would count as a failed sign-in from this machine).
+      if [[ -n $(env_get "$ENV_FILE" SCOUT_AUTH_PASSWORD_HASH) ]]; then
+        printf '?\t%s\n' "the sign-in uses SCOUT_AUTH_PASSWORD_HASH, which this script cannot sign in with"
+        return 0
+      fi
+      password=$(env_get "$ENV_FILE" SCOUT_AUTH_PASSWORD)
+      if [[ -z $password ]]; then
+        printf '?\t%s\n' "there is no SCOUT_AUTH_PASSWORD in $ENV_FILE"
+        return 0
+      fi
+      user=$(env_get "$ENV_FILE" SCOUT_AUTH_USERNAME)
+      user=${user:-coach}
+      user=${user//\\/\\\\}
+      user=${user//\"/\\\"}
+      password=${password//\\/\\\\}
+      password=${password//\"/\\\"}
+      config="user = \"$user:$password\""  # on stdin, so the password stays out of ps
+      ;;
+  esac
+  if ! body=$(printf '%s\n' "$config" | curl -fsS --max-time 10 -K - "http://127.0.0.1:$(web_port)/api/health" 2>/dev/null); then
+    printf '?\t%s\n' "the app did not answer /api/health with the sign-in from $ENV_FILE"
+    return 0
+  fi
+  printf '%s' "$body" | python3 -c '
+import json, sys
+health = json.load(sys.stdin)
+if health.get("queue_ok") is False:
+    backend = health.get("queue_backend") or "?"
+    hint = "sudo systemctl status redis-server" if backend == "redis" else "journalctl -u basketball-scout-web -n 50"
+    print(f"block\tthe job queue ({backend}) does not answer (check: {hint})")
+if health.get("ffmpeg_available") is False:
+    fix = "fix: sudo apt-get install -y ffmpeg"
+    if health.get("processor") == "local":  # only the local GPU pipeline runs ffmpeg on this server
+        print(f"block\tffmpeg is missing, so no film can be prepared ({fix})")
+    else:
+        print(f"note\tffmpeg is missing, so uploads skip the film length check ({fix})")
+' 2>/dev/null || printf '?\t%s\n' "the answer from /api/health could not be read"
 }
 
 check_deploy_templates() {  # said before the restart, so the hint is there even when the restart fails

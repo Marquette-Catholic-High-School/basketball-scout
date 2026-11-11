@@ -266,7 +266,8 @@ and a Dict `basketball-scout-progress` (progress).
    credit per month.
 2. **Token.** In the Modal dashboard open Settings > API Tokens > New Token and copy
    the token ID (`ak-...`) and secret (`as-...`). Give them to `install.sh` when it
-   asks, or put them in `.env`:
+   asks (it also takes the whole `modal token set --token-id ... --token-secret ...`
+   line the dashboard shows, pasted at the Token ID question), or put them in `.env`:
 
    ```bash
    MODAL_TOKEN_ID=ak-...
