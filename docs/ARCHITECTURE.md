@@ -142,6 +142,12 @@ merge_parts(parts: Sequence[Part], *, filename="live.mp4", detect_periods=True) 
 LiveJoin(filename=...).add(part) / .result() -> TrackingResult   # the same join, one part at a time
 global_track_id(index, track_id) -> int                          # index * 100000 + track_id
 
+# scout.analysis.stitch   (a jersey number carries across the pieces a player's track breaks into)
+link_tracks(tracking) -> list[list[int]]                         # chains of track ids: same team, picked up within 1.5 s nearby,
+                                                                 # each the other's clear first choice
+share_jersey_reads(tracking) -> TrackingResult                   # every piece of a chain gets the chain's jersey reads (cut where
+                                                                 # two different numbers were read); analyze_game matches on this
+
 # scout.analysis.game_time   (Game.play_ranges: the stretches of the film that are the game)
 check_ranges(ranges) -> list[TimeRange]                          # film order; VALIDATION_FAILED when they overlap
 clip_tracking(tracking, ranges) -> TrackingResult                # only what lies inside; periods found again

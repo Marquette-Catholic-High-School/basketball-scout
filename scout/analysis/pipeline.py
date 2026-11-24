@@ -20,6 +20,7 @@ from scout.analysis.geometry import CourtConfig, apply_homography_many, bbox_foo
 from scout.analysis.plays import PlayRules
 from scout.analysis.tracking_index import TrackingIndex
 from scout.errors import ErrorCode, ScoutError
+from scout.analysis import stitch
 from scout.roster.matcher import assign_tracks
 from scout.schemas import (
     TRACKING_SCHEMA_VERSION,
@@ -173,7 +174,8 @@ def _analyze(
     tracking, calibration = _court_mapping(game, tracking)
     team_map = teams.resolve_team_map(tracking, game)
     index = TrackingIndex(tracking, court, homography=calibration)
-    assignments = assign_tracks(tracking, team_map, rosters, overrides)
+    # A number read on one piece of a player's broken-up track names the pieces it links to (scout.analysis.stitch).
+    assignments = assign_tracks(stitch.share_jersey_reads(tracking), team_map, rosters, overrides)
     built = events.build_timeline(tracking, index, team_map, assignments, rosters, court)
 
     plays = play_rec.detect_plays(index, built.timeline, built.possessions, assignments, team_map, court, rules)

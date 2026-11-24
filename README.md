@@ -501,6 +501,13 @@ that you had not saved are dropped (the page says which tracks), and saving the 
 removes that player's saved assignments. The FastScout name column sets the exact
 spelling FastScout expects.
 
+**One player, many tracks.** The tracker loses a player whenever someone walks in front of him
+or he leaves the picture, and starts a new track when it finds him again, so a game has far more
+tracks than players. When a track ends and another of the same team starts a moment later at
+nearly the same spot, the analysis treats them as one player, so a number read once names the
+whole stretch. It links only when the choice is clear; what it cannot link stays unnamed, for you
+to assign in the track table.
+
 ### 3. Confirm the team colours
 
 The analysis splits players into two teams by jersey colour. If it is not sure which
