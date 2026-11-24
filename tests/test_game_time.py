@@ -166,3 +166,41 @@ def test_without_ffmpeg_the_whole_film_is_analysed_and_the_stats_are_still_game_
     assert Worker(worker_id="test-worker").run_once(timeout=2)
     assert db.get_job(again["id"]).status == JobStatus.SUCCEEDED
     assert all(e["t"] <= 250.5 for e in client.get(f"/api/games/{game_id}/analysis").json()["timeline"])
+
+
+# ---------------------------------------------------------------------------
+# The real final score
+# ---------------------------------------------------------------------------
+
+
+def test_the_final_score_puts_unseen_points_on_the_team_line_and_never_takes_points_away(film, game):
+    rosters = synthetic.synthetic_rosters(game.id, seed=5)
+    counted = pipeline.analyze_game(film, game, rosters, [])
+    film_score = {t.side.value: t.score for t in counted.teams}
+    from scout.schemas import FinalScore
+
+    final = FinalScore(scouted=film_score["scouted"] + 11, other=max(0, film_score["other"] - 3))
+    analysis = pipeline.analyze_game(film, game.model_copy(update={"final_score": final}), rosters, [])
+    by_side = {t.side.value: t for t in analysis.teams}
+    assert (by_side["scouted"].score, by_side["scouted"].final_score) == (film_score["scouted"], final.scouted)
+    boxes = {b.side.value: b for b in analysis.box_scores}
+    before = {b.side.value: b for b in counted.box_scores}
+    assert boxes["scouted"].totals.pts == final.scouted
+    assert boxes["scouted"].team_unattributed.pts == before["scouted"].team_unattributed.pts + 11
+    assert [line.pts for line in boxes["scouted"].players] == [line.pts for line in before["scouted"].players]
+    assert boxes["other"].totals.pts == before["other"].totals.pts  # counted too many: nothing is taken away
+    note = next(w for w in analysis.data_quality.warnings if w.code == "FINAL_SCORE_DIFFERS")
+    assert "11 points were not seen on film" in note.message and "3 points too many" in note.message
+    same = FinalScore(scouted=film_score["scouted"], other=film_score["other"])
+    agreed = pipeline.analyze_game(film, game.model_copy(update={"final_score": same}), rosters, [])
+    assert not [w for w in agreed.data_quality.warnings if w.code == "FINAL_SCORE_DIFFERS"]
+    assert [t.final_score for t in agreed.teams] == [same.scouted, same.other]
+
+
+def test_the_final_score_is_saved_checked_and_removed(client):
+    game_id = _game_with_film(client)
+    r = client.patch(f"/api/games/{game_id}", json={"final_score": {"scouted": 61, "other": 58}})
+    assert r.status_code == 200 and r.json()["final_score"] == {"scouted": 61, "other": 58}
+    assert client.patch(f"/api/games/{game_id}", json={"final_score": {"scouted": -1, "other": 58}}).status_code == 422
+    assert client.patch(f"/api/games/{game_id}", json={"notes": "x"}).json()["final_score"] == {"scouted": 61, "other": 58}
+    assert client.patch(f"/api/games/{game_id}", json={"final_score": None}).json()["final_score"] is None

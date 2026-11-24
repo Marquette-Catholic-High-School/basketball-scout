@@ -66,7 +66,12 @@ side_of(team_map, team_id) -> TeamSide | None
 
 # scout.analysis.events
 player_ref(track_id, assignments, rosters) -> PlayerRef | None   # assignments: {track_id: TrackAssignment}
-build_timeline(tracking, index, team_map, assignments, rosters, court) -> TimelineBuild
+build_timeline(tracking, index, team_map, assignments, rosters, court, shot_calls=None) -> TimelineBuild
+    # shot_calls: the coach's Made / Missed by event id (Game.shot_calls); they beat the GPU's call
+
+# scout.analysis.shot_check   (a second opinion on each shot: did the ball go down through the rim?)
+check_shots(tracking) -> dict[str, Check]                        # Check(through, reason): reason set when it disagrees with the
+                                                                 # GPU or cannot look; such shots get ShotRecord.needs_review
 
 # scout.analysis.boxscore
 build_box_scores(timeline, possessions, assignments, rosters, team_names, index=None) -> list[TeamBoxScore]
@@ -182,6 +187,12 @@ result.build_tracking_result(perception, events, *, job_id, pipeline_info, artif
 `Job.status`: `queued → running → succeeded | failed | cancelled`.
 `Job.stage` (ANALYZE): `queued → preparing → uploading_to_gpu → gpu_processing →
 downloading_results → analyzing → reporting → done`. `progress` is 0–100 overall.
+
+**Final score.** `Game.final_score` (`PATCH /api/games/{id}`, `{"final_score": {"scouted": 61,
+"other": 58}}`; `null` clears it) is the real score as the coach knows it. `analyze_game` then sets
+`TeamSummary.final_score`, adds the points the film did not show to that team's
+`team_unattributed` line and totals, and adds the `FINAL_SCORE_DIFFERS` warning. `TeamSummary.score`
+stays the film's own count, and points are never taken away.
 
 **Game time.** With `Game.play_ranges` set (`PATCH /api/games/{id}`, `{"play_ranges":
 [{"start_s": 750, "end_s": 2400}, ...]}`; `null` clears them), every analysis counts only those
@@ -446,6 +457,8 @@ existing game), `GET /games/{id}` (results), `GET /games/{id}/roster`. Assets un
 | `GET /api/roster-template.csv` | | CSV template |
 | `GET /api/games/{id}/tracks` | | `{"assignments": [TrackAssignment], "overrides": [TrackOverride]}` |
 | `GET /api/games/{id}/tracks/{track_id}/preview.jpg?view=0&size=small\|large` | | JPEG of the tracked player cut from the film (`view` 0-2: up to three moments; 404 without a film on the server or without ffmpeg) |
+| `PUT /api/games/{id}/shots/{event_id}` | `{"made": true}` | `Game` (the call is in `shot_calls`; Re-run analysis applies it); 404 for a shot not in the analysis, 409 during a full analysis |
+| `DELETE /api/games/{id}/shots/{event_id}` | | `Game` (back to the GPU's call) |
 | `PUT /api/games/{id}/tracks/{track_id}` | `TrackOverride` (`track_id` optional) | `TrackOverride` |
 | `DELETE /api/games/{id}/tracks/{track_id}` | | 204 |
 | `GET /api/games/{id}/export/fastscout.txt?side=scouted` | | `text/plain` paste block |

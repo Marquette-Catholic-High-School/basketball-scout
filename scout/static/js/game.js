@@ -8,6 +8,7 @@ import { Calibration } from "./calibrate.js";
 import { applyTeamColors, isLight, luminance, teamColor } from "./colors.js";
 import { Exports } from "./exports.js";
 import { GameTime } from "./gametime.js";
+import { ShotCheck } from "./shotcheck.js";
 import { JobPanel } from "./jobpanel.js";
 import { STATUS_LABELS, isLive, liveSummary } from "./labels.js";
 import { Player } from "./player.js";
@@ -136,6 +137,10 @@ async function refresh() {
   renderTeamBanner(game, analysis);
   // Marked on the film, so only where the film plays here; a live game has no film yet.
   parts.gameTime.render(game, { hidden: !game.has_video || isLive(game), busy: analysisRunning(game) });
+  renderFinalScore(game, names, analysis);
+  // Not during a live game: its analysis is rebuilt by itself as the film arrives.
+  if (!isLive(game)) parts.shotCheck.render(game, analysis, names, { busy: analysisRunning(game) });
+  else show(byId("shot-check"), false);
   renderPending(game, analysis);
   renderFilmState(game, analysis);
   show(byId("timeline-card"), Boolean(analysis));
@@ -207,6 +212,55 @@ function renderFilmState(game, analysis) {
     el("a", { class: "btn", href: `/upload?game=${encodeURIComponent(game.id)}`, text: "Upload the film" }));
 }
 
+/**
+ * The real final score, as the coach knows it. The film analysis only counts what it saw (free throws are
+ * often missed): with the real score entered, the Data quality tab says how far off the count is and the
+ * missing points go on each team's Team line, so the box score adds up.
+ */
+function renderFinalScore(game, names, analysis) {
+  const box = byId("final-score");
+  show(box, Boolean(analysis) || hasFilm(game));
+  if (box.hidden) return;
+  const final = game.final_score;
+  const field = (side) => el("input", { type: "number", min: "0", max: "300", inputmode: "numeric", value: final ? String(final[side]) : "", "aria-label": `${names[side]} final score` });
+  const inputs = { scouted: field("scouted"), other: field("other") };
+  const error = el("div", { "aria-live": "assertive" });
+  const film = analysis ? analysis.teams.map((t) => t.score).join(" - ") : null;
+  const send = async (button, body) => {
+    await withBusy(button, "Saving…", async () => {
+      try {
+        const saved = await api.patch(gamePath(gameId), { final_score: body });
+        state.game = saved;
+        toast(body ? "Final score saved" : "Final score removed");
+        // With the GPU results on the server the box score is rebuilt with it (about a minute, no GPU).
+        if (saved.has_tracking && !analysisRunning(saved) && !isLive(saved)) await startJob("reanalyze", "Updating the box score…");
+        else await refresh();
+      } catch (err) {
+        setChildren(error, errorBox(err));
+      }
+    });
+  };
+  const save = el("button", { type: "button", text: final ? "Save final score" : "Set final score", onClick: (e) => {
+    const values = { scouted: Number.parseInt(inputs.scouted.value, 10), other: Number.parseInt(inputs.other.value, 10) };
+    if (![values.scouted, values.other].every((v) => Number.isInteger(v) && v >= 0 && v <= 300)) {
+      setChildren(error, errorBox({ info: { title: "Check the score", message: "Type both teams' final scores as whole numbers." } }));
+      return;
+    }
+    send(e.currentTarget, values);
+  } });
+  setChildren(box,
+    el("div", { class: "row" },
+      el("strong", { text: "Final score" }),
+      el("label", { class: "field" }, el("span", { class: "small", text: names.scouted }), inputs.scouted),
+      el("label", { class: "field" }, el("span", { class: "small", text: names.other }), inputs.other),
+      save,
+      final ? el("button", { type: "button", class: "btn-link", text: "Remove", onClick: (e) => send(e.currentTarget, null) }) : null),
+    el("p", { class: "hint", text: film
+      ? `The film analysis counted ${film}. It only counts what it saw, and free throws are often missed: enter the real score and the points it did not see go on each team's Team line.`
+      : "Enter the real final score if you know it: the analysis will say how far its own count is from it." }),
+    error);
+}
+
 /** What to tell the coach while there is film but no analysis to show yet. */
 function renderPending(game, analysis) {
   const box = byId("analysis-pending");
@@ -264,6 +318,7 @@ function renderHeader(game, names) {
     game.game_date ? el("span", { text: formatDate(game.game_date) }) : null,
     game.level ? el("span", { text: game.level }) : null,
     game.location ? el("span", { text: game.location }) : null,
+    game.final_score ? el("span", { class: "badge", text: `Final ${game.final_score.scouted} - ${game.final_score.other}` }) : null,
     el("span", { id: "game-status", class: `badge badge-${game.status}`, text: STATUS_LABELS[game.status] || game.status }));
   const rosterUrl = `/games/${encodeURIComponent(game.id)}/roster`;
   byId("roster-link").href = rosterUrl;
@@ -487,6 +542,7 @@ function init() {
       else await refresh();
     },
   });
+  parts.shotCheck = new ShotCheck({ gameId, player: parts.player, onRerun: () => startJob("reanalyze", "Updating the box score…") });
   parts.calibration = new Calibration({
     player: parts.player,
     gameId,

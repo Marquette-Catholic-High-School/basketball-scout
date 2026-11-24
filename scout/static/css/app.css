@@ -597,3 +597,12 @@ label.btn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
 .track-preview-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .track-preview-pictures { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.75rem; }
 .track-preview-pictures img { height: min(360px, 60vh); width: auto; border-radius: 4px; }
+
+/* ------------------------------------------------------------------ final score */
+.final-score .row { align-items: flex-end; flex-wrap: wrap; gap: 0.75rem; }
+.final-score input { width: 5rem; }
+
+/* ------------------------------------------------------------------ check these shots */
+.shot-check summary { cursor: pointer; }
+.shot-check-table { margin: 0.5rem 0; }
+.shot-check-table button[aria-pressed="true"] { background: var(--accent, #f97316); color: #fff; border-color: transparent; }

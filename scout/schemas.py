@@ -474,6 +474,10 @@ class ShotRecord(_Model):
     assisted: bool = False
     blocked: bool = False
     play_id: str | None = None
+    gpu_made: bool | None = Field(default=None, description="What the GPU called (None: it could not tell).")
+    coach_made: bool | None = Field(default=None, description="The coach's call (Game.shot_calls); it decides ``made``.")
+    needs_review: bool = Field(default=False, description="A second check disagrees with the GPU: worth a look.")
+    review_reason: str | None = None
 
 
 class PlayTypeSummary(_Model):
@@ -515,7 +519,8 @@ class TeamSummary(_Model):
     team_id: int | None = Field(default=None, description="Pipeline team id mapped to this side.")
     color_rgb: tuple[int, int, int] | None = None
     color_name: str | None = None
-    score: int = 0
+    score: int = Field(default=0, description="Points the film analysis counted.")
+    final_score: int | None = Field(default=None, description="The real final score, when the coach entered it.")
 
 
 class DataQuality(_Model):
@@ -724,6 +729,13 @@ class LiveSegmentInit(_Model):
     filename: str | None = Field(default=None, max_length=255)
 
 
+class FinalScore(_Model):
+    """The real final score, as the coach knows it (the film analysis only counts what it saw)."""
+
+    scouted: int = Field(ge=0, le=300)
+    other: int = Field(ge=0, le=300)
+
+
 class TimeRange(_Model):
     """A stretch of the film, in film seconds."""
 
@@ -753,6 +765,7 @@ class GameUpdate(_Model):
     scouted_color: str | None = Field(default=None, max_length=40)
     team_id_map: dict[int, TeamSide] | None = None
     play_ranges: list[TimeRange] | None = Field(default=None, max_length=8, description="Game time; null or [] = the whole film.")
+    final_score: FinalScore | None = Field(default=None, description="The real final score; null clears it.")
 
 
 class Game(_Model):
@@ -779,9 +792,16 @@ class Game(_Model):
         "scout.db reads it from the disk with every game.",
     )
     calibration: CourtCalibration | None = None
+    shot_calls: dict[str, bool] = Field(
+        default_factory=dict,
+        description="The coach's Made / Missed calls by shot event id (tracking.json.gz); cleared with new tracking.",
+    )
     play_ranges: list[TimeRange] = Field(
         default_factory=list,
         description="Game time: the stretches of the film that are the game (film seconds). Empty = the whole film.",
+    )
+    final_score: FinalScore | None = Field(
+        default=None, description="The real final score, entered by the coach; the analysis reconciles its count with it."
     )
     live: LiveInfo | None = Field(default=None, description="Set for a live game (docs/LIVE.md); None for an uploaded film.")
     latest_job_id: str | None = None

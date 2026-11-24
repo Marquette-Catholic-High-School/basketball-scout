@@ -522,6 +522,7 @@ class Worker:
             # team_id_map stays: OpenHoopVision's team ids are its dark/light jersey clusters.
             storage.analysis_path(game_id).unlink(missing_ok=True)
             cleared = db.clear_track_overrides(game_id)
+            self._update_game(game_id, shot_calls={})  # shot ids from the earlier run
             logger.info("Game %s: removed the earlier run's analysis and %d track override(s)", game_id, cleared)
         annotated = storage.annotated_video_path(game_id)
         overlay = output.annotated_video_path

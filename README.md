@@ -501,6 +501,22 @@ that you had not saved are dropped (the page says which tracks), and saving the 
 removes that player's saved assignments. The FastScout name column sets the exact
 spelling FastScout expects.
 
+**Check these shots.** The GPU decides made or missed by itself and is wrong often enough to
+change the score. A second look at each shot (does the ball go down through the rim?) picks out
+the ones where the two disagree, or where the ball or rim was hard to see, and lists only those
+under **Check these shots** on the game page: on a first real game, 48 of 135. Click the time to
+watch the shot, choose **Made** or **Missed** (click it again to take it back), then **Update
+the box score** (about a minute, no GPU). Your calls replace the GPU's, for the box score, the
+shot chart and the report. A new film or a Full re-analysis numbers the shots again and clears
+them.
+
+**The real final score.** The analysis only counts the baskets it saw, and free throws are
+often missed, so its score can differ from the scoreboard. Enter the real score under **Final
+score** on the game page: the Data quality tab then says how far the film's count is from it, and
+the points the film did not show go on each team's **Team** line, so the box score adds up to
+the real score. It never moves points between players, and when the film counted too many it
+says so without taking any away.
+
 **Who is this? Pictures of each track.** The track table shows a small picture of every tracked
 player, cut from the film at a moment he is large and fully in view. Click it for up to three
 larger pictures from different moments of that track, then choose the player under **Assign
@@ -513,7 +529,10 @@ folder and deleted with the game or its film.
 or he leaves the picture, and starts a new track when it finds him again, so a game has far more
 tracks than players. When a track ends and another of the same team starts a moment later at
 nearly the same spot, the analysis treats them as one player, so a number read once names the
-whole stretch. It links only when the choice is clear; what it cannot link stays unnamed, for you
+whole stretch. Two tracks that read the same roster number are both that player unless they are
+on screen together for more than a brief hand-over (over a second at a stretch and over a tenth
+of the shorter track's time), and a lone digit is completed when only one number on that roster
+contains it ("4" when the only such jersey is 24). It links only when the choice is clear; what it cannot link stays unnamed, for you
 to assign in the track table.
 
 ### 3. Confirm the team colours

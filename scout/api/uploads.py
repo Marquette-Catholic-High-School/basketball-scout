@@ -268,6 +268,7 @@ def _finish_upload(upload_id: str, settings: Settings, auto_start: bool) -> Film
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
             calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
             play_ranges=[],  # marked on the OLD film's clock
+            shot_calls={},  # the OLD film's shots
             live=None,  # an uploaded film replaces a live game's: it is a normal game from here on
         )
         return _maybe_start_analysis(game, settings, auto_start)
@@ -398,6 +399,7 @@ def set_video_url(body: VideoUrlRequest, game: CurrentGame, settings: SettingsDe
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
             calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
             play_ranges=[],
+            shot_calls={},
             live=None,
         )
         return _maybe_start_analysis(game, settings, auto_start)

@@ -16,9 +16,9 @@ from scout import db
 from scout.analysis import previews
 from scout.api.deps import CurrentGame, has_analysis_file, require_analysis
 from scout.api.jobs import start_lock
-from scout.api.models import TrackOverrideBody, TrackState
+from scout.api.models import ShotCallBody, TrackOverrideBody, TrackState
 from scout.errors import ErrorCode, ScoutError
-from scout.schemas import JobKind, TeamSide, TrackOverride
+from scout.schemas import Game, JobKind, TeamSide, TrackOverride
 
 router = APIRouter(tags=["tracks"])
 
@@ -29,6 +29,30 @@ TrackId = Annotated[int, Path(ge=0, le=2**63 - 1)]  # SQLite INTEGER range
 def get_tracks(game: CurrentGame) -> TrackState:
     assignments = require_analysis(game.id).track_assignments if has_analysis_file(game.id) else []
     return TrackState(assignments=assignments, overrides=db.list_track_overrides(game.id))
+
+
+ShotId = Annotated[str, Path(pattern=r"^[A-Za-z0-9._:-]{1,64}$")]
+
+
+@router.put("/games/{game_id}/shots/{event_id}", response_model=Game)
+def set_shot_call(body: ShotCallBody, game: CurrentGame, event_id: ShotId) -> Game:
+    """The coach's call on one shot: made or missed. Takes effect with the next Re-run analysis."""
+    with start_lock:
+        _ensure_no_film_analysis(game.id)
+        shots = {s.event_id for s in require_analysis(game.id).shots}
+        if event_id not in shots:
+            raise ScoutError(ErrorCode.NOT_FOUND, f"Shot {event_id!r} is not in this game's analysis.")
+        return db.update_game(game.id, shot_calls={**game.shot_calls, event_id: body.made})
+
+
+@router.delete("/games/{game_id}/shots/{event_id}", response_model=Game)
+def delete_shot_call(game: CurrentGame, event_id: ShotId) -> Game:
+    """Back to the GPU's call."""
+    with start_lock:
+        _ensure_no_film_analysis(game.id)
+        calls = dict(game.shot_calls)
+        calls.pop(event_id, None)
+        return db.update_game(game.id, shot_calls=calls)
 
 
 @router.get("/games/{game_id}/tracks/{track_id}/preview.jpg")

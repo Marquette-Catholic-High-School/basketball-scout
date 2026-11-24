@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from scout.analysis import geometry
+from scout.analysis import geometry, shot_check
 from scout.analysis.geometry import CourtConfig
 from scout.analysis.teams import side_of
 from scout.analysis.tracking_index import TrackingIndex
@@ -158,6 +158,7 @@ def build_timeline(
     assignments: list[TrackAssignment],
     rosters: dict[TeamSide, Roster],
     court: CourtConfig,
+    shot_calls: dict[str, bool] | None = None,
 ) -> TimelineBuild:
     """Normalise raw events into the coach-facing timeline.
 
@@ -177,9 +178,19 @@ def build_timeline(
       (``poss<n>``) opens every possession.
     * Every row gets ``possession_side``/``possession_id`` and running ``score_*``.
     * ``ShotRecord.half_court_xy`` uses ``geometry.to_half_court`` for the basket attacked.
+    * ``shot_calls`` (the coach's Made / Missed by event id) beat the GPU's call; a shot the
+      second check (``scout.analysis.shot_check``) doubts and the coach has not called gets
+      ``needs_review``.
     """
     builder = _TimelineBuilder(index, team_map, assignments, rosters, court)
-    return builder.run(tracking.events)
+    builder.shot_calls = dict(shot_calls or {})
+    built = builder.run(tracking.events)
+    checks = shot_check.check_shots(tracking)
+    for shot in built.shots:
+        check = checks.get(shot.event_id)
+        shot.needs_review = shot.coach_made is None and check is not None and check.reason is not None
+        shot.review_reason = check.reason if check is not None else None
+    return built
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +334,7 @@ class _TimelineBuilder:
         # (frame at which the segment has lasted MIN_HOLD_S, segment), in time order.
         self.segments = [(s.start_frame + min_frames, s) for s in index.holder_segments(min_frames=min_frames)]
         self.seg_i = 0
+        self.shot_calls: dict[str, bool] = {}
         self.handlers = {
             RawEventType.SHOT: self._shot,
             RawEventType.FREE_THROW: self._free_throw,
@@ -616,6 +628,9 @@ class _TimelineBuilder:
             blocker_id is not None and not self._excluded(blocker_id)
             and (side is None or self._track_side(blocker_id) != side)  # never a teammate
         )
+        coach = self.shot_calls.get(e.event_id)
+        if coach is not None:  # the coach watched it: that decides, a block included
+            made_attr, blocked = coach, blocked and not coach
         made = made_attr is True and not blocked
         xy = shot_location(e, self.index, self.court)
         if xy is not None:
@@ -668,6 +683,8 @@ class _TimelineBuilder:
                 zone=zone, subzone=subzone, court_xy=xy,
                 half_court_xy=geometry.to_half_court(self.court, xy) if xy is not None else None,
                 assisted=assisted, blocked=blocked,
+                gpu_made=e.attrs.get(ATTR_MADE) if isinstance(e.attrs.get(ATTR_MADE), bool) else None,
+                coach_made=coach,
             )
         )
         if poss is None:  # unknown team: nothing to say about possession

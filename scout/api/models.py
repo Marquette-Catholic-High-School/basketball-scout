@@ -6,7 +6,7 @@ the shapes listed in docs/ARCHITECTURE.md ("HTTP API").
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from scout.schemas import (
     CalibrationPoint,
@@ -66,6 +66,13 @@ class TrackOverrideBody(BaseModel):
     player_id: str | None = None
     side: TeamSide | None = None
     ignore: bool = False
+
+
+class ShotCallBody(BaseModel):
+    """``PUT /shots/{event_id}``: the coach watched the shot."""
+
+    model_config = ConfigDict(strict=True)  # true or false, not "yes"
+    made: bool
 
 
 class TrackState(BaseModel):

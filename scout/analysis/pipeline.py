@@ -14,13 +14,12 @@ import numpy as np
 from pydantic import ValidationError
 
 from scout import storage
-from scout.analysis import boxscore, events, teams
+from scout.analysis import boxscore, events, stitch, teams
 from scout.analysis import plays as play_rec
 from scout.analysis.geometry import CourtConfig, apply_homography_many, bbox_foot_point, load_court_config
 from scout.analysis.plays import PlayRules
 from scout.analysis.tracking_index import TrackingIndex
 from scout.errors import ErrorCode, ScoutError
-from scout.analysis import stitch
 from scout.roster.matcher import assign_tracks
 from scout.schemas import (
     TRACKING_SCHEMA_VERSION,
@@ -34,6 +33,7 @@ from scout.schemas import (
     RawEventType,
     Roster,
     ShotZone,
+    TeamBoxScore,
     TeamSide,
     TeamSummary,
     TrackAssignment,
@@ -176,7 +176,7 @@ def _analyze(
     index = TrackingIndex(tracking, court, homography=calibration)
     # A number read on one piece of a player's broken-up track names the pieces it links to (scout.analysis.stitch).
     assignments = assign_tracks(stitch.share_jersey_reads(tracking), team_map, rosters, overrides)
-    built = events.build_timeline(tracking, index, team_map, assignments, rosters, court)
+    built = events.build_timeline(tracking, index, team_map, assignments, rosters, court, game.shot_calls)
 
     plays = play_rec.detect_plays(index, built.timeline, built.possessions, assignments, team_map, court, rules)
     play_rec.link_plays(built.timeline, built.possessions, plays)
@@ -188,6 +188,8 @@ def _analyze(
     box_scores = boxscore.build_box_scores(built.timeline, built.possessions, assignments, rosters, team_names, index)
     summaries = [_team_summary(side, team_names[side], team_map, tracking, built.score) for side in _SIDES]
     quality = _data_quality(tracking, index, assignments, built, rosters, homography=calibration is not None)
+    if game.final_score is not None:
+        _reconcile_with_final_score(game, summaries, box_scores, quality)
     logger.info(
         "Analysed game %s: %d timeline rows, %d possessions, %d plays",
         game.id, len(built.timeline), len(built.possessions), len(plays),
@@ -331,6 +333,47 @@ def _team_summary(
         color_rgb=info.color_rgb if info else None,
         color_name=info.color_name if info else None,
         score=score.get(side, 0),
+    )
+
+
+def _reconcile_with_final_score(
+    game: Game, summaries: list[TeamSummary], box_scores: list[TeamBoxScore], quality: DataQuality
+) -> None:
+    """The coach entered the real final score: say how far the film's count is from it, and put the
+    points the film did not show on each team's Team line so the box score adds up to the real score.
+
+    Points are only ever added to the Team line: which player scored them is not known. When the film
+    counted MORE than the real score nothing is taken away (which basket was wrong is not known either);
+    the note says so.
+    """
+    final = game.final_score
+    if final is None:
+        return
+    real = {TeamSide.SCOUTED: final.scouted, TeamSide.OTHER: final.other}
+    notes: list[str] = []
+    for summary in summaries:
+        summary.final_score = real[summary.side]
+        missing = real[summary.side] - summary.score
+        box = next((b for b in box_scores if b.side == summary.side), None)
+        name = summary.name or summary.side.value
+        if missing > 0:
+            if box is not None:
+                box.team_unattributed.pts += missing
+                box.totals.pts += missing
+            notes.append(f"{name}: {missing} points were not seen on film and were added to the Team line")
+        elif missing < 0:
+            notes.append(f"{name}: the film counted {-missing} points too many (a shot it took for a make)")
+    if not notes:
+        return
+    film = " - ".join(str(s.score) for s in summaries)
+    entered = " - ".join(str(real[s.side]) for s in summaries)
+    free_throws = sum(b.totals.fta for b in box_scores)
+    reason = " No free throws were found on this film, which is the usual reason for missing points." if free_throws == 0 else ""
+    quality.warnings.append(
+        PipelineWarning(
+            code="FINAL_SCORE_DIFFERS",
+            message=f"The film analysis counted {film}; the final score entered is {entered}. " + "; ".join(notes) + "." + reason,
+        )
     )
 
 

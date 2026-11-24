@@ -236,11 +236,42 @@ def test_zero_and_double_zero_are_different_players():
 
 
 def test_partial_reads_alone_are_not_enough():
-    rosters = {SCOUTED: _roster(SCOUTED, "23"), OTHER: _roster(OTHER)}
+    rosters = {SCOUTED: _roster(SCOUTED, "23", "12"), OTHER: _roster(OTHER)}  # a lone "2" could be either
     result = _assign([_track(1, 0, (0, 300), ["2", "2", "23"]), _track(2, 0, (400, 700), ["2", "2", "2"])], rosters)
 
     assert (result[1].player_id, result[1].method) == ("scouted-23", "exact")
     assert (result[2].player_id, result[2].jersey, result[2].method) == (None, "2", "unrostered")
+
+
+def test_a_lone_digit_that_only_one_jersey_contains_is_that_player():
+    """First real film: a track read "4" for minutes on a roster whose only number with a 4 was 24."""
+    rosters = {SCOUTED: _roster(SCOUTED, "3", "20", "24", "30"), OTHER: _roster(OTHER, "14", "24")}
+    result = _assign(
+        [
+            _track(1, 0, (0, 300), ["4", "4", "4", "24"]),      # mostly the lone digit: 24 is the only fit
+            _track(2, 0, (400, 700), ["3", "3", "3"]),          # somebody wears 3 itself: an exact match, as before
+            _track(3, 0, (800, 1100), ["0", "0", "0"]),         # 20 and 30 both end in 0: still open
+            _track(4, 1, (1200, 1500), ["4", "4", "4"]),        # the other team has 14 and 24: still open
+            _track(5, 0, (1600, 1900), ["4", "7", "9", "4"]),   # the digit is not most of what was read
+        ],
+        rosters,
+    )
+    assert (result[1].player_id, result[1].method) == ("scouted-24", "partial")
+    assert (result[2].player_id, result[2].method) == ("scouted-3", "exact")
+    assert [result[i].player_id for i in (3, 4, 5)] == [None, None, None]
+
+
+def test_long_tracks_of_one_player_survive_a_brief_overlap_but_two_players_do_not():
+    """The GPU pipeline keeps several identities for one player and hands over between them untidily. A few
+    seconds shared by two tracks that each read the number for minutes is a hand-over; a short track that is
+    on screen with the long one for most of its own time is somebody else."""
+    rosters = {SCOUTED: _roster(SCOUTED, "3"), OTHER: _roster(OTHER)}
+    long_one = _track(1, 0, (0, 6000), ["3"] * 8)
+    handed_over = _track(2, 0, (5900, 12000), ["3"] * 6)      # 100 frames shared out of 6100
+    alongside = _track(3, 0, (2000, 2600), ["3"] * 3)         # all of its 600 frames beside the long one
+    result = _assign([long_one, handed_over, alongside], rosters)
+    assert result[1].player_id == result[2].player_id == "scouted-3"
+    assert (result[3].player_id, result[3].method) == (None, "unrostered")
 
 
 def test_noisy_track_resolves_to_the_right_player():
@@ -350,7 +381,9 @@ def test_two_hundred_tracks_are_fast_and_never_double_book_a_player():
     for spans in spans_by_player.values():
         for i, (start_a, end_a) in enumerate(spans):
             for start_b, end_b in spans[i + 1 :]:
-                assert min(end_a, end_b) - max(start_a, start_b) <= FPS  # at most ~1 s shared
+                shared = min(end_a, end_b) - max(start_a, start_b)
+                shorter = min(end_a - start_a, end_b - start_b)
+                assert shared <= max(FPS, 0.1 * shorter)  # a hand-over: ~1 s, or a small part of the shorter track
 
 
 # ---------------------------------------------------------------------------

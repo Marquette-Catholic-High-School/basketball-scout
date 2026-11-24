@@ -69,7 +69,13 @@ LEADING_ZERO_SIMILARITY = 0.9  # "05" vs "5"
 PARTIAL_FIRST_DIGIT = 0.45  # read "2" for jersey 23 (the second digit hidden)
 PARTIAL_LAST_DIGIT = 0.4  # read "3" for jersey 23 (slightly less likely: prefer 23 over 32 for "2")
 REVERSED_SIMILARITY = 0.3  # read "32" for jersey 23
-MAX_SHARED_SCREEN_TIME_S = 1.0  # tracks overlapping longer than this cannot be the same player
+MAX_SHARED_SCREEN_TIME_S = 1.0  # tracks overlapping longer than this at a stretch may be two players ...
+# ... but only when they also share more than this part of the shorter track's time on screen. The GPU
+# pipeline keeps several identities for one player and hands over between them untidily: on the first
+# real film, tracks that read a roster number for minutes were refused over a brief overlap (30% of all
+# player time). Two different players wearing "the same number" overlap for most of the shorter track.
+MAX_SHARED_SHARE = 0.10
+UNIQUE_PARTIAL_MIN_SHARE = 0.6  # a lone digit must be this share of a track's reads to complete it
 NAME_MATCH_THRESHOLD = 80.0
 
 _DIGITS = frozenset("0123456789")
@@ -230,9 +236,11 @@ def assign_tracks(
     track falls back to a weaker one, so a fallback guess never takes a player from a
     track that read that player's number. Two tracks conflict when they are on screen
     together (from their samples; gaps over ``MAX_SHARED_SCREEN_TIME_S`` are absences)
-    for longer than ``MAX_SHARED_SCREEN_TIME_S`` (shorter overlaps are tracker
-    hand-overs), so fragments and ReID ids of one player that are never on screen
-    together all match the same player. Unrostered tracks score the vote share of their
+    for longer than ``MAX_SHARED_SCREEN_TIME_S`` at a stretch and, in all, for more than
+    ``MAX_SHARED_SHARE`` of the shorter track's time on screen (less is a tracker
+    hand-over), so the fragments and ReID ids of one player all match the same player.
+    A track that mostly read one digit which only one two-digit jersey on its roster
+    contains is matched to that player (``_unique_completion``). Unrostered tracks score the vote share of their
     best read. Assignments come back in ``tracking.tracks`` order.
     """
     video = tracking.video
@@ -362,11 +370,37 @@ def _acceptable_candidates(base: TrackAssignment, rosters: dict[TeamSide, Roster
     sides = [base.side] if base.side is not None else list(TeamSide)
     pool = [(player, side) for side in sides if side in rosters for player in rosters[side].players]
     candidates = [c for c in _rank_candidates(base.votes, pool) if c.score >= ACCEPT_SCORE]
+    if not candidates and base.side is not None and base.side in rosters:
+        completed = _unique_completion(base.votes, rosters[base.side])
+        if completed is not None:
+            return [_Candidate(completed, base.side, ACCEPT_SCORE, 0.0, "partial")]
     if base.side is None and candidates:
         best = candidates[0]
         if any(c.side != best.side and (c.score, c.exact_share) == (best.score, best.exact_share) for c in candidates):
             return []  # e.g. both teams have a #23 and we do not know this track's team
     return candidates
+
+
+def _unique_completion(votes: dict[str, float], roster: Roster) -> RosterPlayer | None:
+    """The one roster player a half-seen number can be: the track mostly read a single digit, nobody on
+    this roster wears that digit alone, and exactly one two-digit jersey contains it ("4" on a roster whose
+    only number with a 4 is 24). With two candidates (14 and 24) it stays unmatched, as before."""
+    total = sum(votes.values())
+    if total <= 0:
+        return None
+    read, vote = max(votes.items(), key=lambda item: item[1])
+    if len(read) != 1 or vote / total < UNIQUE_PARTIAL_MIN_SHARE:
+        return None
+    holders = []
+    for player in roster.players:
+        jersey = normalize_jersey(player.jersey)
+        if jersey is None:
+            continue
+        if jersey.lstrip("0") == read.lstrip("0") and len(jersey.lstrip("0") or "0") == 1 and (jersey != "00" or read == "00"):
+            return None  # somebody wears the digit itself
+        if len(jersey) == 2 and read in jersey:
+            holders.append(player)
+    return holders[0] if len(holders) == 1 else None
 
 
 def _apply_override(
@@ -444,13 +478,23 @@ def _presence(track: Track, max_gap: float) -> list[tuple[int, int]]:
 
 
 def _overlaps(a: list[tuple[int, int]], b: list[tuple[int, int]], tolerance_frames: float) -> bool:
-    """True when two tracks are on screen together for more than ``tolerance_frames`` at a stretch."""
+    """True when two tracks cannot be one player: they are on screen together for more than
+    ``tolerance_frames`` at a stretch, and in all for more than ``MAX_SHARED_SHARE`` of the shorter
+    track's time on screen. (A hand-over between two identities of one player overlaps briefly; two
+    players overlap for most of the time the shorter one is seen.)"""
     i = j = 0
+    shared = 0
+    long_stretch = False
     while i < len(a) and j < len(b):
-        if min(a[i][1], b[j][1]) - max(a[i][0], b[j][0]) > tolerance_frames:
-            return True
+        common = min(a[i][1], b[j][1]) - max(a[i][0], b[j][0])
+        if common > 0:
+            shared += common
+            long_stretch = long_stretch or common > tolerance_frames
         if a[i][1] < b[j][1]:
             i += 1
         else:
             j += 1
-    return False
+    if not long_stretch:
+        return False
+    shorter = min(sum(end - start for start, end in a), sum(end - start for start, end in b))
+    return shared > MAX_SHARED_SHARE * shorter

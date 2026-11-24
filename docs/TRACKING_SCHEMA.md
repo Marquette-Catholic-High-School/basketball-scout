@@ -174,6 +174,7 @@ Three more come from the server, in the joined tracking of a live game
 | `LIVE_PARTS_MISSING` | Parts of the film could not be analysed; the message names the stretches without stats. |
 | `LIVE_NO_PLAY` | (info) No play was found in the named stretches (a break, a timeout or warm-ups). |
 | `LIVE_PERIODS_NOT_DETECTED` | (info) The periods could not be told apart, so the whole game is shown as one period. |
+| `FINAL_SCORE_DIFFERS` | The coach entered the real final score and the film's count differs: points the film did not show were added to the Team line (never taken away). Added by the analysis. |
 | `GAME_TIME_ONLY` | (info) Game time is marked: only the named stretches of the film are counted (added by the analysis, not stored in `tracking.json.gz`). |
 
 ### Raw events
