@@ -69,6 +69,7 @@ TOO_LATE = {  # the stages at which a cancel no longer stops each kind of job
     JobKind.ANALYZE: {JobStage.ANALYZING, JobStage.REPORTING},
     JobKind.REANALYZE: {JobStage.ANALYZING, JobStage.REPORTING},
     JobKind.REPORT: {JobStage.REPORTING},
+    JobKind.LIVE: {JobStage.REPORTING},  # the game is over and Claude is writing the report
 }
 SPARSE_BALL = "Ball tracking was sparse: some rebounds may be missing."  # a GPU warning the first worker saved
 

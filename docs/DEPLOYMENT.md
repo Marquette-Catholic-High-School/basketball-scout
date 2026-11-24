@@ -245,6 +245,14 @@ The web app is light; the heavy computer vision runs on Modal.
   faster. Keep all workers on the server itself: they share the SQLite database and the
   data folder, and SQLite over network storage is not reliable.
 - **Local GPU** (`SCOUT_PROCESSOR=local`): one film at a time.
+- **Live games** ([LIVE.md](LIVE.md)): a live game holds one worker slot for the length of the
+  game and runs up to `SCOUT_LIVE_MAX_PARALLEL` (default 3) GPU calls at a time, so set
+  `SCOUT_MODAL_MAX_CONTAINERS` to 3 or more and redeploy before the first one; with the default
+  `SCOUT_WORKER_CONCURRENCY=2` one other film can be analysed alongside. The server needs
+  `ffmpeg` (the installer puts it there) to put the parts together into the film. The Mac that
+  records the game must reach the server over https from the gym: a VPN such as Tailscale, a
+  tunnel or a public name. A proxy or tunnel in front has to accept the upload chunks
+  (`SCOUT_UPLOAD_CHUNK_MB`, default 16 MB per request), as for any film upload.
 
 ## Modal cost controls
 

@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from scout.api import exports, games, jobs, media, reports, rosters, system, tracks, uploads
+from scout.api import exports, games, jobs, live, media, reports, rosters, system, tracks, uploads
 
 
 def build_api_router() -> APIRouter:
     router = APIRouter(prefix="/api")
-    for module in (system, games, uploads, jobs, media, rosters, tracks, exports, reports):
+    for module in (system, games, uploads, jobs, live, media, rosters, tracks, exports, reports):
         router.include_router(module.router)
     return router

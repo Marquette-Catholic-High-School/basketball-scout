@@ -2,13 +2,14 @@
 
 import { api, gamePath, jobPath } from "./api.js";
 import { resolveColor } from "./colors.js";
-import { STATUS_LABELS, WORKER_STALE_S, jobStageText, tooLateToStop, workerWarning } from "./labels.js";
+import { STATUS_LABELS, WORKER_STALE_S, isLive, jobStageText, tooLateToStop, workerWarning } from "./labels.js";
 import { byId, el, setChildren, showError, clearError, formatDate, formatAgo, toast, withBusy } from "./ui.js";
 
 const REFRESH_MS = 5000;
 let refreshTimer = null;
 
-const isGameActive = (game) => game.status === "queued" || game.status === "processing";
+/** Its job is working: an analysis, or a live game (which is "ready" once its first stats are in). */
+const isGameActive = (game) => game.status === "queued" || game.status === "processing" || isLive(game);
 
 async function loadGames() {
   clearTimeout(refreshTimer);
@@ -20,6 +21,7 @@ async function loadGames() {
     clearError(byId("page-error"));
     const active = games.some(isGameActive);
     byId("games-refresh-note").textContent = active ? "Updating every 5 seconds while film is processing" : "";
+    // (A live game counts as processing here: its stats and progress line keep moving.)
     if (active) refreshTimer = setTimeout(loadGames, REFRESH_MS);
   } catch (err) {
     showError(byId("page-error"), err, [el("button", { type: "button", text: "Try again", onClick: loadGames })]);
@@ -69,6 +71,7 @@ function gameCard(game, job) {
     el("div", {},
       el("h3", {}, el("a", { href: url, text: game.display_title })),
       el("div", { class: "game-meta" },
+        isLive(game) ? el("span", { class: "badge badge-live", text: "Live" }) : null,
         el("span", { class: `badge badge-${game.status}`, text: STATUS_LABELS[game.status] || game.status }),
         game.error ? el("span", { class: "badge badge-failed", text: game.error.title }) : null,
         meta),
@@ -76,7 +79,7 @@ function gameCard(game, job) {
     el("div", { class: "game-actions" },
       el("a", { class: "btn btn-small", href: url, text: "Open" }),
       el("a", { class: "btn btn-small", href: `${url}/roster`, text: "Roster" }),
-      game.has_video || game.video_url ? null : el("a", { class: "btn btn-small", href: `/upload?game=${encodeURIComponent(game.id)}`, text: "Add film" }),
+      game.has_video || game.video_url || isLive(game) ? null : el("a", { class: "btn btn-small", href: `/upload?game=${encodeURIComponent(game.id)}`, text: "Add film" }),
       el("button", { type: "button", class: "btn-small btn-danger", text: "Delete", onClick: (e) => deleteGame(game, e.currentTarget) })),
     isGameActive(game) ? progressBlock(job) : null,
   );

@@ -415,7 +415,10 @@ def test_the_job_panel_follows_the_servers_rule_at_every_kind_and_stage(tmp_path
     for (kind, stage, params), seen in zip(cases, out["results"], strict=True):
         case = (kind, stage, params, seen)
         if cancel_stops_job(JobKind(kind), JobStage(stage)):
-            assert seen["question"] == STOP_QUESTION, case
+            if kind == "live":  # a live game also says what stopping costs, and names End live game
+                assert seen["question"].startswith("Stop the live analysis now?") and "End live game" in seen["question"], case
+            else:
+                assert seen["question"] == STOP_QUESTION, case
             assert (seen["stage"], seen["button"]) == ("Cancelling…", ["Cancelling…", True]), case
         else:
             assert seen["question"] != STOP_QUESTION and "will finish" in seen["question"], case

@@ -42,7 +42,7 @@ from types import FrameType
 from typing import Any
 from urllib.parse import urlparse
 
-from scout import __version__, db, storage
+from scout import __version__, db, live, storage
 from scout.analysis import pipeline, synthetic
 from scout.analysis.geometry import load_court_config
 from scout.config import Settings, get_settings
@@ -60,6 +60,7 @@ from scout.schemas import (
     JobKind,
     JobStage,
     JobStatus,
+    LiveEndReason,
     Roster,
     TeamSide,
     TrackingResult,
@@ -88,8 +89,10 @@ _DONE_MESSAGES = {
     JobKind.ANALYZE: "Analysis complete",
     JobKind.REANALYZE: "Analysis updated",
     JobKind.REPORT: "Scouting report ready",
+    JobKind.LIVE: "Live game analysed",
 }
-_GAME_STATUS_KINDS = frozenset({JobKind.ANALYZE, JobKind.REANALYZE})  # REPORT jobs never change game.status
+# REPORT jobs never change game.status
+_GAME_STATUS_KINDS = frozenset({JobKind.ANALYZE, JobKind.REANALYZE, JobKind.LIVE})
 
 # Job warnings for a cancel that came after an ANALYZE installed its new results: too late to keep the
 # earlier run, so the analysis was finished (docs/ARCHITECTURE.md, "Job lifecycle").
@@ -235,6 +238,7 @@ class Worker:
             JobKind.ANALYZE: self._run_analyze,
             JobKind.REANALYZE: self._run_reanalyze,
             JobKind.REPORT: self._run_report,
+            JobKind.LIVE: self._run_live,
         }
         try:
             run.processor = self._processor_for(job)
@@ -321,6 +325,12 @@ class Worker:
         # Cancelled while Claude wrote it: too late to skip it, so it is kept. Taken over: the new owner finishes.
         if self._check_owner(run.job.id).cancel_requested:
             self._add_warnings(run, [LATE_REPORT_CANCEL_WARNING])
+
+    def _run_live(self, run: _Run) -> None:
+        """A live game: its film arrives in parts, each analysed as it comes (scout.live_runner)."""
+        from scout.live_runner import LiveRunner  # it imports this module
+
+        LiveRunner(self, run).run()
 
     def _report_after_analysis(
         self, run: _Run, analysis: GameAnalysis, report_due: bool, late: str, late_report_skipped: str
@@ -618,6 +628,7 @@ class Worker:
         logger.warning("Job %s failed: %s%s", job.id, error, f" ({error.detail})" if error.detail else "")
         self._release_remote(run, cancel=True)
         self._discard_download(job)
+        self._abandon_live(job, LiveEndReason.FAILED)
         info = error.to_info()
         if job.kind in _GAME_STATUS_KINDS:
             self._set_game_status(job.game_id, GameStatus.FAILED, error=info, **_file_flags(job.game_id))
@@ -628,11 +639,20 @@ class Worker:
         logger.info("Job %s cancelled", job.id)
         self._release_remote(run, cancel=True)
         self._discard_download(job)
+        self._abandon_live(job, LiveEndReason.CANCELLED)
         if job.kind in _GAME_STATUS_KINDS:
             self._restore_game_status(job.game_id)
         self._finish(
             job.id, status=JobStatus.CANCELLED, stage=JobStage.DONE, message="Cancelled", warnings=run.warnings
         )
+
+    def _abandon_live(self, job: Job, reason: LiveEndReason) -> None:
+        """A LIVE job that ends without finishing: its GPU calls stop, what was analysed and the film
+        that arrived are kept, and the game stops taking film (before the game status is settled)."""
+        if job.kind == JobKind.LIVE:
+            from scout.live_runner import abandon
+
+            abandon(self, job, reason)
 
     def _discard_download(self, job: Job) -> None:
         """An ANALYZE that ends without installing: what its download (or a killed one) left in .incoming/ goes.
@@ -760,7 +780,7 @@ class Worker:
         if self._stop.is_set():
             return True
         try:
-            self._check_cancel(job_id)
+            self._check_cancel(live.parent_job_id(job_id))  # a live game's part runs under its job's id
         except (_Cancelled, _LeaseLost):
             return True
         except Exception as exc:  # the database is busy: carry on, the next check decides

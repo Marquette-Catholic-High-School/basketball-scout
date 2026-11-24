@@ -20,6 +20,12 @@ function elapsedSince(iso) {
  * which an ANALYZE writes only when the server is set up for it, and keeps one Claude is writing.
  */
 function cancelQuestion(job) {
+  if (job.kind === "live" && !tooLateToStop(job)) {
+    return "Stop the live analysis now?\n\n"
+      + "The stats so far are kept and the film that has arrived is put together, but the parts still on the GPU "
+      + "are dropped and this game takes no more film.\n\n"
+      + "To end the game normally, use End live game instead.";
+  }
   if (!tooLateToStop(job)) return "Stop this job? You can start it again later.";
   if (job.kind === "report") {
     return "Too late to cancel: Claude is already writing the scouting report.\n\n"
@@ -144,7 +150,9 @@ export class JobPanel {
     view.bar.setAttribute("aria-valuenow", String(pct));
     view.fill.style.width = `${pct}%`;
     const message = job.cancel_requested ? null : job.message;
-    setText(view.details, [`${pct}% overall`, message, elapsed ? `running for ${elapsed}` : null].filter(Boolean).join(" · "));
+    // A live game has no "overall": it runs as long as the game does.
+    const overall = job.kind === "live" ? null : `${pct}% overall`;
+    setText(view.details, [overall, message, elapsed ? `running for ${elapsed}` : null].filter(Boolean).join(" · "));
     if (job.status === "queued") {
       this.checkWorker(view);
     } else if (view.workerProblem) {

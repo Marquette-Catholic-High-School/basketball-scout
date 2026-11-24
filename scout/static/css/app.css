@@ -288,6 +288,7 @@ legend { font-weight: 500; padding: 0 0.3rem; }
 .badge-failed { background: var(--danger-soft); color: var(--danger); }
 .badge-processing, .badge-queued { background: var(--info-soft); color: var(--info); }
 .badge-uploaded { background: var(--warning-soft); color: var(--warning); }
+.badge-live { background: var(--danger); color: #fff; letter-spacing: 0.04em; text-transform: uppercase; }
 .badge-high { background: var(--danger-soft); color: var(--danger); }
 .badge-medium { background: var(--warning-soft); color: var(--warning); }
 .badge-low { background: var(--success-soft); color: var(--success); }
@@ -578,3 +579,8 @@ label.btn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
   .report-body li, .report-body tr { break-inside: avoid; }
   a { color: #000; text-decoration: none; }
 }
+
+/* ------------------------------------------------------------------ live games */
+.live-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1rem; }
+.live-banner-text { flex: 1 1 18rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.live-banner-text strong { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }

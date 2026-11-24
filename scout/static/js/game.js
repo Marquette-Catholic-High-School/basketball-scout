@@ -8,7 +8,7 @@ import { Calibration } from "./calibrate.js";
 import { applyTeamColors, isLight, luminance, teamColor } from "./colors.js";
 import { Exports } from "./exports.js";
 import { JobPanel } from "./jobpanel.js";
-import { STATUS_LABELS } from "./labels.js";
+import { STATUS_LABELS, isLive, liveSummary } from "./labels.js";
 import { Player } from "./player.js";
 import { Plays } from "./plays.js";
 import { renderQuality } from "./quality.js";
@@ -34,6 +34,8 @@ const gameId = gameIdFromPath();
 const state = { game: null, analysis: null, court: null, health: null, filmRenewed: false, analysisJob: null };
 const parts = {};
 let refreshes = 0; // only the newest refresh() may draw the page
+const LIVE_CHECK_MS = 10000; // how often a live game is asked whether its stats grew
+let liveCheckedAt = 0;
 
 /** Film the GPU can analyse: an uploaded file or a video link. */
 const hasFilm = (game) => Boolean(game.has_video || game.video_url);
@@ -127,6 +129,7 @@ async function refresh() {
   const names = teamNames(game, analysis);
 
   renderHeader(game, names);
+  renderLive(game);
   parts.jobPanel.show(jobs.analysis);
   if (jobs.analysis) showJobStatus(jobs.analysis);
   renderTeamBanner(game, analysis);
@@ -144,7 +147,7 @@ async function refresh() {
     calibration: game.calibration,
     fullRunAdvised: hasFilm(game) && freeThrowsMissing(analysis),
     rerunKind: rerunKind(),
-    busy: analysisRunning(game),
+    busy: analysisRunning(game) || isLive(game),
   });
   if (analysis) renderAnalysis(game, analysis, names, court);
   else parts.player.setData({ teamNames: names });
@@ -185,12 +188,17 @@ function renderQualityTab() {
  */
 function renderFilmState(game, analysis) {
   const playable = game.has_video || game.has_annotated_video;
-  show(byId("no-film"), !game.has_video && !analysis && !game.video_url);
+  show(byId("no-film"), !game.has_video && !analysis && !game.video_url && !isLive(game));
   show(byId("game-layout"), playable || Boolean(analysis));
   show(byId("player-main"), playable);
   const missing = byId("player-missing");
   show(missing, !playable && Boolean(analysis));
   if (playable || !analysis) return;
+  if (isLive(game)) { // the parts become the film when the game ends
+    setChildren(missing, notice("info", "The film comes when the game ends",
+      "The parts of the live stream are put together into the film when the stream ends. The stats below fill in as the game goes."));
+    return;
+  }
   const why = game.video_url ? "It was analyzed from a video link and isn't stored on this server" : "The film isn't stored on this server";
   setChildren(missing, notice("info", "Film not available", `${why}, so it can't be played here. The stats below still work.`),
     el("a", { class: "btn", href: `/upload?game=${encodeURIComponent(game.id)}`, text: "Upload the film" }));
@@ -199,6 +207,12 @@ function renderFilmState(game, analysis) {
 /** What to tell the coach while there is film but no analysis to show yet. */
 function renderPending(game, analysis) {
   const box = byId("analysis-pending");
+  if (isLive(game) && !analysis) {
+    show(box, true);
+    setChildren(box, notice("info", null, "This game is live: the stats appear here a few minutes after the stream starts.",
+      "Each part of the film is analysed as it arrives. This page updates by itself."));
+    return;
+  }
   show(box, hasFilm(game) && !analysis);
   if (!hasFilm(game) || analysis) return;
   if (game.status === "failed" && game.error && byId("job-panel").hidden) {
@@ -254,8 +268,9 @@ function renderHeader(game, names) {
   const film = byId("film-link");
   film.href = `/upload?game=${encodeURIComponent(game.id)}`;
   film.textContent = hasFilm(game) ? "Replace film" : "Add film";
+  show(film, !isLive(game)); // a live game's film is its stream
   byId("no-film-link").href = film.href;
-  const busy = analysisRunning(game);
+  const busy = analysisRunning(game) || isLive(game);
   const rerunnable = rerunKind() === "reanalyze";
   const rerun = byId("reanalyze-btn");
   rerun.textContent = rerunnable ? "Re-run analysis" : "Analyze film";
@@ -267,18 +282,79 @@ function renderHeader(game, names) {
   full.title = busy ? "An analysis is already running" : "Send the film to the GPU again";
 }
 
+/**
+ * The live game's banner: where the stats stand, and the button that ends the game. Ending it
+ * here also stops a Mac that is still sending film (its next part is refused).
+ */
+function renderLive(game) {
+  const box = byId("live-banner");
+  show(box, isLive(game));
+  if (!isLive(game)) return;
+  const [headline, details] = liveSummary(game.live);
+  setChildren(box,
+    el("div", { class: "live-banner-text" },
+      el("strong", {}, el("span", { class: "badge badge-live", text: "Live" }), headline),
+      details ? el("span", { class: "small muted", text: details }) : null),
+    game.live.state === "capturing"
+      ? el("button", { type: "button", text: "End live game", onClick: (e) => endLive(e.currentTarget) })
+      : null);
+}
+
+async function endLive(button) {
+  const ok = window.confirm("End this live game?\n\n"
+    + "No more film is taken. The parts already sent are analysed to the end, then the film is put together.\n\n"
+    + "If the Mac app is still recording this game, end it there instead: it sends its last parts first.");
+  if (!ok) return;
+  await withBusy(button, "Ending…", async () => {
+    try {
+      await api.post(gamePath(gameId, "/live/finish"));
+      await refresh();
+    } catch (err) {
+      showError(byId("page-error"), err);
+    }
+  });
+}
+
+/**
+ * A live game's job runs for the whole game, so the page cannot wait for it to end: every
+ * LIVE_CHECK_MS it asks whether the analysis was rebuilt (live.analysis_version) and reloads then.
+ */
+async function checkLive() {
+  if (Date.now() - liveCheckedAt < LIVE_CHECK_MS) return;
+  liveCheckedAt = Date.now();
+  const token = refreshes;
+  const game = await api.get(gamePath(gameId)).catch(() => null);
+  if (!game || token !== refreshes || !state.game) return;
+  const before = state.game.live || {};
+  const now = game.live || {};
+  if (now.analysis_version !== before.analysis_version || now.state !== before.state || game.status !== state.game.status) {
+    await refresh();
+  } else if (isLive(game)) { // only the counters moved: the banner follows without redrawing the page
+    state.game = { ...state.game, live: game.live };
+    renderLive(state.game);
+  }
+}
+
 /** Header badge while the analysis job runs (the whole page reloads when it ends). */
 function showJobStatus(job) {
   const badge = document.getElementById("game-status");
   if (!badge || !isJobActive(job)) return;
+  if (job.kind === "live") checkLive();
   const status = job.status === "running" ? "processing" : "queued";
   const pct = Math.round(job.progress || 0);
   badge.className = `badge badge-${status}`;
-  badge.textContent = status === "processing" && pct ? `${STATUS_LABELS.processing} · ${pct}%` : STATUS_LABELS[status];
+  if (job.kind === "live" && state.game?.has_analysis) {
+    badge.className = "badge badge-ready"; // the stats so far are ready; the banner says the game is live
+    badge.textContent = STATUS_LABELS.ready;
+  } else if (job.kind === "live") {
+    badge.textContent = STATUS_LABELS[status];
+  } else {
+    badge.textContent = status === "processing" && pct ? `${STATUS_LABELS.processing} · ${pct}%` : STATUS_LABELS[status];
+  }
   for (const id of ["reanalyze-btn", "full-analysis-btn"]) {
     const button = byId(id);
     button.disabled = true;
-    button.title = "An analysis is already running";
+    button.title = job.kind === "live" ? "This game is live: its stats update by themselves" : "An analysis is already running";
   }
 }
 
@@ -345,6 +421,9 @@ async function confirmTeam(chosen, teams, button) {
       await api.patch(gamePath(gameId), { team_id_map: map });
       if (chosen.side === "scouted") {
         toast("Thanks - teams confirmed.");
+        await refresh();
+      } else if (isLive(state.game)) { // a live game rebuilds its stats by itself when the teams change
+        toast("Teams confirmed. The stats switch over within a minute.");
         await refresh();
       } else {
         await startJob("reanalyze");

@@ -646,6 +646,84 @@ class GameStatus(StrEnum):
     FAILED = "failed"
 
 
+class LiveState(StrEnum):
+    CAPTURING = "capturing"  # the capture client is sending film
+    FINISHING = "finishing"  # no more film is coming: the parts still on the GPU are finished
+    ENDED = "ended"
+
+
+class LiveEndReason(StrEnum):
+    FINISHED = "finished"  # the coach ended it
+    IDLE = "idle"  # no film arrived for SCOUT_LIVE_IDLE_MINUTES
+    LIMIT = "limit"  # the game reached SCOUT_MAX_VIDEO_MINUTES
+    CANCELLED = "cancelled"  # the live job was cancelled
+    FAILED = "failed"  # the live job failed
+    EMPTY = "empty"  # ended before any film arrived
+
+
+class LiveSegmentStatus(StrEnum):
+    UPLOADED = "uploaded"  # on the server, waiting for a GPU
+    PROCESSING = "processing"
+    DONE = "done"
+    FAILED = "failed"  # the GPU could not analyse it: its stretch of film has no stats
+    EMPTY = "empty"  # the GPU found no play in it (a timeout, halftime, warm-ups): no stats, not an error
+
+
+LIVE_SETTLED_STATUSES = frozenset({LiveSegmentStatus.DONE, LiveSegmentStatus.FAILED, LiveSegmentStatus.EMPTY})
+
+
+class LiveSegment(_Model):
+    """One part of a live game's film (docs/LIVE.md)."""
+
+    game_id: str
+    index: int = Field(ge=0, description="Position in the stream, from 0.")
+    duration_s: float = Field(gt=0)
+    size: int = Field(gt=0)
+    filename: str = ""
+    status: LiveSegmentStatus = LiveSegmentStatus.UPLOADED
+    attempts: int = 0
+    processor: str | None = None
+    external_id: str | None = Field(default=None, description="Processor handle of its GPU call.")
+    progress: float | None = Field(default=None, description="0..100 on the GPU.")
+    error: ErrorInfo | None = None
+    uploaded_at: datetime | None = None
+    submitted_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class LiveInfo(_Model):
+    """A game whose film arrives in parts while it is played (docs/LIVE.md)."""
+
+    state: LiveState = LiveState.CAPTURING
+    segment_seconds: int = 120
+    segments_received: int = 0
+    segments_analysed: int = Field(default=0, description="Parts whose stats are in the analysis.")
+    segments_failed: int = 0
+    segments_empty: int = Field(default=0, description="Parts without play (breaks): settled, no stats, not failures.")
+    received_s: float = Field(default=0.0, description="Film received so far, in seconds.")
+    analysed_s: float = Field(default=0.0, description="The analysis covers the film up to this second.")
+    analysis_version: int = Field(default=0, description="Goes up by one each time the analysis is rebuilt.")
+    started_at: datetime | None = None
+    last_segment_at: datetime | None = None
+    ended_at: datetime | None = None
+    end_reason: LiveEndReason | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.state != LiveState.ENDED
+
+
+class LiveStart(_Model):
+    segment_seconds: int | None = Field(default=None, ge=20, le=600, description="Length of each part the client will send.")
+
+
+class LiveSegmentInit(_Model):
+    index: int = Field(ge=0, le=100_000)
+    duration_s: float = Field(gt=0, le=3600)
+    size: int = Field(gt=0)
+    filename: str | None = Field(default=None, max_length=255)
+
+
 class GameCreate(_Model):
     scouted_team: str = Field(min_length=1, max_length=120)
     other_team: str = Field(default="", max_length=120)
@@ -693,6 +771,7 @@ class Game(_Model):
         "scout.db reads it from the disk with every game.",
     )
     calibration: CourtCalibration | None = None
+    live: LiveInfo | None = Field(default=None, description="Set for a live game (docs/LIVE.md); None for an uploaded film.")
     latest_job_id: str | None = None
     error: ErrorInfo | None = None
     created_at: datetime | None = None
@@ -712,6 +791,7 @@ class JobKind(StrEnum):
     ANALYZE = "analyze"  # GPU processing + transform (+ report)
     REANALYZE = "reanalyze"  # transform only, from stored tracking.json.gz (after roster/override edits)
     REPORT = "report"  # Claude scouting report only
+    LIVE = "live"  # a live game: analyse the film part by part as it arrives (docs/LIVE.md)
 
 
 class JobStatus(StrEnum):
@@ -765,6 +845,7 @@ _TOO_LATE_TO_CANCEL: dict[JobKind, frozenset[JobStage]] = {
     JobKind.ANALYZE: frozenset({JobStage.ANALYZING, JobStage.REPORTING}),  # its new results are installed
     JobKind.REANALYZE: frozenset({JobStage.ANALYZING, JobStage.REPORTING}),  # its analysis has started
     JobKind.REPORT: frozenset({JobStage.REPORTING}),  # Claude is writing the report
+    JobKind.LIVE: frozenset({JobStage.REPORTING}),  # the game is over and Claude is writing the report
 }
 
 
@@ -794,6 +875,8 @@ class UploadSession(_Model):
     received: int = 0
     chunk_size: int
     status: Literal["open", "complete", "aborted"] = "open"
+    live_segment: int | None = Field(default=None, description="Index of the live part this upload carries; None for a whole film.")
+    live_duration_s: float | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -855,6 +938,14 @@ class ReportRecord(_Model):
     markdown: str
     usage: dict[str, int] = Field(default_factory=dict)
     stop_reason: str | None = None
+
+
+class LiveStatus(_Model):
+    """``GET /api/games/{id}/live``."""
+
+    game: Game
+    segments: list[LiveSegment] = Field(default_factory=list)
+    job: Job | None = None
 
 
 class HealthStatus(_Model):

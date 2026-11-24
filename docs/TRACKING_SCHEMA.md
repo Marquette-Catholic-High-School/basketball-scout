@@ -166,6 +166,15 @@ screen; the runner still picks them up from those lines.
 | `ANNOTATED_VIDEO_MISSING` | No overlay video was produced; the film plays without overlays. |
 | `ANNOTATED_VIDEO_FAILED` | The overlay video could not be encoded; stats and the timeline are unaffected. |
 
+Three more come from the server, in the joined tracking of a live game
+([LIVE.md](LIVE.md#how-the-parts-are-joined)):
+
+| Code | Meaning |
+|---|---|
+| `LIVE_PARTS_MISSING` | Parts of the film could not be analysed; the message names the stretches without stats. |
+| `LIVE_NO_PLAY` | (info) No play was found in the named stretches (a break, a timeout or warm-ups). |
+| `LIVE_PERIODS_NOT_DETECTED` | (info) The periods could not be told apart, so the whole game is shown as one period. |
+
 ### Raw events
 
 Every event: `event_id`, `type`, `frame`, `t`, `track_id` (primary actor),

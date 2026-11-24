@@ -8,6 +8,8 @@
 * While an analysis job (ANALYZE/REANALYZE) is active no other job starts (409), and
   only one REPORT job may be active per game.
 * Analysis jobs move the game to ``queued`` and become its ``latest_job_id``.
+* A LIVE job (docs/LIVE.md) counts as an analysis job; it is started by ``POST
+  /games/{id}/live``, never through this router.
 """
 
 from __future__ import annotations
@@ -18,17 +20,29 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from scout import db, storage
+from scout import db, live, storage
 from scout.api.deps import CurrentGame, JobId, SettingsDep, has_analysis_file
 from scout.api.errors import validate_model
 from scout.config import Settings
 from scout.errors import ErrorCode, ScoutError
 from scout.jobs import queue as job_queue
-from scout.schemas import Game, GameStatus, Job, JobCreate, JobKind, JobStage, JobStatus, ReportRequest
+from scout.schemas import (
+    Game,
+    GameStatus,
+    Job,
+    JobCreate,
+    JobKind,
+    JobStage,
+    JobStatus,
+    LiveEndReason,
+    LiveSegmentStatus,
+    LiveState,
+    ReportRequest,
+)
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_KINDS = frozenset({JobKind.ANALYZE, JobKind.REANALYZE})
+ANALYSIS_KINDS = frozenset({JobKind.ANALYZE, JobKind.REANALYZE, JobKind.LIVE})
 
 router = APIRouter(tags=["jobs"])
 
@@ -71,7 +85,9 @@ def ensure_no_active_job(game_id: str, kind: JobKind) -> None:
     active = next((job for job in db.active_jobs_for_game(game_id) if job.kind in blocking), None)
     if active is None:
         return
-    if active.kind in ANALYSIS_KINDS:
+    if active.kind == JobKind.LIVE:
+        message = "This game is live: its film is being analysed as it arrives."
+    elif active.kind in ANALYSIS_KINDS:
         message = "This game's film is being analysed right now."
     else:
         message = "A scouting report is already being written for this game."
@@ -129,6 +145,12 @@ def _submit(game_id: str, kind: JobKind, params: dict[str, Any]) -> Job:
 @router.post("/games/{game_id}/jobs", response_model=Job, status_code=201)
 def create_job(body: JobCreate, game: CurrentGame, settings: SettingsDep) -> Job:
     params = body.params
+    if body.kind == JobKind.LIVE:
+        raise ScoutError(
+            ErrorCode.VALIDATION_FAILED,
+            "A live game is started with POST /api/games/{id}/live.",
+            hint="Start the live stream from the Mac app.",
+        )
     if body.kind == JobKind.REPORT:  # the worker hands coach_focus to Claude: same limits as POST /reports
         params = {"coach_focus": validate_model(ReportRequest, params).coach_focus}
     elif "coach_focus" in params:  # an analysis job that writes the report passes it to Claude too
@@ -152,6 +174,8 @@ def cancel_job(job_id: JobId) -> Job:
     are flagged and the worker stops them and settles the game."""
     job = db.request_cancel(job_id)
     if job.kind in ANALYSIS_KINDS and job.status == JobStatus.CANCELLED:
+        if job.kind == JobKind.LIVE:  # cancelled before a worker took it: no worker will end the live game
+            live.mark_ended(job.game_id, LiveEndReason.CANCELLED)
         _release_game(job)
     return job
 
@@ -169,6 +193,8 @@ def retry_job(job_id: JobId, settings: SettingsDep) -> Job:
     # Decided under the lock: a film change holds it while it deletes the old tracking.json.gz.
     with start_lock:
         game = db.require_game(old.game_id)
+        if old.kind == JobKind.LIVE:
+            return _retry_live(game, old, settings)
         if _gpu_results_saved(old):
             # What the ANALYZE would still have done: the report (with the coach's focus) when enabled.
             params: dict[str, Any] = {"report": settings.auto_report and settings.claude_configured}
@@ -176,6 +202,30 @@ def retry_job(job_id: JobId, settings: SettingsDep) -> Job:
                 params["coach_focus"] = old.params["coach_focus"]
             return start_job(game, JobKind.REANALYZE, params, settings)
         return start_job(game, old.kind, dict(old.params), settings)
+
+
+def _retry_live(game: Game, old: Job, settings: Settings) -> Job:
+    """Retry of a live game's job. The game no longer takes film, so there are two cases:
+
+    * its film was put together: a normal analysis of the whole film (ANALYZE);
+    * its parts are still in the game folder (the job broke off before the film was made): a new
+      LIVE job finishes them, trying the failed ones again, and then makes the film.
+    """
+    if storage.find_source_video(game.id) is not None:
+        return start_job(game, JobKind.ANALYZE, {}, settings)
+    if game.live is None or not db.list_live_segments(game.id):
+        raise ScoutError(ErrorCode.VIDEO_MISSING, "No film arrived for this live game.", hint="Create a new game.")
+    ensure_no_active_job(game.id, JobKind.LIVE)
+    for segment in db.list_live_segments(game.id):
+        settled = segment.status in (LiveSegmentStatus.DONE, LiveSegmentStatus.EMPTY)  # a break stays a break
+        if not settled and storage.live_segment_video_path(game.id, segment.index).is_file():
+            db.save_live_segment(
+                segment.model_copy(
+                    update={"status": LiveSegmentStatus.UPLOADED, "attempts": 0, "external_id": None, "error": None}
+                )
+            )
+    db.update_live(game.id, state=LiveState.FINISHING, ended_at=None)
+    return start_job(db.require_game(game.id), JobKind.LIVE, dict(old.params), settings)
 
 
 def _gpu_results_saved(job: Job) -> bool:

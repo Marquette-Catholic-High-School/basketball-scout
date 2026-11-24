@@ -11,6 +11,9 @@
         annotated.mp4                   rendered overlay video (optional)
         analysis.json                   latest GameAnalysis
         .incoming/                      an ANALYZE's download from the GPU, until the worker moves it in
+        live/                           a live game's parts, until the game ends (docs/LIVE.md)
+          seg-00007.mp4                 the film of part 7
+          seg-00007.tracking.json.gz    its GPU results
 """
 
 from __future__ import annotations
@@ -64,6 +67,22 @@ def incoming_dir(game_id: str) -> Path:
     """Where an ANALYZE downloads its results: inside the game folder, so moving them in is a
     rename. A download cut short (the worker killed mid-download) leaves its partial files here."""
     return game_dir(game_id) / ".incoming"
+
+
+def live_dir(game_id: str, *, create: bool = False) -> Path:
+    """Where a live game's parts wait until the game ends and they are joined into the film."""
+    path = game_dir(game_id) / "live"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def live_segment_video_path(game_id: str, index: int) -> Path:
+    return live_dir(game_id) / f"seg-{int(index):05d}.mp4"
+
+
+def live_segment_tracking_path(game_id: str, index: int) -> Path:
+    return live_dir(game_id) / f"seg-{int(index):05d}.tracking.json.gz"
 
 
 def upload_part_path(upload_id: str) -> Path:

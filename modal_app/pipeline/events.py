@@ -843,6 +843,26 @@ def detect_events(
     return drafts
 
 
+def detect_period_events(
+    perception: Perception,
+    cfg: EventConfig | None = None,
+    existing_events: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Only the game's structure: period_start, period_end, inferred timeouts and the jump ball
+    that starts a period, in time order and without ``event_id`` (the caller numbers them).
+
+    The server uses it for a live game (``scout.analysis.live_merge``): each part of the film is
+    analysed on its own, where a halftime that spans several parts cannot be seen, so the periods
+    are found again on the joined tracking.
+    """
+    cfg = cfg or EventConfig()
+    scene = _Scene(perception, cfg)
+    known = _Known(list(existing_events or []), scene)
+    drafts = _detect_periods(scene, known, cfg)
+    drafts.sort(key=lambda d: (d["frame"], _TYPE_ORDER.get(d["type"], 2)))
+    return drafts
+
+
 # -- free throws -------------------------------------------------------------
 
 

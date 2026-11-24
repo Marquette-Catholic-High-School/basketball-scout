@@ -125,7 +125,7 @@ const STAGE_LABELS = {
   done: "Finished",
 };
 
-const JOB_KIND_LABELS = { analyze: "Film analysis", reanalyze: "Re-analysis", report: "Scouting report" };
+const JOB_KIND_LABELS = { analyze: "Film analysis", reanalyze: "Re-analysis", report: "Scouting report", live: "Live analysis" };
 
 export function jobKindLabel(kind) {
   return JOB_KIND_LABELS[kind] || "Job";
@@ -136,7 +136,43 @@ const TOO_LATE_TO_CANCEL = {
   analyze: ["analyzing", "reporting"], // its new results are installed
   reanalyze: ["analyzing", "reporting"], // its analysis has started
   report: ["reporting"], // Claude is writing the report
+  live: ["reporting"], // the game is over and Claude is writing the report
 };
+
+/** A live game (docs/LIVE.md) that still takes film or is finishing the parts it has. */
+export const isLive = (game) => Boolean(game?.live && game.live.state !== "ended");
+
+/** Film time as m:ss ("12:05"; past an hour "75:05", as the film player counts). */
+export function filmClock(seconds) {
+  const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Where a live game stands, for the game page's banner: [headline, details].
+ * "Stats through 10:00" + "Film received: 14:02 · 5 of 7 parts analysed · 1 part could not be analysed".
+ */
+export function liveSummary(live) {
+  const received = live.segments_received || 0;
+  const empty = live.segments_empty || 0; // parts without play (a break, warm-ups): settled, and not failures
+  const settled = (live.segments_analysed || 0) + (live.segments_failed || 0) + empty;
+  let headline;
+  if (live.state === "finishing") headline = "The stream has ended: the last parts are being analysed";
+  else if (live.analysed_s > 0) headline = `Stats through ${filmClock(live.analysed_s)} of the film`;
+  else if (received && empty === received) headline = "No game play in the film so far";
+  else if (received) headline = "The first part of the film is being analysed";
+  else headline = "Waiting for the film";
+  const details = [];
+  if (received) {
+    details.push(`Film received: ${filmClock(live.received_s)}`);
+    details.push(`${(live.segments_analysed || 0) + empty} of ${received} ${received === 1 ? "part" : "parts"} analysed`);
+  }
+  if (live.segments_failed) {
+    details.push(`${live.segments_failed} ${live.segments_failed === 1 ? "part" : "parts"} could not be analysed`);
+  }
+  if (live.state !== "finishing" && received > settled && live.analysed_s > 0) details.push("the stats trail the game by a few minutes");
+  return [headline, details.join(" · ")];
+}
 
 /** A cancel no longer stops this job: it runs to the end, and a cancel only skips a report it was still to write. */
 export function tooLateToStop(job) {
@@ -151,6 +187,7 @@ export function jobStageText(job) {
   if (job.status === "cancelled") return "Cancelled";
   if (job.cancel_requested && !tooLateToStop(job)) return "Cancelling…";
   if (job.kind === "report" && job.stage !== "queued") return STAGE_LABELS.reporting;
+  if (job.kind === "live" && job.stage === "gpu_processing") return "Analyzing the film as it arrives";
   const label = STAGE_LABELS[job.stage] || "Working";
   return job.stage === "gpu_processing" ? `${label} (${Math.round(job.progress || 0)}%)` : label;
 }

@@ -61,6 +61,7 @@ class ErrorCode(StrEnum):
     REQUEST_TOO_LARGE = "REQUEST_TOO_LARGE"
     NOT_FOUND = "NOT_FOUND"
     CONFLICT = "CONFLICT"
+    LIVE_ENDED = "LIVE_ENDED"
     VALIDATION_FAILED = "VALIDATION_FAILED"
     # Jobs / misc
     JOB_CANCELLED = "JOB_CANCELLED"
@@ -327,6 +328,13 @@ _CATALOG: dict[ErrorCode, tuple[str, str, str | None, bool, int]] = {
     ),
     ErrorCode.NOT_FOUND: ("Not found", "The requested item does not exist.", None, False, 404),
     ErrorCode.CONFLICT: ("Conflict", "The request conflicts with the current state.", None, False, 409),
+    ErrorCode.LIVE_ENDED: (
+        "The live game has ended",
+        "This live game is no longer taking film.",
+        "Create a new game to analyse another live stream.",
+        False,
+        409,
+    ),
     ErrorCode.VALIDATION_FAILED: ("Invalid input", "Some fields are invalid.", None, False, 422),
     ErrorCode.JOB_CANCELLED: ("Cancelled", "The job was cancelled.", None, False, 409),
     ErrorCode.WORKER_LOST: (

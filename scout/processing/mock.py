@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 HANDLE_PREFIX = "mock:"
 DEFAULT_DURATION_S = 600.0
 SEED_OPTION = "seed"  # key in TrackingResult.pipeline.options; the worker reads it for demo rosters
+# Request options of a live game's part (scout.live): how long the part is, and the seed of the
+# demo players every part of the game shares.
+DURATION_OPTION = "mock_duration_s"
+ROSTER_SEED_OPTION = "mock_roster_seed"
 TRACKING_FILENAME = "tracking.json.gz"
 
 
@@ -46,6 +50,8 @@ def seed_for_job(job_id: str) -> int:
 class _MockRun:
     started: float  # time.monotonic() at submit
     video: VideoSource
+    duration_s: float | None = None
+    roster_seed: int | None = None
 
 
 class MockProcessor(Processor):
@@ -58,8 +64,16 @@ class MockProcessor(Processor):
         self._lock = threading.Lock()
 
     def submit(self, *, job_id: str, video: VideoSource, options: dict[str, Any]) -> str:
+        duration = options.get(DURATION_OPTION)
+        roster_seed = options.get(ROSTER_SEED_OPTION)
+        run = _MockRun(
+            started=time.monotonic(),
+            video=video,
+            duration_s=float(duration) if isinstance(duration, int | float) and duration > 0 else None,
+            roster_seed=int(roster_seed) if isinstance(roster_seed, int) else None,
+        )
         with self._lock:
-            self._runs[job_id] = _MockRun(started=time.monotonic(), video=video)
+            self._runs[job_id] = run
         seconds = self.settings.mock_seconds
         logger.info("Mock job %s started for %s (%.0fs simulated GPU time)", job_id, video.filename, seconds)
         return HANDLE_PREFIX + job_id
@@ -83,13 +97,15 @@ class MockProcessor(Processor):
         with self._lock:
             run = self._runs.pop(job_id, None)
         seed = seed_for_job(job_id)
-        duration_s = _source_duration(run.video) if run else None
+        duration_s = (run.duration_s or _source_duration(run.video)) if run else None
         filename = run.video.filename if run else "synthetic.mp4"
+        roster_seed = run.roster_seed if run else None
+        players = {} if roster_seed is None else {"roster_seed": roster_seed}
         tracking, _truth = synthetic.generate_synthetic_game(
-            seed=seed, duration_s=duration_s or DEFAULT_DURATION_S, filename=filename
+            seed=seed, duration_s=duration_s or DEFAULT_DURATION_S, filename=filename, **players
         )
         # Record provenance so a later re-analysis can rebuild matching demo rosters.
-        options = {**tracking.pipeline.options, SEED_OPTION: seed}
+        options = {**tracking.pipeline.options, SEED_OPTION: seed if roster_seed is None else roster_seed}
         tracking = tracking.model_copy(
             update={"job_id": job_id, "pipeline": tracking.pipeline.model_copy(update={"options": options})}
         )

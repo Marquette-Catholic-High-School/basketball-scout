@@ -3,6 +3,7 @@
 
 import { api, gamePath, isJobActive, jobPath, pollJob } from "./api.js";
 import { applyTeamColors } from "./colors.js";
+import { isLive } from "./labels.js";
 import { byId, clearError, el, formatBytes, formatPct, gameIdFromPath, notice, setChildren, show, showError, toast, withBusy } from "./ui.js";
 
 const gameId = gameIdFromPath();
@@ -516,6 +517,11 @@ async function saveTracksAndRerun() {
 
 async function rerunAnalysis() {
   const gameUrl = `/games/${encodeURIComponent(gameId)}`;
+  if (isLive(state.game)) { // a live game rebuilds its stats by itself after a roster or track change (docs/LIVE.md)
+    toast("Saved. This game is live: the stats pick up the change within a minute.");
+    window.location.assign(gameUrl);
+    return;
+  }
   try {
     await api.post(gamePath(gameId, "/jobs"), { kind: "reanalyze" });
     window.location.assign(gameUrl);

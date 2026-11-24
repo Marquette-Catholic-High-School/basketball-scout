@@ -201,7 +201,8 @@ def test_after_a_cancel_request_the_job_panel_leaves_out_the_servers_message_as_
                    + PANEL_DETAILS_JS)
     for answer, seen in zip(answers, out["seen"], strict=True):
         case = (answer["kind"], answer["stage"], answer["status"], answer["message"], seen)
-        assert seen["details"] == "40% overall", case
+        # A live game runs as long as the game does: it has no "overall" share to show.
+        assert seen["details"] == ("" if case[0] == "live" else "40% overall"), case
         if cancel_stops_job(JobKind(answer["kind"]), JobStage(answer["stage"])):
             assert (seen["stage"], seen["button"]) == ("Cancelling…", "Cancelling…"), case
             assert seen["text"].count("Cancelling") == 2, case

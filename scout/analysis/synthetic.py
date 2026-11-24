@@ -307,7 +307,7 @@ class _Poss:
 class _Game:
     """Builds the whole game: keyframed movement, ball states and raw events."""
 
-    def __init__(self, seed: int, duration_s: float, ocr_noise: float) -> None:
+    def __init__(self, seed: int, duration_s: float, ocr_noise: float, roster_seed: int | None = None) -> None:
         self.rng = random.Random(seed)
         self.seed = seed
         self.duration_s = duration_s
@@ -315,7 +315,7 @@ class _Game:
         self.players: dict[str, _Player] = {}
         self.lineups: dict[int, list[str]] = {}
         self.paths: dict[str, _Path] = {}
-        for team, roster in _roster_plan(seed).items():
+        for team, roster in _roster_plan(seed if roster_seed is None else roster_seed).items():
             keys = []
             for role, p in enumerate(roster[:5]):
                 key = f"{team}:{p['jersey']}"
@@ -1209,11 +1209,16 @@ def generate_synthetic_game(
     with_homography: bool = True,
     ocr_noise: float = 0.15,
     filename: str = "synthetic.mp4",
+    roster_seed: int | None = None,
 ) -> tuple[TrackingResult, SyntheticTruth]:
-    """Return ``(tracking, truth)``. ``ocr_noise`` = share of jersey reads that are wrong/confused."""
+    """Return ``(tracking, truth)``. ``ocr_noise`` = share of jersey reads that are wrong/confused.
+
+    ``roster_seed``: take the players from this seed's rosters and only the action from ``seed``
+    (the parts of a demo live game: the same ten players, a different stretch of play each).
+    """
     if duration_s <= 0 or fps <= 0 or analysis_fps <= 0:
         raise ValueError("duration_s, fps and analysis_fps must be positive")
-    game = _Game(seed, float(duration_s), min(1.0, max(0.0, float(ocr_noise))))
+    game = _Game(seed, float(duration_s), min(1.0, max(0.0, float(ocr_noise))), roster_seed)
     game.build()
     tracking, truth = game.to_tracking(float(fps), float(analysis_fps), with_homography, filename)
     logger.info("Synthetic game (seed %d, %.0f s): %d possessions, %d events, score %s",

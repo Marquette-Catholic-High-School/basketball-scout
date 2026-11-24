@@ -32,6 +32,8 @@ Repository: <https://github.com/Marquette-Catholic-High-School/basketball-scout.
   - [Update](#update)
   - [Uninstall](#uninstall)
 - [Using the app](#using-the-app)
+- [Live games](#live-games)
+- [iPhone, iPad and Mac app](#iphone-ipad-and-mac-app)
 - [Configuration reference](#configuration-reference)
 - [Config files](#config-files)
 - [Costs](#costs)
@@ -47,7 +49,9 @@ More documentation:
 [docs/TRACKING_SCHEMA.md](docs/TRACKING_SCHEMA.md) (GPU pipeline output),
 [docs/FASTSCOUT.md](docs/FASTSCOUT.md) (FastScout step by step),
 [docs/PROXMOX.md](docs/PROXMOX.md) (the VM),
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) (production checklist, backups, monitoring).
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) (production checklist, backups, monitoring),
+[docs/LIVE.md](docs/LIVE.md) (live games: how they work, the API),
+[apple/README.md](apple/README.md) (the iPhone, iPad and Mac app).
 
 ## What it does
 
@@ -89,6 +93,10 @@ More documentation:
 - **Clear errors**: GPU out of memory, players or ball not detected, Modal not set up,
   report failures and more each come with a plain-English explanation, a hint, and a
   Retry button when retrying can help. See [Troubleshooting](#troubleshooting).
+- **Live games**: give the Mac app the camera's stream link (RTMP) at the gym and the stats
+  fill in during the game, a few minutes behind the play. See [Live games](#live-games).
+- **iPhone, iPad and Mac app**: a native app with everything the web pages do, built from
+  this repository. See [iPhone, iPad and Mac app](#iphone-ipad-and-mac-app).
 
 ## How it works
 
@@ -131,6 +139,11 @@ What has not been tried yet:
   pipeline have only run against test data, so the time and cost per game and the
   accuracy on high school film are estimates. Before the first real game, run
   `make warmup-modal` (or `modal run modal_app/app.py::warmup`) and analyse one short clip.
+- **Live games have only run with the demo processor and stand-ins for the camera and
+  ffmpeg.** No real stream has been cut into parts by the Mac app, no real parts have been put
+  together into a film on the server, and how far the stats trail the game depends on the GPU's
+  real speed, which is not measured yet. Try a home game or a practice before you rely on it
+  ([Live games](#live-games)).
 - **The FastScout formats come from archived FastScout documentation** and screenshots,
   not from a live FastScout account. Paste one game into a spare schedule entry first
   ([docs/FASTSCOUT.md](docs/FASTSCOUT.md#caveats-and-what-is-unverified)).
@@ -544,6 +557,73 @@ Step-by-step instructions, name matching rules and caveats:
 [docs/FASTSCOUT.md](docs/FASTSCOUT.md). The one-click **Copy** needs the site on
 `https://`; otherwise use Download. Columns are set in `config/fastscout_columns.yaml`.
 
+## Live games
+
+Scout a game **while it is played**: the Mac app reads the camera's live stream at the gym, sends
+it to your server in two-minute parts, and the box score, shot chart and plays fill in on the
+game page a few minutes behind the play. It works from another school's network: the Mac only
+needs the internet connection to reach your server.
+
+**What you need**
+
+- **The Mac app** on the laptop you take to the game, signed in to your server
+  ([iPhone, iPad and Mac app](#iphone-ipad-and-mac-app)).
+- **ffmpeg on that Mac**, installed once: `brew install ffmpeg` ([Homebrew](https://brew.sh)).
+- **A stream link from the camera** (RTMP, for example `rtmp://192.168.1.50/live`): the camera
+  or its encoder is on the same network as the Mac, or plugged into it. RTSP, SRT and HLS links
+  work too.
+- **Your server reachable from the gym over https**: a domain name, a tunnel (for example
+  Cloudflare Tunnel) or a VPN such as Tailscale. Open the web pages on the laptop at the gym
+  before the game to check.
+- **Three GPUs at a time.** The GPU is slower than real time, so the parts are analysed side by
+  side: deploy the Modal app with `SCOUT_MODAL_MAX_CONTAINERS=3` (or more) in `.env`
+  (`scripts/update.sh --deploy-modal`), and keep `SCOUT_LIVE_MAX_PARALLEL` at 3.
+
+**At the game**
+
+1. In the Mac app: **New game**, fill in the teams, choose **Live stream**, paste the stream
+   link and start. The app begins recording at once; the first stats appear after the first
+   part is complete and analysed.
+2. Enter the rosters while you wait (or before the game): names appear as jersey numbers are
+   read. During a live game a roster or track fix shows in the stats within a minute, without
+   **Re-run analysis**.
+3. Watch the game page on the Mac, or on any phone, tablet or browser signed in to the server.
+   The **Live** banner says how far the stats have got ("Stats through 12:00 of the film").
+4. When the game is over: **End live game** in the Mac app. It sends the last parts, the server
+   finishes them, puts the parts together into the film and writes the scouting report (when
+   that is turned on).
+
+**Good to know**
+
+- **Expect the stats 5 to 10 minutes behind the game.** This is an estimate: the GPU's real
+  speed has not been measured ([What is not verified yet](#what-is-not-verified-yet)). Try a
+  home game or a practice first.
+- **Keep the Mac awake, plugged in and online.** If the Wi-Fi drops, the app keeps recording
+  and sends the waiting parts when it is back. If the camera's stream drops, it reconnects.
+- **Halftime, timeouts and warm-ups** have no play to analyse; those parts count as breaks, not
+  errors. Start the stream when you like: the first stats come with the first live play.
+- **The film** is not playable during the game. It is put together when the game ends, with
+  the server's ffmpeg (the installer puts it there).
+- **Afterwards** the game is a normal game. **Full re-analysis** runs the whole film in one
+  piece on the GPU, which is the better record: each live part is analysed on its own, so a play
+  cut in two between parts can be missed, and the overlay video is only made by a full run.
+- **Cost**: about the same GPU time as analysing the film afterwards, spent during the game.
+- **A live game ends by itself** after 45 minutes without film (`SCOUT_LIVE_IDLE_MINUTES`) or at
+  `SCOUT_MAX_VIDEO_MINUTES` (150) of film; raise that for a doubleheader in one stream.
+- The stream link stays on the Mac. The server never connects to the camera.
+
+How it works, the API and the settings: [docs/LIVE.md](docs/LIVE.md).
+
+## iPhone, iPad and Mac app
+
+The `apple/` folder holds a native app for iPhone and iPad (iOS / iPadOS 18 or later) and the
+Mac (macOS 15 or later). It signs in to this server with the same username and password and does
+everything the web pages do, with uploads from Photos or Files that resume after a dropped
+connection. Build it with Xcode 26 or later: open `apple/BasketballScout.xcodeproj`, choose your
+team under Signing & Capabilities, and run. Apple lets apps use plain `http://` only for IP
+addresses, `.local` names and one-word names; a full domain name needs `https://`. Details,
+signing, troubleshooting and tests: [apple/README.md](apple/README.md).
+
 ## Configuration reference
 
 Everything is set in `.env` (start from `.env.example`, which lists every setting with
@@ -621,6 +701,15 @@ reads the same file).
 | `SCOUT_COURT_KEYPOINT_WEIGHTS` | (built-in) | Custom court keypoint checkpoint |
 | `SCOUT_MOCK_SECONDS` | `8` | Pretend GPU time for `SCOUT_PROCESSOR=mock` |
 | `OHV_HOME` | `/opt/openhoopvision` | `SCOUT_PROCESSOR=local` only: OpenHoopVision install folder |
+
+**Live games** ([docs/LIVE.md](docs/LIVE.md))
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SCOUT_LIVE_SEGMENT_SECONDS` | `120` | Length of each part a live game is cut into (20-600). Shorter: stats sooner, more plays cut in two |
+| `SCOUT_LIVE_MAX_PARALLEL` | `3` | GPU calls at once for one live game; keep `SCOUT_MODAL_MAX_CONTAINERS` at least as high |
+| `SCOUT_LIVE_IDLE_MINUTES` | `45` | A live game ends by itself after this long without new film |
+| `SCOUT_LIVE_SEGMENT_TIMEOUT_MINUTES` | `30` | Longest wait for the GPU on one part before it is given up |
 
 **Claude report**
 
@@ -739,6 +828,7 @@ Every error shown in the app has a code. Find it here:
 | `UPLOAD_NOT_FOUND` | The upload session expired. | Start the upload again. |
 | `REQUEST_TOO_LARGE` | A request was larger than the server accepts (1 MB of JSON, 4 MB for a roster file). | Send film with the upload page; keep roster files under 2 MB. |
 | `NOT_FOUND`, `CONFLICT`, `VALIDATION_FAILED` | A missing item, a clash (e.g. an analysis already running) or invalid input. | The message names the problem. |
+| `LIVE_ENDED` | A live game no longer takes film: it was ended (on another device too), no film arrived for `SCOUT_LIVE_IDLE_MINUTES`, it reached `SCOUT_MAX_VIDEO_MINUTES`, or its job was cancelled or failed. | The stats so far are kept. For the rest of the game, create a new game and start a new live stream; afterwards you can upload the whole film to either game. |
 | `JOB_CANCELLED` | The GPU run was stopped outside Basketball Scout (for example cancelled in the Modal dashboard, or the local GPU run was stopped). | Start it again on the game page: **Analyze film**, or **Full re-analysis** for a game analysed before. |
 | `WORKER_LOST` | The worker stopped during this job too many times. | Check `journalctl -u basketball-scout-worker` (and `journalctl -k \| grep -i oom` for memory), then Retry. |
 | `QUEUE_UNAVAILABLE` | Redis could not be reached. | `sudo systemctl start redis-server`, or set `SCOUT_QUEUE_BACKEND=sqlite`. |
@@ -877,16 +967,18 @@ scout/                 the app (Python package)
   db.py, storage.py    SQLite database and per-game files
   api/                 HTTP routes;  static/  pages, JavaScript, CSS (no build step)
   jobs/                job queue (SQLite, Redis)
+  live.py              live games: start, parts, end;  live_runner.py  the LIVE job
   processing/          Modal, local GPU and mock processors
   analysis/            teams, events, possessions, box score, plays, synthetic games
   roster/              roster import and jersey matching
   export/              FastScout paste block and CSV, timeline CSV
   reporting/           Claude report: payload, prompts, rendering
 modal_app/             Modal GPU app (app.py) and the pipeline around OpenHoopVision
+apple/                 iPhone, iPad and Mac app (SwiftUI, Xcode project); see apple/README.md
 config/                court.yaml, play_rules.yaml, fastscout_columns.yaml
 scripts/               install.sh, update.sh, uninstall.sh, dev.sh
 deploy/                systemd unit templates, nginx site template
-docs/                  ARCHITECTURE, TRACKING_SCHEMA, FASTSCOUT, PROXMOX, DEPLOYMENT
+docs/                  ARCHITECTURE, TRACKING_SCHEMA, FASTSCOUT, PROXMOX, DEPLOYMENT, LIVE
 tests/                 pytest suite
 .env.example           every setting with its default
 Makefile               development shortcuts

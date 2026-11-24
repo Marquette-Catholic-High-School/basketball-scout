@@ -33,6 +33,8 @@ from scout.schemas import (
     JobKind,
     JobStage,
     JobStatus,
+    LiveInfo,
+    LiveSegment,
     ReportRecord,
     Roster,
     TeamSide,
@@ -106,6 +108,16 @@ _MIGRATIONS: dict[int, str] = {
         worker_id TEXT PRIMARY KEY,
         seen_at REAL NOT NULL,
         info TEXT NOT NULL DEFAULT '{}'
+    );
+    """,
+    2: """
+    CREATE TABLE live_segments (
+        game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+        idx INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        data TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (game_id, idx)
     );
     """,
 }
@@ -285,6 +297,62 @@ def delete_game(game_id: str) -> bool:
     with session() as conn:
         cur = conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
     return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Live games (docs/LIVE.md)
+# ---------------------------------------------------------------------------
+
+
+def update_live(game_id: str, **changes: Any) -> Game:
+    """Atomically merge ``changes`` (LiveInfo field names) into the game's live state.
+
+    The web process (new parts, "end the game") and the worker (progress, the analysis) both write
+    it, so each writes only its own fields, inside one transaction.
+    """
+    with session() as conn, transaction(conn):
+        row = conn.execute("SELECT data FROM games WHERE id = ?", (game_id,)).fetchone()
+        if row is None:
+            raise _not_found("Game", game_id)
+        current = Game.model_validate_json(row["data"])
+        if current.live is None:
+            raise ScoutError(ErrorCode.CONFLICT, "This game is not a live game.")
+        live = LiveInfo.model_validate({**current.live.model_dump(), **changes})
+        game = _with_tracking_flag(current.model_copy(update={"live": live, "updated_at": utcnow()}))
+        conn.execute(
+            "UPDATE games SET data = ?, status = ?, updated_at = ? WHERE id = ?",
+            (game.model_dump_json(), game.status.value, _iso(game.updated_at), game_id),
+        )
+    return game
+
+
+def save_live_segment(segment: LiveSegment) -> LiveSegment:
+    with session() as conn:
+        conn.execute(
+            """INSERT INTO live_segments(game_id, idx, status, data, updated_at) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(game_id, idx) DO UPDATE SET status=excluded.status, data=excluded.data,
+                                                       updated_at=excluded.updated_at""",
+            (segment.game_id, segment.index, segment.status.value, segment.model_dump_json(), _iso(utcnow())),
+        )
+    return segment
+
+
+def get_live_segment(game_id: str, index: int) -> LiveSegment | None:
+    with session() as conn:
+        row = conn.execute("SELECT data FROM live_segments WHERE game_id = ? AND idx = ?", (game_id, index)).fetchone()
+    return LiveSegment.model_validate_json(row["data"]) if row else None
+
+
+def list_live_segments(game_id: str) -> list[LiveSegment]:
+    with session() as conn:
+        rows = conn.execute("SELECT data FROM live_segments WHERE game_id = ? ORDER BY idx", (game_id,)).fetchall()
+    return [LiveSegment.model_validate_json(r["data"]) for r in rows]
+
+
+def delete_live_segments(game_id: str) -> int:
+    with session() as conn:
+        cur = conn.execute("DELETE FROM live_segments WHERE game_id = ?", (game_id,))
+    return cur.rowcount
 
 
 # ---------------------------------------------------------------------------

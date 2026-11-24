@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     court_keypoint_weights: str | None = None
     mock_seconds: float = Field(default=8.0, ge=0, description="Simulated GPU time for SCOUT_PROCESSOR=mock.")
 
+    # --- live games (docs/LIVE.md) -------------------------------------------
+    live_segment_seconds: int = Field(default=120, ge=20, le=600, description="Length of each part a live game is cut into.")
+    live_max_parallel: int = Field(default=3, ge=1, le=16, description="GPU calls at once for one live game.")
+    live_idle_minutes: float = Field(default=45.0, gt=0, description="A live game ends by itself after this long without new film.")
+    live_segment_timeout_minutes: float = Field(default=30.0, gt=0, description="Longest wait for the GPU on one part.")
+
     # --- Claude scouting report ---------------------------------------------
     anthropic_api_key: str | None = Field(
         default=None, validation_alias=AliasChoices("ANTHROPIC_API_KEY", "SCOUT_ANTHROPIC_API_KEY")

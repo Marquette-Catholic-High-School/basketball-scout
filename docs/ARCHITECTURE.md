@@ -21,6 +21,7 @@
  │  ANALYZE: upload → GPU → download → transform → (Claude report)
  │  REANALYZE: transform only (after roster / track edits)
  │  REPORT: Claude report only
+ │  LIVE: a live game, part by part as the film arrives (docs/LIVE.md)
  └───────────────────────────┘
 ```
 
@@ -37,6 +38,7 @@
 | `scout/static/` | Frontend pages, JS, CSS (no framework, no build step). |
 | `scout/jobs/` | Queue backends (`queue.py` SQLite, `redis_queue.py`). |
 | `scout/worker.py` | Job runner. |
+| `scout/live.py`, `scout/live_runner.py`, `scout/api/live.py`, `scout/analysis/live_merge.py` | Live games: shared state changes, the LIVE job, its routes, and the join of the parts' tracking ([LIVE.md](LIVE.md)). |
 | `scout/processing/` | Processor interface + Modal / local / mock processors. |
 | `scout/analysis/` | Transform: geometry, tracking index, teams, events/possessions, plays, box score, pipeline, synthetic generator. |
 | `scout/roster/` | Roster import and jersey matching. |
@@ -76,7 +78,8 @@ link_plays(timeline, possessions, plays) -> None
 summarize_plays(plays, possessions) -> list[PlayTypeSummary]
 
 # scout.analysis.synthetic
-generate_synthetic_game(*, seed=7, duration_s=600, fps=30, analysis_fps=10, with_homography=True, ocr_noise=0.15, filename=...) -> (TrackingResult, SyntheticTruth)
+generate_synthetic_game(*, seed=7, duration_s=600, fps=30, analysis_fps=10, with_homography=True, ocr_noise=0.15, filename=..., roster_seed=None) -> (TrackingResult, SyntheticTruth)
+    # roster_seed: the players of that seed's rosters, with the action of `seed` (the parts of a demo live game)
 synthetic_rosters(game_id, *, seed=7) -> dict[TeamSide, Roster]
 
 # scout.analysis.geometry / tracking_index  (implemented; shared helpers)
@@ -134,6 +137,17 @@ poll_result_from_response(response) -> PollResult      # pipeline response dict 
 # scout.worker
 Worker(settings=None, queue=None, processor=None, worker_id=None).run_forever() / run_once(timeout) / process_job(job)
 
+# scout.analysis.live_merge   (live games, docs/LIVE.md)
+merge_parts(parts: Sequence[Part], *, filename="live.mp4", detect_periods=True) -> TrackingResult   # Part(index, duration_s, tracking | None)
+LiveJoin(filename=...).add(part) / .result() -> TrackingResult   # the same join, one part at a time
+global_track_id(index, track_id) -> int                          # index * 100000 + track_id
+
+# scout.live / scout.live_runner
+settled_prefix(segments, live, now) -> list[PrefixPart]          # the parts the analysis may use
+segment_job_id(job_id, index) -> str / parent_job_id(job_id) -> str   # "j_ab12-p00007" <-> "j_ab12"
+join_film(game_id, segments) -> Path | None                      # ffmpeg concat into source.mp4; None without ffmpeg
+LiveRunner(worker, run).run()                                    # the LIVE job
+
 # modal_app.pipeline
 runner.run_pipeline(video_path, options, *, output_dir, job_id, progress=None, filename=None) -> response dict
     # video_path is a local file; modal_app/app.py downloads a {"type": "url"} film first
@@ -141,6 +155,8 @@ possession.assign_ball_holders(perception, cfg=None) -> None
 events.enrich_events(perception, existing_events, cfg=None) -> list[dict]   # copies with assists, blocks, rebound types filled in
 events.detect_events(perception, cfg=None, existing_events=None) -> list[dict]
     # only NEW events (free throws, fouls, screens, jump balls, periods), deduplicated against existing_events
+events.detect_period_events(perception, cfg=None, existing_events=None) -> list[dict]
+    # only the periods, inferred timeouts and opening jump balls, without event ids (the server's live join)
 result.build_tracking_result(perception, events, *, job_id, pipeline_info, artifacts=None, sample_stride=1) -> dict
 ```
 
@@ -149,6 +165,12 @@ result.build_tracking_result(perception, events, *, job_id, pipeline_info, artif
 `Job.status`: `queued → running → succeeded | failed | cancelled`.
 `Job.stage` (ANALYZE): `queued → preparing → uploading_to_gpu → gpu_processing →
 downloading_results → analyzing → reporting → done`. `progress` is 0–100 overall.
+
+A fourth kind, LIVE, analyses a live game part by part while its film arrives. It follows the
+rules below where they apply (lease, hand-back on a graceful stop, `WORKER_LOST`, one analysis job
+per game) and is described in [LIVE.md](LIVE.md): its stage stays `gpu_processing` for the
+length of the game, a cancel stops it at any time before `reporting`, and its parts' GPU calls
+are saved per part instead of in `Job.external_id`.
 
 * The API creates the job row (`db.create_job`) and calls `queue.enqueue`.
 * A worker claims it (lease = `SCOUT_JOB_LEASE_SECONDS`, renewed by heartbeat while
@@ -373,6 +395,10 @@ existing game), `GET /games/{id}` (results), `GET /games/{id}/roster`. Assets un
 | `POST /api/uploads/{upload_id}/complete?auto_start=true` | | `{"game": Game, "job": Job \| null}` |
 | `DELETE /api/uploads/{upload_id}` | | 204 |
 | `POST /api/games/{id}/video-url?auto_start=true` | `VideoUrlRequest` | `{"game": Game, "job": Job \| null}` |
+| `POST /api/games/{id}/live` | `LiveStart` (optional) | `LiveStatus` (201; 200 when it is capturing already): the game becomes a live game ([LIVE.md](LIVE.md)) |
+| `GET /api/games/{id}/live` | | `LiveStatus` = `{"game": Game, "segments": [LiveSegment], "job": Job \| null}` |
+| `POST /api/games/{id}/live/segments` | `LiveSegmentInit` | `UploadSession` (201; 200 for a part already here or half-sent); 409 `LIVE_ENDED` |
+| `POST /api/games/{id}/live/finish` | | `LiveStatus` (no more film; the parts here are finished) |
 | `POST /api/games/{id}/jobs` | `JobCreate` | `Job` (201); 409 if an analysis job is already active |
 | `GET /api/games/{id}/jobs` | | `list[Job]` (newest first) |
 | `GET /api/jobs/{job_id}` | | `Job` |

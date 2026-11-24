@@ -32,7 +32,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
-from scout import db, storage
+from scout import db, live, storage
 from scout.api.deps import CurrentGame, SettingsDep, UploadId
 from scout.api.errors import error_response
 from scout.api.jobs import ensure_no_active_job, start_job, start_lock
@@ -239,6 +239,8 @@ def _finish_upload(upload_id: str, settings: Settings, auto_start: bool) -> Film
     upload = _require_open_upload(upload_id)
     if upload.received != upload.size:
         raise ScoutError(ErrorCode.UPLOAD_INCOMPLETE, f"Only {upload.received} of {upload.size} bytes have arrived.")
+    if upload.live_segment is not None:
+        return _finish_live_part(upload)
     ensure_no_active_job(game.id, JobKind.ANALYZE)  # fail fast, before the slow checks
     part = storage.upload_part_path(upload.id)
     _check_container(part, upload)
@@ -265,8 +267,23 @@ def _finish_upload(upload_id: str, settings: Settings, auto_start: bool) -> Film
             error=None,
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
             calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
+            live=None,  # an uploaded film replaces a live game's: it is a normal game from here on
         )
         return _maybe_start_analysis(game, settings, auto_start)
+
+
+def _finish_live_part(upload: UploadSession) -> FilmResult:
+    """A finished upload that carries one part of a live game (docs/LIVE.md): it joins the game's
+    live film instead of replacing the film, and the live job picks it up."""
+    part = storage.upload_part_path(upload.id)
+    _check_container(part, upload)
+    try:
+        game = live.accept_segment(upload, part)
+    except ScoutError:
+        _abort(upload)  # the game stopped taking film meanwhile
+        raise
+    db.save_upload(upload.model_copy(update={"status": "complete"}))
+    return FilmResult(game=game, job=db.get_job(game.latest_job_id) if game.latest_job_id else None)
 
 
 def _check_container(part: Path, upload: UploadSession) -> None:
@@ -379,6 +396,7 @@ def set_video_url(body: VideoUrlRequest, game: CurrentGame, settings: SettingsDe
             error=None,
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
             calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
+            live=None,
         )
         return _maybe_start_analysis(game, settings, auto_start)
 
@@ -438,6 +456,7 @@ def _discard_old_film(game_id: str) -> None:
         path.unlink(missing_ok=True)
     # What a download of the old film's results that was cut short left (up to an overlay's size).
     shutil.rmtree(storage.incoming_dir(game_id), ignore_errors=True)
+    live.discard(game_id)  # parts of a live game that never became its film
     db.clear_track_overrides(game_id)  # track ids from the old film mean nothing now
 
 
