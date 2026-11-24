@@ -1,0 +1,1 @@
+{"status":"ok","version":"0.1.0","processor":"mock","queue_backend":"sqlite","queue_ok":true,"modal_configured":false,"claude_configured":false,"ffmpeg_available":false,"worker_last_seen_s":1.4,"auth_enabled":true,"max_upload_bytes":12884901888}

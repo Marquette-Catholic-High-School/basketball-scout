@@ -1,0 +1,1 @@
+{"error":{"code":"VIDEO_INVALID","title":"Not a usable video","message":"'not-a-film.mp4' is not an MP4/MOV video (its header is wrong).","hint":"Export the film as H.264 MP4 (Hudl: Download > MP4) and upload again.","retryable":false,"detail":null}}

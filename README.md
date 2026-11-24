@@ -581,25 +581,26 @@ needs the internet connection to reach your server.
 
 **At the game**
 
-1. In the Mac app: **New game**, fill in the teams, choose **Live stream**, paste the stream
-   link and start. The app begins recording at once; the first stats appear after the first
-   part is complete and analysed.
+1. In the Mac app: **New game**, fill in the teams, then on the film screen paste the stream
+   link under **Live stream** and press **Start live game**. The Mac begins capturing at once;
+   the first stats appear after the first part is complete and analysed.
 2. Enter the rosters while you wait (or before the game): names appear as jersey numbers are
    read. During a live game a roster or track fix shows in the stats within a minute, without
    **Re-run analysis**.
 3. Watch the game page on the Mac, or on any phone, tablet or browser signed in to the server.
    The **Live** banner says how far the stats have got ("Stats through 12:00 of the film").
-4. When the game is over: **End live game** in the Mac app. It sends the last parts, the server
-   finishes them, puts the parts together into the film and writes the scouting report (when
-   that is turned on).
+4. When the game is over: **End live game** in the Mac app, on the Mac that is capturing. It
+   sends the last parts, the server finishes them, puts the parts together into the film and
+   writes the scouting report (when that is turned on).
 
 **Good to know**
 
 - **Expect the stats 5 to 10 minutes behind the game.** This is an estimate: the GPU's real
   speed has not been measured ([What is not verified yet](#what-is-not-verified-yet)). Try a
   home game or a practice first.
-- **Keep the Mac awake, plugged in and online.** If the Wi-Fi drops, the app keeps recording
-  and sends the waiting parts when it is back. If the camera's stream drops, it reconnects.
+- **Keep the Mac plugged in, online and Basketball Scout open.** The Mac stays awake while it
+  captures. If the Wi-Fi drops, the app keeps capturing and sends the waiting parts when it is
+  back. If the camera's stream drops, it reconnects ("Stream lost, reconnecting…").
 - **Halftime, timeouts and warm-ups** have no play to analyse; those parts count as breaks, not
   errors. Start the stream when you like: the first stats come with the first live play.
 - **The film** is not playable during the game. It is put together when the game ends, with

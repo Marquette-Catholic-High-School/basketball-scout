@@ -1,0 +1,6 @@
+Jersey,First Name,Last Name,Position,Grade,Height,Notes
+10,Test,Player 10,G,11,"5'10""",
+11,Test,Player 11,F,12,"6'2""",Fixture note
+12,Test,Player 12,C,10,"6'6""",
+abc,Test,Player 13,G,9,"5'8""",
+14,,,G,,,

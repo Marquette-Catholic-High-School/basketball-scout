@@ -1,0 +1,1 @@
+{"error":{"code":"CALIBRATION_INVALID","title":"Court calibration rejected","message":"Click at least 4 landmarks; got 3.","hint":"Click at least 4 landmarks spread across the court, not all on one line.","retryable":false,"detail":null}}

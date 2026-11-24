@@ -1,0 +1,1 @@
+{"error":{"code":"ANALYSIS_NOT_READY","title":"Analysis not ready","message":"The scouting report needs a finished analysis.","hint":"Wait for the film analysis to finish, then generate the report.","retryable":false,"detail":null}}

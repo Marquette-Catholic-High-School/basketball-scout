@@ -1,0 +1,1 @@
+{"error":{"code":"ROSTER_UNSUPPORTED_FILE","title":"Unsupported roster file","message":"Roster files must be .csv, .tsv, .txt or .xlsx (this one is '.pdf').","hint":"Save the roster as CSV or Excel (.xlsx).","retryable":false,"detail":null}}

@@ -1,0 +1,1 @@
+{"error":{"code":"VALIDATION_FAILED","title":"Invalid input","message":"Player 'p_000000000000' is not on either roster.","hint":"Add the player to the roster first, or pick another player.","retryable":false,"detail":null}}

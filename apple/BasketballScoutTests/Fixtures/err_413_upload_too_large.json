@@ -1,0 +1,1 @@
+{"error":{"code":"UPLOAD_TOO_LARGE","title":"File too large","message":"This file is 18.6 GB; the limit is 12.0 GB.","hint":"Raise SCOUT_MAX_UPLOAD_GB in .env or compress/trim the film.","retryable":false,"detail":null}}

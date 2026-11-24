@@ -1,0 +1,1 @@
+{"error":{"code":"VALIDATION_FAILED","title":"Invalid input","message":"Some fields are invalid.","hint":null,"retryable":false,"detail":"points[0].px: Tuple should have at most 2 items after validation, not 3; video_width: Input should be greater than 0"}}

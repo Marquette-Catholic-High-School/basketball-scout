@@ -1,0 +1,1 @@
+{"error":{"code":"VALIDATION_FAILED","title":"Invalid input","message":"The video link contains spaces, line breaks or other characters a web address cannot have.","hint":"Copy the link again from the browser's address bar (it shows a space as %20), or upload the file.","retryable":false,"detail":null}}

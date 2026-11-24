@@ -1,0 +1,1 @@
+{"error":{"code":"REQUEST_TOO_LARGE","title":"Request too large","message":"The request was larger than this server accepts (1 MB).","hint":"Send film with the upload page; roster files must be under 2 MB.","retryable":false,"detail":null}}

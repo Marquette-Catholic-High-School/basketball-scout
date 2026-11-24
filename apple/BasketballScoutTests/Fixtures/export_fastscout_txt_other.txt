@@ -1,0 +1,6 @@
+NAME	MIN	FGM-A	3PM-A	FTM-A	OREB	REB	AST	ST	BLK	TO	PF	PTS
+Test Player	10	1-3	1-3	1-1	0	0	0	0	0	0	0	4
+Test Player	10	2-5	2-3	0-0	0	4	0	0	0	0	0	6
+Test Player	10	4-10	0-3	2-2	0	0	0	0	0	1	0	10
+Test Player	10	1-2	0-0	1-2	0	4	7	0	1	0	0	3
+Test Player	10	2-4	0-0	0-0	2	4	0	0	1	0	0	4

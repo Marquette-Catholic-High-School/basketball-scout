@@ -1,0 +1,9 @@
+{
+  "fill" : { "solid" : "srgb:0.00000,0.18824,0.52941,1.00000" },
+  "groups" : [
+    { "layers" : [ { "image-name" : "court.svg", "name" : "court" } ] },
+    { "layers" : [ { "image-name" : "lens.svg", "name" : "lens" } ] },
+    { "layers" : [ { "image-name" : "ball.svg", "name" : "ball" } ] }
+  ],
+  "supported-platforms" : { "circles" : [ "watchOS" ], "squares" : "shared" }
+}

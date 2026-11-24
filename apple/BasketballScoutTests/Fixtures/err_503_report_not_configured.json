@@ -1,0 +1,1 @@
+{"error":{"code":"REPORT_NOT_CONFIGURED","title":"Claude is not configured","message":"No Anthropic API key is set, so the scouting report cannot be written.","hint":"Add ANTHROPIC_API_KEY to .env and restart the worker.","retryable":false,"detail":null}}

@@ -38,3 +38,10 @@ weights/
 # Local tooling and run output
 .claude/
 modal_output/
+
+# Xcode (apple/): per-user state and build output
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.xcresult
+apple/build/

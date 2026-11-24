@@ -1,0 +1,1 @@
+{"error":{"code":"UPLOAD_TOO_LARGE","title":"File too large","message":"Roster files must be 2 MB or smaller.","hint":"Save just the roster as a CSV.","retryable":false,"detail":null}}

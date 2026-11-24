@@ -1,0 +1,1 @@
+{"error":{"code":"VALIDATION_FAILED","title":"Invalid input","message":"There is no FastScout table called 'nope'.","hint":"Choose one of: box, zones, plays, defense.","retryable":false,"detail":null}}

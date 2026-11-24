@@ -1,0 +1,1 @@
+{"error":{"code":"VALIDATION_FAILED","title":"Invalid input","message":"The video link must be a full web address starting with http:// or https://.","hint":"Paste a direct link to an MP4 file, or upload the file instead.","retryable":false,"detail":null}}

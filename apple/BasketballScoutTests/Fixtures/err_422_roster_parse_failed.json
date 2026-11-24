@@ -1,0 +1,1 @@
+{"error":{"code":"ROSTER_PARSE_FAILED","title":"Roster could not be read","message":"Could not find the jersey number and name columns in this file.","hint":"Use a CSV/XLSX with a header row containing a jersey number column (#, No, Number) and a name column.","retryable":false,"detail":null}}

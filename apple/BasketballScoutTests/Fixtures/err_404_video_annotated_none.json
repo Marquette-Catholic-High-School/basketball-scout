@@ -1,0 +1,1 @@
+{"error":{"code":"NOT_FOUND","title":"Not found","message":"The annotated video is not available for this game.","hint":"It is created when the analysis finishes (if SCOUT_RENDER_ANNOTATED_VIDEO is on).","retryable":false,"detail":null}}

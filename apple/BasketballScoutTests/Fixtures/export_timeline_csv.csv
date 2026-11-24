@@ -1,0 +1,311 @@
+Time,Seconds,Type,Event,Team,Player #,Player,Secondary Player,Possession Team,Possession #,Points,Zone,Subzone,X (ft),Y (ft),Confidence,Test Team A Score,Test Team B Score,Play ID,Description
+00:00,0.9,period_start,Start of Period 1,,,,,,,0,,,,,0.73,0,0,,Start of Period 1
+00:01,1.0,jump_ball,Jump Ball,Test Team B,,,,,,0,,,,,0.83,0,0,,Jump ball won by Test Team B
+00:01,1.0,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,1,0,,,,,0.83,0,0,,Test Team B ball (jump ball)
+00:04,4.6,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,1,0,,,,,0.83,0,0,,#42 Test Player 9 pass to #40 Test Player 8
+00:06,6.1,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,1,0,,,,,0.88,0,0,,#40 Test Player 8 pass to #42 Test Player 9
+00:08,8.4,pass,Pass,Test Team B,42,Test Player 9,#55 Test Player 10,Test Team B,1,0,,,,,0.72,0,0,,#42 Test Player 9 pass to #55 Test Player 10
+00:10,10.2,pass,Pass,Test Team B,55,Test Player 10,#20 Test Player 7,Test Team B,1,0,,,,,0.83,0,0,pl_2,#55 Test Player 10 pass to #20 Test Player 7
+00:11,11.3,shot_missed,2PT Miss,Test Team B,20,Test Player 7,,Test Team B,1,0,paint,paint,17.0,27.0,0.81,0,0,pl_2,#20 Test Player 7 2PT miss (paint)
+00:13,13.0,dreb,Def. Rebound,Test Team A,0,Test Player 1,,Test Team B,1,0,,,,,0.77,0,0,,#0 Test Player 1 def. rebound
+00:13,13.0,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,2,0,,,,,0.77,0,0,,Test Team A ball (def rebound)
+00:13,13.6,pass,Pass,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,2,0,,,,,0.83,0,0,,#0 Test Player 1 pass to #14 Test Player 4
+00:18,18.3,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,2,0,,,,,0.96,0,0,,#14 Test Player 4 pass to #5 Test Player 2
+00:19,19.7,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,2,0,,,,,0.91,0,0,,#5 Test Player 2 pass to #14 Test Player 4
+00:20,20.7,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,2,0,,,,,0.79,0,0,,#14 Test Player 4 pass to #5 Test Player 2
+00:25,25.6,shot_made,2PT Make,Test Team A,5,Test Player 2,,Test Team A,2,2,paint,paint,77.5,29.0,0.76,2,0,pl_4,#5 Test Player 2 2PT make (paint)
+00:25,25.6,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,3,0,,,,,0.76,2,0,,Test Team B ball (made basket)
+00:27,27.4,pass,Pass,Test Team B,55,Test Player 10,#42 Test Player 9,Test Team B,3,0,,,,,0.78,2,0,,#55 Test Player 10 pass to #42 Test Player 9
+00:34,34.8,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,3,0,,,,,0.89,2,0,,#42 Test Player 9 pass to #40 Test Player 8
+00:36,36.3,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,3,0,,,,,0.88,2,0,,#40 Test Player 8 pass to #42 Test Player 9
+00:37,37.2,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,3,0,,,,,0.89,2,0,,#42 Test Player 9 pass to #40 Test Player 8
+00:39,39.5,shot_missed,3PT Miss,Test Team B,40,Test Player 8,,Test Team B,3,0,three,left_wing_3,20.0,9.0,0.81,2,0,,#40 Test Player 8 3PT miss (left wing 3)
+00:41,41.2,oreb,Off. Rebound,Test Team B,55,Test Player 10,,Test Team B,3,0,,,,,0.75,2,0,,#55 Test Player 10 off. rebound
+00:42,42.1,shot_made,2PT Make,Test Team B,55,Test Player 10,,Test Team B,3,2,paint,restricted_area,5.6,26.4,0.83,2,2,pl_7,#55 Test Player 10 2PT make (restricted area)
+00:42,42.1,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,4,0,,,,,0.83,2,2,,Test Team A ball (made basket)
+00:44,44.4,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,4,0,,,,,0.93,2,2,,#33 Test Player 5 pass to #14 Test Player 4
+00:50,50.5,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,4,0,,,,,0.92,2,2,,#14 Test Player 4 pass to #5 Test Player 2
+00:51,52.0,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,4,0,,,,,0.81,2,2,,#5 Test Player 2 pass to #14 Test Player 4
+00:52,52.9,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,4,0,,,,,0.74,2,2,,#14 Test Player 4 pass to #5 Test Player 2
+00:55,55.2,shot_missed,3PT Miss,Test Team A,5,Test Player 2,,Test Team A,4,0,three,left_wing_3,64.0,41.0,0.76,2,2,,#5 Test Player 2 3PT miss (left wing 3)
+00:56,56.9,oreb,Off. Rebound,Test Team A,0,Test Player 1,,Test Team A,4,0,,,,,0.83,2,2,,#0 Test Player 1 off. rebound
+00:57,57.8,shot_made,2PT Make,Test Team A,0,Test Player 1,,Test Team A,4,2,paint,restricted_area,78.4,23.6,0.88,4,2,pl_9,#0 Test Player 1 2PT make (restricted area)
+00:57,57.8,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,5,0,,,,,0.88,4,2,,Test Team B ball (made basket)
+00:59,59.5,pass,Pass,Test Team B,55,Test Player 10,#42 Test Player 9,Test Team B,5,0,,,,,0.83,4,2,,#55 Test Player 10 pass to #42 Test Player 9
+01:07,67.8,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,5,0,,,,,0.75,4,2,,#42 Test Player 9 pass to #40 Test Player 8
+01:09,69.3,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,5,0,,,,,0.89,4,2,,#40 Test Player 8 pass to #42 Test Player 9
+01:11,71.5,pass,Pass,Test Team B,42,Test Player 9,#3 Test Player 6,Test Team B,5,0,,,,,0.83,4,2,,#42 Test Player 9 pass to #3 Test Player 6
+01:12,72.6,shot_missed,3PT Miss,Test Team B,3,Test Player 6,,Test Team B,5,0,three,right_corner_3,3.5,47.0,0.83,4,2,pl_11,#3 Test Player 6 3PT miss (right corner 3)
+01:14,74.3,dreb,Def. Rebound,Test Team A,0,Test Player 1,,Test Team B,5,0,,,,,0.89,4,2,,#0 Test Player 1 def. rebound
+01:14,74.3,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,6,0,,,,,0.89,4,2,,Test Team A ball (def rebound)
+01:14,74.8,pass,Pass,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,6,0,,,,,0.87,4,2,pl_12,#0 Test Player 1 pass to #14 Test Player 4
+01:18,78.2,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,6,0,,,,,0.81,4,2,pl_12,#14 Test Player 4 pass to #5 Test Player 2
+01:19,79.5,shot_made,2PT Make,Test Team A,5,Test Player 2,,Test Team A,6,2,paint,paint,78.0,29.0,0.82,6,2,pl_12,"#5 Test Player 2 2PT make (paint), assist #14 Test Player 4"
+01:19,79.5,assist,Assist,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,6,0,,,,,0.82,6,2,pl_12,#14 Test Player 4 assist to #5 Test Player 2
+01:19,79.5,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,7,0,,,,,0.82,6,2,,Test Team B ball (made basket)
+01:21,81.7,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,7,0,,,,,0.78,6,2,,#20 Test Player 7 pass to #42 Test Player 9
+01:27,87.8,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,7,0,,,,,0.85,6,2,,#42 Test Player 9 pass to #40 Test Player 8
+01:29,89.3,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,7,0,,,,,0.97,6,2,,#40 Test Player 8 pass to #42 Test Player 9
+01:30,90.2,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,7,0,,,,,0.91,6,2,,#42 Test Player 9 pass to #40 Test Player 8
+01:34,94.8,turnover,Turnover,Test Team B,40,Test Player 8,#5 Test Player 2,Test Team B,7,0,,,,,0.92,6,2,pl_14,"#40 Test Player 8 turnover, stolen by #5 Test Player 2"
+01:34,94.8,steal,Steal,Test Team A,5,Test Player 2,#40 Test Player 8,Test Team B,7,0,,,,,0.92,6,2,pl_14,#5 Test Player 2 steal from #40 Test Player 8
+01:34,94.8,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,8,0,,,,,0.92,6,2,,Test Team A ball (steal)
+01:35,95.4,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,8,0,,,,,0.76,6,2,pl_15,#5 Test Player 2 pass to #14 Test Player 4
+01:39,99.2,pass,Pass,Test Team A,14,Test Player 4,#11 Test Player 3,Test Team A,8,0,,,,,0.89,6,2,pl_15,#14 Test Player 4 pass to #11 Test Player 3
+01:40,100.5,shot_missed,2PT Miss,Test Team A,11,Test Player 3,,Test Team A,8,0,paint,paint,78.0,21.0,0.74,6,2,pl_15,#11 Test Player 3 2PT miss (paint)
+01:42,102.2,dreb,Def. Rebound,Test Team B,42,Test Player 9,,Test Team A,8,0,,,,,0.96,6,2,,#42 Test Player 9 def. rebound
+01:42,102.2,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,9,0,,,,,0.96,6,2,,Test Team B ball (def rebound)
+01:45,105.7,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,9,0,,,,,0.76,6,2,pl_16,#42 Test Player 9 pass to #40 Test Player 8
+01:47,107.0,shot_missed,2PT Miss,Test Team B,40,Test Player 8,,Test Team B,9,0,paint,paint,6.0,21.0,0.90,6,2,pl_16,#40 Test Player 8 2PT miss (paint)
+01:48,108.7,dreb,Def. Rebound,Test Team A,14,Test Player 4,,Test Team B,9,0,,,,,0.96,6,2,,#14 Test Player 4 def. rebound
+01:48,108.7,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,10,0,,,,,0.96,6,2,,Test Team A ball (def rebound)
+01:53,113.7,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,10,0,,,,,0.86,6,2,,#14 Test Player 4 pass to #5 Test Player 2
+01:55,115.1,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,10,0,,,,,0.90,6,2,,#5 Test Player 2 pass to #14 Test Player 4
+01:57,117.5,pass,Pass,Test Team A,14,Test Player 4,#0 Test Player 1,Test Team A,10,0,,,,,0.75,6,2,,#14 Test Player 4 pass to #0 Test Player 1
+01:59,119.2,pass,Pass,Test Team A,0,Test Player 1,#33 Test Player 5,Test Team A,10,0,,,,,0.92,6,2,pl_18,#0 Test Player 1 pass to #33 Test Player 5
+02:00,120.8,turnover,Turnover,Test Team A,33,Test Player 5,,Test Team A,10,0,,,,,0.73,6,2,pl_18,#33 Test Player 5 turnover (travel)
+02:00,120.8,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,11,0,,,,,0.73,6,2,,Test Team B ball (turnover)
+02:04,124.3,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,11,0,,,,,0.97,6,2,,#20 Test Player 7 pass to #42 Test Player 9
+02:10,130.8,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,11,0,,,,,0.90,6,2,,#42 Test Player 9 pass to #40 Test Player 8
+02:12,132.2,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,11,0,,,,,0.92,6,2,,#40 Test Player 8 pass to #42 Test Player 9
+02:13,133.2,pass,Pass,Test Team B,42,Test Player 9,#20 Test Player 7,Test Team B,11,0,,,,,0.85,6,2,,#42 Test Player 9 pass to #20 Test Player 7
+02:14,134.2,pass,Pass,Test Team B,20,Test Player 7,#55 Test Player 10,Test Team B,11,0,,,,,0.72,6,2,,#20 Test Player 7 pass to #55 Test Player 10
+02:16,136.7,pass,Pass,Test Team B,55,Test Player 10,#3 Test Player 6,Test Team B,11,0,,,,,0.76,6,2,pl_20,#55 Test Player 10 pass to #3 Test Player 6
+02:17,137.8,shot_missed,3PT Miss,Test Team B,3,Test Player 6,,Test Team B,11,0,three,right_corner_3,3.5,47.0,0.95,6,2,pl_20,#3 Test Player 6 3PT miss (right corner 3)
+02:19,139.5,dreb,Def. Rebound,Test Team A,0,Test Player 1,,Test Team B,11,0,,,,,0.76,6,2,,#0 Test Player 1 def. rebound
+02:19,139.5,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,12,0,,,,,0.76,6,2,pl_21,Test Team A ball (def rebound)
+02:20,140.0,pass,Pass,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,12,0,,,,,0.74,6,2,pl_21,#0 Test Player 1 pass to #14 Test Player 4
+02:23,143.4,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,12,0,,,,,0.85,6,2,pl_21,#14 Test Player 4 pass to #5 Test Player 2
+02:24,144.7,shot_made,2PT Make,Test Team A,5,Test Player 2,,Test Team A,12,2,paint,paint,78.0,29.0,0.73,8,2,pl_21,"#5 Test Player 2 2PT make (paint), assist #14 Test Player 4"
+02:24,144.7,assist,Assist,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,12,0,,,,,0.73,8,2,pl_21,#14 Test Player 4 assist to #5 Test Player 2
+02:24,144.7,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,13,0,,,,,0.73,8,2,,Test Team B ball (made basket)
+02:26,147.0,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,13,0,,,,,0.75,8,2,,#20 Test Player 7 pass to #42 Test Player 9
+02:33,153.1,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,13,0,,,,,0.96,8,2,,#42 Test Player 9 pass to #40 Test Player 8
+02:34,154.5,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,13,0,,,,,0.94,8,2,,#40 Test Player 8 pass to #42 Test Player 9
+02:37,157.1,screen,Screen,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,13,0,,,,,0.88,8,2,pl_23,#20 Test Player 7 on-ball screen for #42 Test Player 9
+02:38,158.8,pass,Pass,Test Team B,42,Test Player 9,#20 Test Player 7,Test Team B,13,0,,,,,0.91,8,2,pl_23,#42 Test Player 9 pass to #20 Test Player 7
+02:39,159.9,shot_made,3PT Make,Test Team B,20,Test Player 7,,Test Team B,13,3,three,right_wing_3,24.0,34.0,0.76,8,5,pl_23,"#20 Test Player 7 3PT make (right wing 3), assist #42 Test Player 9"
+02:39,159.9,assist,Assist,Test Team B,42,Test Player 9,#20 Test Player 7,Test Team B,13,0,,,,,0.76,8,5,pl_23,#42 Test Player 9 assist to #20 Test Player 7
+02:39,159.9,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,14,0,,,,,0.76,8,5,,Test Team A ball (made basket)
+02:41,162.0,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,14,0,,,,,0.96,8,5,,#33 Test Player 5 pass to #14 Test Player 4
+02:48,168.1,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,14,0,,,,,0.78,8,5,,#14 Test Player 4 pass to #5 Test Player 2
+02:49,169.5,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,14,0,,,,,0.86,8,5,,#5 Test Player 2 pass to #14 Test Player 4
+02:51,171.7,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,14,0,,,,,0.92,8,5,,#14 Test Player 4 pass to #5 Test Player 2
+02:52,172.8,shot_missed,3PT Miss,Test Team A,5,Test Player 2,,Test Team A,14,0,three,left_wing_3,62.0,42.0,0.84,8,5,pl_25,#5 Test Player 2 3PT miss (left wing 3)
+02:54,174.5,dreb,Def. Rebound,Test Team B,55,Test Player 10,,Test Team A,14,0,,,,,0.91,8,5,,#55 Test Player 10 def. rebound
+02:54,174.5,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,15,0,,,,,0.91,8,5,,Test Team B ball (def rebound)
+02:55,175.1,pass,Pass,Test Team B,55,Test Player 10,#42 Test Player 9,Test Team B,15,0,,,,,0.88,8,5,,#55 Test Player 10 pass to #42 Test Player 9
+02:59,179.8,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,15,0,,,,,0.83,8,5,,#42 Test Player 9 pass to #40 Test Player 8
+03:01,181.3,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,15,0,,,,,0.87,8,5,,#40 Test Player 8 pass to #42 Test Player 9
+03:03,183.7,screen,Screen,Test Team B,55,Test Player 10,#42 Test Player 9,Test Team B,15,0,,,,,0.85,8,5,pl_27,#55 Test Player 10 on-ball screen for #42 Test Player 9
+03:05,185.7,pass,Pass,Test Team B,42,Test Player 9,#55 Test Player 10,Test Team B,15,0,,,,,0.87,8,5,pl_27,#42 Test Player 9 pass to #55 Test Player 10
+03:06,186.5,shot_missed,2PT Miss,Test Team B,55,Test Player 10,,Test Team B,15,0,paint,restricted_area,6.5,24.0,0.83,8,5,pl_27,"#55 Test Player 10 2PT miss (restricted area), blocked by #0 Test Player 1"
+03:06,186.5,block,Block,Test Team A,0,Test Player 1,#55 Test Player 10,Test Team B,15,0,,,,,0.83,8,5,pl_27,#0 Test Player 1 block on #55 Test Player 10
+03:08,188.2,dreb,Def. Rebound,Test Team A,0,Test Player 1,,Test Team B,15,0,,,,,0.75,8,5,,#0 Test Player 1 def. rebound
+03:08,188.2,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,16,0,,,,,0.75,8,5,,Test Team A ball (def rebound)
+03:08,188.7,pass,Pass,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,16,0,,,,,0.90,8,5,pl_28,#0 Test Player 1 pass to #14 Test Player 4
+03:12,192.1,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,16,0,,,,,0.81,8,5,pl_28,#14 Test Player 4 pass to #5 Test Player 2
+03:13,193.4,shot_missed,2PT Miss,Test Team A,5,Test Player 2,,Test Team A,16,0,paint,paint,78.0,29.0,0.80,8,5,pl_28,#5 Test Player 2 2PT miss (paint)
+03:15,195.1,dreb,Def. Rebound,Test Team B,42,Test Player 9,,Test Team A,16,0,,,,,0.86,8,5,,#42 Test Player 9 def. rebound
+03:15,195.1,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,17,0,,,,,0.86,8,5,pl_29,Test Team B ball (def rebound)
+03:19,199.6,shot_made,2PT Make,Test Team B,42,Test Player 9,,Test Team B,17,2,paint,restricted_area,6.5,24.0,0.81,8,7,pl_29,#42 Test Player 9 2PT make (restricted area)
+03:19,199.6,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,18,0,,,,,0.81,8,7,,Test Team A ball (made basket)
+03:21,201.8,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,18,0,,,,,0.95,8,7,,#33 Test Player 5 pass to #14 Test Player 4
+03:27,207.9,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,18,0,,,,,0.89,8,7,,#14 Test Player 4 pass to #5 Test Player 2
+03:29,209.4,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,18,0,,,,,0.95,8,7,,#5 Test Player 2 pass to #14 Test Player 4
+03:31,211.5,screen,Screen,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,18,0,,,,,0.94,8,7,pl_31,#33 Test Player 5 on-ball screen for #14 Test Player 4
+03:33,213.2,pass,Pass,Test Team A,14,Test Player 4,#33 Test Player 5,Test Team A,18,0,,,,,0.81,8,7,pl_31,#14 Test Player 4 pass to #33 Test Player 5
+03:34,214.2,shot_made,3PT Make,Test Team A,33,Test Player 5,,Test Team A,18,3,three,left_wing_3,60.0,34.0,0.97,11,7,pl_31,"#33 Test Player 5 3PT make (left wing 3), assist #14 Test Player 4"
+03:34,214.2,assist,Assist,Test Team A,14,Test Player 4,#33 Test Player 5,Test Team A,18,0,,,,,0.97,11,7,pl_31,#14 Test Player 4 assist to #33 Test Player 5
+03:34,214.2,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,19,0,,,,,0.97,11,7,,Test Team B ball (made basket)
+03:35,216.0,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,19,0,,,,,0.81,11,7,,#20 Test Player 7 pass to #42 Test Player 9
+03:42,222.1,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,19,0,,,,,0.93,11,7,,#42 Test Player 9 pass to #40 Test Player 8
+03:43,223.5,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,19,0,,,,,0.95,11,7,,#40 Test Player 8 pass to #42 Test Player 9
+03:45,225.7,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,19,0,,,,,0.97,11,7,,#42 Test Player 9 pass to #40 Test Player 8
+03:46,226.8,shot_missed,3PT Miss,Test Team B,40,Test Player 8,,Test Team B,19,0,three,left_wing_3,22.0,8.0,0.75,11,7,pl_33,#40 Test Player 8 3PT miss (left wing 3)
+03:48,228.5,dreb,Def. Rebound,Test Team A,33,Test Player 5,,Test Team B,19,0,,,,,0.96,11,7,,#33 Test Player 5 def. rebound
+03:48,228.5,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,20,0,,,,,0.96,11,7,,Test Team A ball (def rebound)
+03:49,229.1,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,20,0,,,,,0.96,11,7,,#33 Test Player 5 pass to #14 Test Player 4
+03:53,233.8,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,20,0,,,,,0.83,11,7,,#14 Test Player 4 pass to #5 Test Player 2
+03:55,235.2,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,20,0,,,,,0.91,11,7,,#5 Test Player 2 pass to #14 Test Player 4
+03:56,236.2,pass,Pass,Test Team A,14,Test Player 4,#33 Test Player 5,Test Team A,20,0,,,,,0.94,11,7,,#14 Test Player 4 pass to #33 Test Player 5
+03:57,237.2,pass,Pass,Test Team A,33,Test Player 5,#0 Test Player 1,Test Team A,20,0,,,,,0.73,11,7,pl_35,#33 Test Player 5 pass to #0 Test Player 1
+03:59,239.7,pass,Pass,Test Team A,0,Test Player 1,#11 Test Player 3,Test Team A,20,0,,,,,0.75,11,7,pl_35,#0 Test Player 1 pass to #11 Test Player 3
+04:00,240.8,shot_made,3PT Make,Test Team A,11,Test Player 3,,Test Team A,20,3,three,right_corner_3,80.5,3.0,0.87,14,7,pl_35,"#11 Test Player 3 3PT make (right corner 3), assist #0 Test Player 1"
+04:00,240.8,assist,Assist,Test Team A,0,Test Player 1,#11 Test Player 3,Test Team A,20,0,,,,,0.87,14,7,pl_35,#0 Test Player 1 assist to #11 Test Player 3
+04:00,240.8,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,21,0,,,,,0.87,14,7,,Test Team B ball (made basket)
+04:03,243.3,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,21,0,,,,,0.84,14,7,,#20 Test Player 7 pass to #42 Test Player 9
+04:09,249.4,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,21,0,,,,,0.89,14,7,,#42 Test Player 9 pass to #40 Test Player 8
+04:10,250.8,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,21,0,,,,,0.85,14,7,,#40 Test Player 8 pass to #42 Test Player 9
+04:11,251.8,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,21,0,,,,,0.80,14,7,,#42 Test Player 9 pass to #40 Test Player 8
+04:14,254.0,shot_missed,3PT Miss,Test Team B,40,Test Player 8,,Test Team B,21,0,three,left_wing_3,20.0,9.0,0.77,14,7,,#40 Test Player 8 3PT miss (left wing 3)
+04:15,255.7,oreb,Off. Rebound,Test Team B,55,Test Player 10,,Test Team B,21,0,,,,,0.74,14,7,,#55 Test Player 10 off. rebound
+04:16,256.6,shot_missed,2PT Miss,Test Team B,55,Test Player 10,,Test Team B,21,0,paint,restricted_area,5.6,26.4,0.83,14,7,pl_37,#55 Test Player 10 2PT miss (restricted area)
+04:18,258.3,dreb,Def. Rebound,Test Team A,0,Test Player 1,,Test Team B,21,0,,,,,0.77,14,7,,#0 Test Player 1 def. rebound
+04:18,258.3,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,22,0,,,,,0.77,14,7,,Test Team A ball (def rebound)
+04:18,258.8,pass,Pass,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,22,0,,,,,0.80,14,7,pl_38,#0 Test Player 1 pass to #14 Test Player 4
+04:23,263.2,shot_made,2PT Make,Test Team A,14,Test Player 4,,Test Team A,22,2,paint,restricted_area,77.5,26.0,0.80,16,7,pl_38,#14 Test Player 4 2PT make (restricted area)
+04:23,263.2,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,23,0,,,,,0.80,16,7,,Test Team B ball (made basket)
+04:25,265.6,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,23,0,,,,,0.82,16,7,,#20 Test Player 7 pass to #42 Test Player 9
+04:31,271.7,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,23,0,,,,,0.75,16,7,,#42 Test Player 9 pass to #40 Test Player 8
+04:33,273.2,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,23,0,,,,,0.90,16,7,,#40 Test Player 8 pass to #42 Test Player 9
+04:35,275.3,screen,Screen,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,23,0,,,,,0.79,16,7,pl_40,#20 Test Player 7 on-ball screen for #42 Test Player 9
+04:36,277.0,pass,Pass,Test Team B,42,Test Player 9,#20 Test Player 7,Test Team B,23,0,,,,,0.78,16,7,pl_40,#42 Test Player 9 pass to #20 Test Player 7
+04:38,278.0,shot_made,3PT Make,Test Team B,20,Test Player 7,,Test Team B,23,3,three,left_wing_3,24.0,16.0,0.93,16,10,pl_40,"#20 Test Player 7 3PT make (left wing 3), assist #42 Test Player 9"
+04:38,278.0,assist,Assist,Test Team B,42,Test Player 9,#20 Test Player 7,Test Team B,23,0,,,,,0.93,16,10,pl_40,#42 Test Player 9 assist to #20 Test Player 7
+04:38,278.0,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,24,0,,,,,0.93,16,10,,Test Team A ball (made basket)
+04:58,298.5,period_end,End of Period 1,,,,,Test Team A,24,0,,,,,0.84,16,10,,End of Period 1
+05:00,300.3,period_start,Start of Period 2,,,,,,,0,,,,,0.88,16,10,,Start of Period 2
+05:04,304.6,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,,,0,,,,,0.80,16,10,,#33 Test Player 5 pass to #14 Test Player 4
+05:05,305.1,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,25,0,,,,,0.40,16,10,,Test Team A ball (period start)
+05:09,309.3,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,25,0,,,,,0.80,16,10,,#14 Test Player 4 pass to #5 Test Player 2
+05:10,310.7,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,25,0,,,,,0.82,16,10,,#5 Test Player 2 pass to #14 Test Player 4
+05:13,313.1,screen,Screen,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,25,0,,,,,0.82,16,10,pl_42,#0 Test Player 1 on-ball screen for #14 Test Player 4
+05:15,315.4,shot_missed,2PT Miss,Test Team A,14,Test Player 4,,Test Team A,25,0,paint,paint,15.0,30.0,0.75,16,10,pl_42,#14 Test Player 4 2PT miss (paint)
+05:17,317.1,dreb,Def. Rebound,Test Team B,20,Test Player 7,,Test Team A,25,0,,,,,0.72,16,10,,#20 Test Player 7 def. rebound
+05:17,317.1,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,26,0,,,,,0.72,16,10,,Test Team B ball (def rebound)
+05:17,317.6,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,26,0,,,,,0.91,16,10,pl_43,#20 Test Player 7 pass to #42 Test Player 9
+05:21,321.0,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,26,0,,,,,0.88,16,10,pl_43,#42 Test Player 9 pass to #40 Test Player 8
+05:22,322.3,shot_made,2PT Make,Test Team B,40,Test Player 8,,Test Team B,26,2,paint,paint,78.0,29.0,0.78,16,12,pl_43,"#40 Test Player 8 2PT make (paint), assist #42 Test Player 9"
+05:22,322.3,assist,Assist,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,26,0,,,,,0.78,16,12,pl_43,#42 Test Player 9 assist to #40 Test Player 8
+05:22,322.3,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,27,0,,,,,0.78,16,12,,Test Team A ball (made basket)
+05:24,324.5,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,27,0,,,,,0.79,16,12,,#33 Test Player 5 pass to #14 Test Player 4
+05:30,330.6,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,27,0,,,,,0.73,16,12,,#14 Test Player 4 pass to #5 Test Player 2
+05:32,332.1,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,27,0,,,,,0.83,16,12,,#5 Test Player 2 pass to #14 Test Player 4
+05:34,334.3,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,27,0,,,,,0.74,16,12,pl_45,#14 Test Player 4 pass to #5 Test Player 2
+05:35,335.4,shot_missed,3PT Miss,Test Team A,5,Test Player 2,,Test Team A,27,0,three,left_wing_3,22.0,8.0,0.85,16,12,pl_45,#5 Test Player 2 3PT miss (left wing 3)
+05:37,337.1,dreb,Def. Rebound,Test Team B,20,Test Player 7,,Test Team A,27,0,,,,,0.75,16,12,,#20 Test Player 7 def. rebound
+05:37,337.1,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,28,0,,,,,0.75,16,12,,Test Team B ball (def rebound)
+05:37,337.7,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,28,0,,,,,0.88,16,12,,#20 Test Player 7 pass to #42 Test Player 9
+05:42,342.1,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,28,0,,,,,0.93,16,12,,#42 Test Player 9 pass to #40 Test Player 8
+05:43,343.6,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,28,0,,,,,0.74,16,12,,#40 Test Player 8 pass to #42 Test Player 9
+05:44,344.5,pass,Pass,Test Team B,42,Test Player 9,#20 Test Player 7,Test Team B,28,0,,,,,0.86,16,12,,#42 Test Player 9 pass to #20 Test Player 7
+05:45,345.6,pass,Pass,Test Team B,20,Test Player 7,#55 Test Player 10,Test Team B,28,0,,,,,0.92,16,12,pl_47,#20 Test Player 7 pass to #55 Test Player 10
+05:48,348.3,shot_made,2PT Make,Test Team B,55,Test Player 10,,Test Team B,28,2,paint,paint,77.2,20.5,0.91,16,14,pl_47,#55 Test Player 10 2PT make (paint)
+05:48,348.3,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,29,0,,,,,0.91,16,14,,Test Team A ball (made basket)
+05:50,350.7,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,29,0,,,,,0.96,16,14,,#33 Test Player 5 pass to #14 Test Player 4
+05:56,356.8,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,29,0,,,,,0.94,16,14,,#14 Test Player 4 pass to #5 Test Player 2
+05:58,358.2,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,29,0,,,,,0.79,16,14,,#5 Test Player 2 pass to #14 Test Player 4
+05:59,359.2,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,29,0,,,,,0.80,16,14,,#14 Test Player 4 pass to #5 Test Player 2
+06:01,361.4,shot_missed,3PT Miss,Test Team A,5,Test Player 2,,Test Team A,29,0,three,left_wing_3,20.0,9.0,0.82,16,14,,#5 Test Player 2 3PT miss (left wing 3)
+06:03,363.1,oreb,Off. Rebound,Test Team A,0,Test Player 1,,Test Team A,29,0,,,,,0.85,16,14,pl_49,#0 Test Player 1 off. rebound
+06:04,364.0,shot_missed,2PT Miss,Test Team A,0,Test Player 1,,Test Team A,29,0,paint,restricted_area,5.6,26.4,0.88,16,14,pl_49,#0 Test Player 1 2PT miss (restricted area)
+06:05,365.7,dreb,Def. Rebound,Test Team B,20,Test Player 7,,Test Team A,29,0,,,,,0.80,16,14,,#20 Test Player 7 def. rebound
+06:05,365.7,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,30,0,,,,,0.80,16,14,pl_50,Test Team B ball (def rebound)
+06:06,366.2,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,30,0,,,,,0.80,16,14,pl_50,#20 Test Player 7 pass to #42 Test Player 9
+06:09,369.6,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,30,0,,,,,0.92,16,14,pl_50,#42 Test Player 9 pass to #40 Test Player 8
+06:10,370.9,shot_made,2PT Make,Test Team B,40,Test Player 8,,Test Team B,30,2,paint,paint,78.0,29.0,0.79,16,16,pl_50,"#40 Test Player 8 2PT make (paint), assist #42 Test Player 9"
+06:10,370.9,assist,Assist,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,30,0,,,,,0.79,16,16,pl_50,#42 Test Player 9 assist to #40 Test Player 8
+06:10,370.9,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,31,0,,,,,0.79,16,16,,Test Team A ball (made basket)
+06:13,373.2,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,31,0,,,,,0.87,16,16,,#33 Test Player 5 pass to #14 Test Player 4
+06:19,379.3,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,31,0,,,,,0.75,16,16,,#14 Test Player 4 pass to #5 Test Player 2
+06:20,380.7,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,31,0,,,,,0.83,16,16,,#5 Test Player 2 pass to #14 Test Player 4
+06:21,381.7,pass,Pass,Test Team A,14,Test Player 4,#33 Test Player 5,Test Team A,31,0,,,,,0.93,16,16,,#14 Test Player 4 pass to #33 Test Player 5
+06:22,382.7,pass,Pass,Test Team A,33,Test Player 5,#0 Test Player 1,Test Team A,31,0,,,,,0.84,16,16,,#33 Test Player 5 pass to #0 Test Player 1
+06:25,385.4,shot_missed,2PT Miss,Test Team A,0,Test Player 1,,Test Team A,31,0,paint,paint,6.8,29.5,0.92,16,16,pl_52,"#0 Test Player 1 2PT miss (paint), blocked by #55 Test Player 10"
+06:25,385.4,block,Block,Test Team B,55,Test Player 10,#0 Test Player 1,Test Team A,31,0,,,,,0.92,16,16,pl_52,#55 Test Player 10 block on #0 Test Player 1
+06:27,387.1,dreb,Def. Rebound,Test Team B,20,Test Player 7,,Test Team A,31,0,,,,,0.88,16,16,,#20 Test Player 7 def. rebound
+06:27,387.1,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,32,0,,,,,0.88,16,16,,Test Team B ball (def rebound)
+06:27,387.7,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,32,0,,,,,0.87,16,16,,#20 Test Player 7 pass to #42 Test Player 9
+06:32,392.3,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,32,0,,,,,0.94,16,16,,#42 Test Player 9 pass to #40 Test Player 8
+06:33,393.7,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,32,0,,,,,0.82,16,16,,#40 Test Player 8 pass to #42 Test Player 9
+06:36,396.1,pass,Pass,Test Team B,42,Test Player 9,#55 Test Player 10,Test Team B,32,0,,,,,0.91,16,16,,#42 Test Player 9 pass to #55 Test Player 10
+06:37,397.8,pass,Pass,Test Team B,55,Test Player 10,#20 Test Player 7,Test Team B,32,0,,,,,0.87,16,16,pl_54,#55 Test Player 10 pass to #20 Test Player 7
+06:39,399.0,shot_missed,2PT Miss,Test Team B,20,Test Player 7,,Test Team B,32,0,paint,paint,67.0,23.0,0.94,16,16,pl_54,#20 Test Player 7 2PT miss (paint)
+06:40,400.7,dreb,Def. Rebound,Test Team A,33,Test Player 5,,Test Team B,32,0,,,,,0.81,16,16,,#33 Test Player 5 def. rebound
+06:40,400.7,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,33,0,,,,,0.81,16,16,pl_55,Test Team A ball (def rebound)
+06:41,401.2,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,33,0,,,,,0.89,16,16,pl_55,#33 Test Player 5 pass to #14 Test Player 4
+06:44,404.5,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,33,0,,,,,0.88,16,16,pl_55,#14 Test Player 4 pass to #5 Test Player 2
+06:45,405.8,shot_missed,2PT Miss,Test Team A,5,Test Player 2,,Test Team A,33,0,paint,paint,6.0,21.0,0.74,16,16,pl_55,#5 Test Player 2 2PT miss (paint)
+06:47,407.5,dreb,Def. Rebound,Test Team B,42,Test Player 9,,Test Team A,33,0,,,,,0.89,16,16,,#42 Test Player 9 def. rebound
+06:47,407.5,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,34,0,,,,,0.89,16,16,,Test Team B ball (def rebound)
+06:51,411.2,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,34,0,,,,,0.72,16,16,pl_56,#42 Test Player 9 pass to #40 Test Player 8
+06:52,412.5,shot_made,2PT Make,Test Team B,40,Test Player 8,,Test Team B,34,2,paint,paint,78.0,29.0,0.93,16,18,pl_56,"#40 Test Player 8 2PT make (paint), assist #42 Test Player 9"
+06:52,412.5,assist,Assist,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,34,0,,,,,0.93,16,18,pl_56,#42 Test Player 9 assist to #40 Test Player 8
+06:52,412.5,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,35,0,,,,,0.93,16,18,,Test Team A ball (made basket)
+06:54,414.4,pass,Pass,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,35,0,,,,,0.96,16,18,,#0 Test Player 1 pass to #14 Test Player 4
+07:02,422.7,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,35,0,,,,,0.85,16,18,,#14 Test Player 4 pass to #5 Test Player 2
+07:04,424.2,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,35,0,,,,,0.85,16,18,,#5 Test Player 2 pass to #14 Test Player 4
+07:06,426.8,screen,Screen,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,35,0,,,,,0.81,16,18,pl_59,#0 Test Player 1 on-ball screen for #14 Test Player 4
+07:08,428.8,pass,Pass,Test Team A,14,Test Player 4,#0 Test Player 1,Test Team A,35,0,,,,,0.77,16,18,pl_59,#14 Test Player 4 pass to #0 Test Player 1
+07:09,429.6,shot_missed,2PT Miss,Test Team A,0,Test Player 1,,Test Team A,35,0,paint,restricted_area,6.5,26.0,0.80,16,18,pl_59,#0 Test Player 1 2PT miss (restricted area)
+07:11,431.3,dreb,Def. Rebound,Test Team B,55,Test Player 10,,Test Team A,35,0,,,,,0.90,16,18,,#55 Test Player 10 def. rebound
+07:11,431.3,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,36,0,,,,,0.90,16,18,,Test Team B ball (def rebound)
+07:11,431.8,pass,Pass,Test Team B,55,Test Player 10,#42 Test Player 9,Test Team B,36,0,,,,,0.94,16,18,pl_60,#55 Test Player 10 pass to #42 Test Player 9
+07:15,435.3,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,36,0,,,,,0.87,16,18,pl_60,#42 Test Player 9 pass to #40 Test Player 8
+07:16,436.6,shot_made,2PT Make,Test Team B,40,Test Player 8,,Test Team B,36,2,paint,paint,78.0,29.0,0.80,16,20,pl_60,"#40 Test Player 8 2PT make (paint), assist #42 Test Player 9"
+07:16,436.6,assist,Assist,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,36,0,,,,,0.80,16,20,pl_60,#42 Test Player 9 assist to #40 Test Player 8
+07:16,436.6,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,37,0,,,,,0.80,16,20,,Test Team A ball (made basket)
+07:18,438.9,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,37,0,,,,,0.82,16,20,,#33 Test Player 5 pass to #14 Test Player 4
+07:25,445.0,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,37,0,,,,,0.76,16,20,,#14 Test Player 4 pass to #5 Test Player 2
+07:26,446.5,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,37,0,,,,,0.79,16,20,,#5 Test Player 2 pass to #14 Test Player 4
+07:27,447.4,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,37,0,,,,,0.73,16,20,,#14 Test Player 4 pass to #5 Test Player 2
+07:32,452.3,shot_made,2PT Make,Test Team A,5,Test Player 2,,Test Team A,37,2,paint,paint,6.5,21.0,0.97,18,20,pl_62,#5 Test Player 2 2PT make (paint)
+07:32,452.3,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,38,0,,,,,0.97,18,20,,Test Team B ball (made basket)
+07:34,454.8,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,38,0,,,,,0.73,18,20,,#20 Test Player 7 pass to #42 Test Player 9
+07:40,460.9,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,38,0,,,,,0.75,18,20,,#42 Test Player 9 pass to #40 Test Player 8
+07:42,462.3,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,38,0,,,,,0.76,18,20,,#40 Test Player 8 pass to #42 Test Player 9
+07:44,464.9,screen,Screen,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,38,0,,,,,0.82,18,20,pl_64,#20 Test Player 7 on-ball screen for #42 Test Player 9
+07:47,467.2,shot_missed,2PT Miss,Test Team B,42,Test Player 9,,Test Team B,38,0,paint,paint,69.0,30.0,0.78,18,20,pl_64,#42 Test Player 9 2PT miss (paint)
+07:47,467.3,foul,Foul,Test Team A,14,Test Player 4,#42 Test Player 9,Test Team B,38,0,,,,,0.73,18,20,pl_64,#14 Test Player 4 foul (shooting) on #42 Test Player 9
+07:49,469.8,ft_made,FT Make,Test Team B,42,Test Player 9,,Test Team B,38,1,,,,,0.82,18,21,,#42 Test Player 9 FT make
+07:51,471.8,ft_missed,FT Miss,Test Team B,42,Test Player 9,,Test Team B,38,0,,,,,0.77,18,21,,#42 Test Player 9 FT miss
+07:53,473.3,dreb,Def. Rebound,Test Team A,33,Test Player 5,,Test Team B,38,0,,,,,0.85,18,21,,#33 Test Player 5 def. rebound
+07:53,473.3,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,39,0,,,,,0.85,18,21,,Test Team A ball (def rebound)
+07:53,473.8,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,39,0,,,,,0.82,18,21,pl_65,#33 Test Player 5 pass to #14 Test Player 4
+07:57,477.3,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,39,0,,,,,0.81,18,21,pl_65,#14 Test Player 4 pass to #5 Test Player 2
+07:58,478.6,shot_made,2PT Make,Test Team A,5,Test Player 2,,Test Team A,39,2,paint,paint,6.0,21.0,0.90,20,21,pl_65,"#5 Test Player 2 2PT make (paint), assist #14 Test Player 4"
+07:58,478.6,assist,Assist,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,39,0,,,,,0.90,20,21,pl_65,#14 Test Player 4 assist to #5 Test Player 2
+07:58,478.6,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,40,0,,,,,0.90,20,21,,Test Team B ball (made basket)
+08:00,480.7,pass,Pass,Test Team B,55,Test Player 10,#42 Test Player 9,Test Team B,40,0,,,,,0.79,20,21,,#55 Test Player 10 pass to #42 Test Player 9
+08:09,489.0,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,40,0,,,,,0.86,20,21,,#42 Test Player 9 pass to #40 Test Player 8
+08:10,490.5,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,40,0,,,,,0.84,20,21,,#40 Test Player 8 pass to #42 Test Player 9
+08:11,491.4,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,40,0,,,,,0.90,20,21,,#42 Test Player 9 pass to #40 Test Player 8
+08:16,496.3,shot_missed,2PT Miss,Test Team B,40,Test Player 8,,Test Team B,40,0,paint,paint,77.5,29.0,0.79,20,21,pl_68,#40 Test Player 8 2PT miss (paint)
+08:18,498.0,dreb,Def. Rebound,Test Team A,0,Test Player 1,,Test Team B,40,0,,,,,0.96,20,21,,#0 Test Player 1 def. rebound
+08:18,498.0,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,41,0,,,,,0.96,20,21,pl_69,Test Team A ball (def rebound)
+08:18,498.5,pass,Pass,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,41,0,,,,,0.97,20,21,pl_69,#0 Test Player 1 pass to #14 Test Player 4
+08:21,501.9,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,41,0,,,,,0.87,20,21,pl_69,#14 Test Player 4 pass to #5 Test Player 2
+08:23,503.2,shot_made,2PT Make,Test Team A,5,Test Player 2,,Test Team A,41,2,paint,paint,6.0,21.0,0.73,22,21,pl_69,"#5 Test Player 2 2PT make (paint), assist #14 Test Player 4"
+08:23,503.2,assist,Assist,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,41,0,,,,,0.73,22,21,pl_69,#14 Test Player 4 assist to #5 Test Player 2
+08:23,503.2,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,42,0,,,,,0.73,22,21,,Test Team B ball (made basket)
+08:25,505.5,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,42,0,,,,,0.93,22,21,,#20 Test Player 7 pass to #42 Test Player 9
+08:31,511.6,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,42,0,,,,,0.76,22,21,,#42 Test Player 9 pass to #40 Test Player 8
+08:33,513.1,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,42,0,,,,,0.83,22,21,,#40 Test Player 8 pass to #42 Test Player 9
+08:35,515.2,screen,Screen,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,42,0,,,,,0.85,22,21,pl_71,#20 Test Player 7 on-ball screen for #42 Test Player 9
+08:36,516.9,pass,Pass,Test Team B,42,Test Player 9,#20 Test Player 7,Test Team B,42,0,,,,,0.87,22,21,pl_71,#42 Test Player 9 pass to #20 Test Player 7
+08:37,517.9,shot_missed,3PT Miss,Test Team B,20,Test Player 7,,Test Team B,42,0,three,left_wing_3,60.0,34.0,0.91,22,21,pl_71,#20 Test Player 7 3PT miss (left wing 3)
+08:39,519.6,dreb,Def. Rebound,Test Team A,0,Test Player 1,,Test Team B,42,0,,,,,0.73,22,21,,#0 Test Player 1 def. rebound
+08:39,519.6,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,43,0,,,,,0.73,22,21,pl_72,Test Team A ball (def rebound)
+08:40,520.1,pass,Pass,Test Team A,0,Test Player 1,#14 Test Player 4,Test Team A,43,0,,,,,0.77,22,21,pl_72,#0 Test Player 1 pass to #14 Test Player 4
+08:43,523.5,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,43,0,,,,,0.75,22,21,pl_72,#14 Test Player 4 pass to #5 Test Player 2
+08:44,524.8,shot_missed,2PT Miss,Test Team A,5,Test Player 2,,Test Team A,43,0,paint,paint,6.0,21.0,0.76,22,21,pl_72,"#5 Test Player 2 2PT miss (paint), blocked by #42 Test Player 9"
+08:44,524.8,block,Block,Test Team B,42,Test Player 9,#5 Test Player 2,Test Team A,43,0,,,,,0.76,22,21,pl_72,#42 Test Player 9 block on #5 Test Player 2
+08:46,526.5,dreb,Def. Rebound,Test Team B,42,Test Player 9,,Test Team A,43,0,,,,,0.86,22,21,,#42 Test Player 9 def. rebound
+08:46,526.5,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,44,0,,,,,0.86,22,21,,Test Team B ball (def rebound)
+08:51,531.7,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,44,0,,,,,0.76,22,21,,#42 Test Player 9 pass to #40 Test Player 8
+08:53,533.2,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,44,0,,,,,0.93,22,21,,#40 Test Player 8 pass to #42 Test Player 9
+08:55,535.4,pass,Pass,Test Team B,42,Test Player 9,#3 Test Player 6,Test Team B,44,0,,,,,0.77,22,21,,#42 Test Player 9 pass to #3 Test Player 6
+08:56,536.5,shot_made,3PT Make,Test Team B,3,Test Player 6,,Test Team B,44,3,three,right_corner_3,80.5,3.0,0.90,22,24,pl_74,"#3 Test Player 6 3PT make (right corner 3), assist #42 Test Player 9"
+08:56,536.5,assist,Assist,Test Team B,42,Test Player 9,#3 Test Player 6,Test Team B,44,0,,,,,0.90,22,24,pl_74,#42 Test Player 9 assist to #3 Test Player 6
+08:56,536.5,foul,Foul,Test Team A,33,Test Player 5,#3 Test Player 6,Test Team B,44,0,,,,,0.75,22,24,,#33 Test Player 5 foul (shooting) on #3 Test Player 6
+08:59,539.1,ft_made,FT Make,Test Team B,3,Test Player 6,,Test Team B,44,1,,,,,0.82,22,25,,#3 Test Player 6 FT make
+08:59,539.1,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,45,0,,,,,0.82,22,25,,Test Team A ball (made basket)
+09:00,541.0,pass,Pass,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,45,0,,,,,0.87,22,25,,#33 Test Player 5 pass to #14 Test Player 4
+09:07,547.1,pass,Pass,Test Team A,14,Test Player 4,#5 Test Player 2,Test Team A,45,0,,,,,0.78,22,25,,#14 Test Player 4 pass to #5 Test Player 2
+09:08,548.5,pass,Pass,Test Team A,5,Test Player 2,#14 Test Player 4,Test Team A,45,0,,,,,0.86,22,25,,#5 Test Player 2 pass to #14 Test Player 4
+09:11,551.1,screen,Screen,Test Team A,33,Test Player 5,#14 Test Player 4,Test Team A,45,0,,,,,0.80,22,25,pl_76,#33 Test Player 5 on-ball screen for #14 Test Player 4
+09:12,552.8,pass,Pass,Test Team A,14,Test Player 4,#33 Test Player 5,Test Team A,45,0,,,,,0.84,22,25,pl_76,#14 Test Player 4 pass to #33 Test Player 5
+09:13,553.9,shot_made,3PT Make,Test Team A,33,Test Player 5,,Test Team A,45,3,three,right_wing_3,24.0,34.0,0.86,25,25,pl_76,"#33 Test Player 5 3PT make (right wing 3), assist #14 Test Player 4"
+09:13,553.9,assist,Assist,Test Team A,14,Test Player 4,#33 Test Player 5,Test Team A,45,0,,,,,0.86,25,25,pl_76,#14 Test Player 4 assist to #33 Test Player 5
+09:13,553.9,possession_change,Possession: Test Team B,Test Team B,,,,Test Team B,46,0,,,,,0.86,25,25,,Test Team B ball (made basket)
+09:16,556.1,pass,Pass,Test Team B,20,Test Player 7,#42 Test Player 9,Test Team B,46,0,,,,,0.74,25,25,,#20 Test Player 7 pass to #42 Test Player 9
+09:22,562.2,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,46,0,,,,,0.75,25,25,,#42 Test Player 9 pass to #40 Test Player 8
+09:23,563.7,pass,Pass,Test Team B,40,Test Player 8,#42 Test Player 9,Test Team B,46,0,,,,,0.83,25,25,,#40 Test Player 8 pass to #42 Test Player 9
+09:24,564.6,pass,Pass,Test Team B,42,Test Player 9,#40 Test Player 8,Test Team B,46,0,,,,,0.87,25,25,,#42 Test Player 9 pass to #40 Test Player 8
+09:29,569.5,shot_missed,2PT Miss,Test Team B,40,Test Player 8,,Test Team B,46,0,paint,paint,77.5,29.0,0.94,25,25,pl_78,#40 Test Player 8 2PT miss (paint)
+09:29,569.6,foul,Foul,Test Team A,5,Test Player 2,#40 Test Player 8,Test Team B,46,0,,,,,0.93,25,25,,#5 Test Player 2 foul (shooting) on #40 Test Player 8
+09:32,572.1,ft_made,FT Make,Test Team B,40,Test Player 8,,Test Team B,46,1,,,,,0.83,25,26,,#40 Test Player 8 FT make
+09:34,574.1,ft_made,FT Make,Test Team B,40,Test Player 8,,Test Team B,46,1,,,,,0.81,25,27,,#40 Test Player 8 FT make
+09:34,574.1,possession_change,Possession: Test Team A,Test Team A,,,,Test Team A,47,0,,,,,0.81,25,27,,Test Team A ball (made basket)
+09:58,598.5,period_end,End of Period 2,,,,,Test Team A,47,0,,,,,0.83,25,27,,End of Period 2

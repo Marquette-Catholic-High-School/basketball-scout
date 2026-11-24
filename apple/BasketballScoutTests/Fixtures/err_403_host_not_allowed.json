@@ -1,0 +1,1 @@
+{"error":{"code":"HOST_NOT_ALLOWED","title":"Unknown server name","message":"This server does not answer to the name 'other.example': it is not in SCOUT_ALLOWED_HOSTS.","hint":"Open Basketball Scout by its usual address or its IP address, or ask the administrator to add this name to SCOUT_ALLOWED_HOSTS in .env and restart the web app.","retryable":false,"detail":null}}

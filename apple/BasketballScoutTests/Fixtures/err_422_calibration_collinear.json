@@ -1,0 +1,1 @@
+{"error":{"code":"CALIBRATION_INVALID","title":"Court calibration rejected","message":"The clicked court points do not produce a usable mapping.","hint":"Click at least 4 landmarks spread across the court, not all on one line.","retryable":false,"detail":"points are degenerate (collinear or duplicated)"}}
