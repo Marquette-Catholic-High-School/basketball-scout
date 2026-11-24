@@ -22,6 +22,7 @@ struct RosterTracksSections: View {
             Text(verbatim: model.tracks.countText(shown: rows.count))
                 .font(Theme.Typography.hint)
                 .foregroundStyle(Theme.secondaryText)
+            RosterMatchGoal(model: model)
         } header: {
             Text(verbatim: RosterText.tracksTitle)
                 .font(Theme.Typography.sectionTitle)
@@ -156,7 +157,7 @@ struct RosterTrackDetail: View {
                             Text(verbatim: Labels.emptyValue)
                         }
                     }
-                    KeyValueRow(label: RosterText.columnSeen, value: String(row.frames), monospacedDigits: true)
+                    KeyValueRow(label: RosterText.columnSeen, value: row.seenText, monospacedDigits: true)
                     KeyValueRow(label: RosterText.columnBestRead, value: row.bestReadText)
                     KeyValueRow(label: RosterText.columnReadings, value: row.readingsText)
                     KeyValueRow(label: RosterText.columnMatched, value: row.matchedText)

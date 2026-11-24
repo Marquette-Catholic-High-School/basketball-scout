@@ -67,7 +67,8 @@ struct RosterTextTests {
 
     @Test func theFilterIsTheWebs() {
         #expect(RosterTrackFilter.allCases.map(\.title) == [
-            "All tracks", "Needs attention (no player)", "Scouted team", "Opponent", "Not a player",
+            "All tracks", "Name these first (longest unnamed)", "Needs attention (no player)", "Scouted team", "Opponent",
+            "Not a player",
         ])
         #expect(RosterSection.roster(.scouted).title == "Scouted team")
         #expect(RosterSection.roster(.other).title == "Opponent")

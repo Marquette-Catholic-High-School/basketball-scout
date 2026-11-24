@@ -37,6 +37,9 @@ const IMPORT_EXTENSIONS = [".csv", ".tsv", ".txt", ".xlsx"];
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 const IGNORE = "__ignore";
 const UNKNOWN = "__none";
+// The jersey match rate the page aims for (the Data tab's figure: player time with a team matched to a roster
+// player). Unnamed tracks are mostly half-seen numbers that fit several players; a few long ones carry most of it.
+const MATCH_GOALS = [0.75, 0.8];
 const ANALYSIS_POLL_MS = 5000; // while a full analysis runs, check this often whether it has finished
 const WAIT_TITLE = "Wait for the film analysis to finish";
 
@@ -389,7 +392,84 @@ function scoreText(a) {
 /** No roster player, yet its best read is a roster number, so it has no jersey (see UNCLEAR_MATCH). */
 const unclearMatch = (a) => a.method === "unrostered" && !a.jersey && Boolean(a.best_read);
 
-function sortedTracks() {
+/**
+ * What a track counts for in the jersey match rate, with the unsaved choice applied: weight (its frames) when it is a
+ * player on a team with a roster, else 0, and whether it names a roster player. The server's figure is the same
+ * (pipeline._data_quality) for the tracks as analysed; with unsaved choices it is a close forecast.
+ */
+function matchWeight(a) {
+  const rostered = (side) => Boolean(side) && rosterPlayers(side).length > 0;
+  if (!state.pending.has(a.track_id)) {
+    const counts = a.role === "player" && !a.ignored && rostered(a.side);
+    return { weight: counts ? a.frames : 0, named: Boolean(a.player_id) };
+  }
+  const value = state.pending.get(a.track_id);
+  if (value === IGNORE) return { weight: 0, named: false };
+  if (value === "") { // back to automatic: as analysed, unless the track was set by hand (then unknown until re-run)
+    const manual = a.method === "manual";
+    const counts = (manual || (a.role === "player" && !a.ignored)) && rostered(a.side);
+    return { weight: counts ? a.frames : 0, named: !manual && Boolean(a.player_id) };
+  }
+  const [side, playerId] = value === UNKNOWN ? [a.side, ""] : value.split(":");
+  return { weight: rostered(side) ? a.frames : 0, named: Boolean(playerId) };
+}
+
+/** The match rate now (with unsaved choices), as saved, and how many of the longest unnamed tracks reach each goal. */
+function matchProjection() {
+  let total = 0, named = 0, saved = 0;
+  const unnamed = [];
+  for (const a of state.tracks) {
+    const { weight, named: isNamed } = matchWeight(a);
+    total += weight;
+    if (isNamed) named += weight;
+    else if (weight) unnamed.push(weight);
+    if (a.role === "player" && !a.ignored && a.side && rosterPlayers(a.side).length && a.player_id) saved += a.frames;
+  }
+  if (!total) return null;
+  unnamed.sort((x, y) => y - x);
+  const needed = MATCH_GOALS.map((goal) => {
+    let sum = named, count = 0;
+    while (sum / total < goal && count < unnamed.length) sum += unnamed[count++];
+    return { goal, count: sum / total >= goal ? count : null };
+  });
+  return { total, rate: named / total, saved: saved / total, needed };
+}
+
+/** The tracks that count for the match rate but name nobody, longest first: the few worth naming by hand. */
+function namesFirst(a) {
+  return a.role === "player" && !a.ignored && !a.player_id && Boolean(a.side) && rosterPlayers(a.side).length > 0;
+}
+
+function renderGoal() {
+  const goal = byId("tracks-goal");
+  const projection = state.tracks.length ? matchProjection() : null;
+  if (!projection) {
+    show(goal, false);
+    return;
+  }
+  const parts = [`Jersey match rate: ${formatPct(projection.saved, 0)}.`];
+  if (state.pending.size) parts.push(`With your unsaved choices: about ${formatPct(projection.rate, 0)}.`);
+  const [first, second] = projection.needed;
+  if (first.count) {
+    const tail = second.count && second.count !== first.count ? ` (${second.count} for ${formatPct(second.goal, 0)})` : "";
+    parts.push(`Naming the ${first.count === 1 ? "longest unnamed track" : `${first.count} longest unnamed tracks`} brings it to ${formatPct(first.goal, 0)}${tail}.`);
+  }
+  const filter = byId("tracks-filter").value;
+  setChildren(goal, parts.join(" "),
+    first.count && filter !== "first"
+      ? [" ", el("button", { type: "button", class: "btn-link", text: "Show them", onClick: () => { byId("tracks-filter").value = "first"; renderTracks(); } })]
+      : null);
+  show(goal, true);
+}
+
+/** A track's share of the player time the match rate counts (" (3.1%)"), beside its frames in "Name these first". */
+function shareText(a, total) {
+  const { weight } = matchWeight(a);
+  return weight && total ? ` (${formatPct(weight / total, 1)})` : "";
+}
+
+function sortedTracks(filter) {
+  if (filter === "first") return [...state.tracks].sort((a, b) => b.frames - a.frames || a.track_id - b.track_id);
   const sideRank = { scouted: 0, other: 1 };
   return [...state.tracks].sort((a, b) =>
     (a.role === "player" ? 0 : 1) - (b.role === "player" ? 0 : 1)
@@ -399,6 +479,7 @@ function sortedTracks() {
 
 function trackVisible(a, filter) {
   const value = currentValue(a.track_id);
+  if (filter === "first") return namesFirst(a) && (value === "" || state.pending.has(a.track_id));
   if (filter === "attention") return a.role === "player" && !a.ignored && !a.player_id && value === "";
   if (filter === "ignored") return a.ignored || value === IGNORE;
   if (filter) return a.side === filter;
@@ -449,7 +530,8 @@ function renderTracks() {
   if (!state.tracks.length) return;
   const filter = byId("tracks-filter").value;
   const template = assignmentTemplate();
-  const rows = sortedTracks().filter((a) => trackVisible(a, filter)).map((a) => {
+  const total = matchProjection()?.total || 0;
+  const rows = sortedTracks(filter).filter((a) => trackVisible(a, filter)).map((a) => {
     const select = template.cloneNode(true);
     const value = currentValue(a.track_id);
     const removed = removedPlayerOption(value);
@@ -461,7 +543,7 @@ function renderTracks() {
     return el("tr", { class: state.pending.has(a.track_id) ? "changed" : null, "data-track": String(a.track_id) },
       el("th", { scope: "row" }, previewCell(a), `T${a.track_id}`, a.role !== "player" ? el("span", { class: "badge", text: a.role }) : null),
       el("td", {}, a.side ? el("span", { class: `chip chip-${a.side}`, text: state.editors[a.side]?.teamInput.value || a.side }) : "–"),
-      el("td", { class: "num", text: String(a.frames) }),
+      el("td", { class: "num", text: filter === "first" ? `${a.frames}${shareText(a, total)}` : String(a.frames) }),
       el("td", { text: a.best_read ? `#${a.best_read}` : "–" }),
       el("td", { class: "small", text: votesText(a.votes) }),
       el("td", { text: matchedText(a) }),
@@ -473,6 +555,7 @@ function renderTracks() {
   setChildren(byId("tracks-body"), rows.length ? rows : el("tr", {}, el("td", { colspan: "9", class: "muted", text: "No tracks match this filter." })));
   byId("tracks-count").textContent = `${rows.length} of ${state.tracks.length} tracks`;
   updatePendingNote();
+  renderGoal();
 }
 
 function updatePendingNote() {
@@ -491,6 +574,7 @@ function onAssignmentChange(e) {
   else state.pending.set(trackId, select.value);
   select.closest("tr").classList.toggle("changed", state.pending.has(trackId));
   updatePendingNote();
+  renderGoal();
 }
 
 function overrideBody(trackId, value) {

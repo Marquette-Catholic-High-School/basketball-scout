@@ -58,6 +58,7 @@
         <label class="inline-label">Show
           <select id="tracks-filter">
             <option value="">All tracks</option>
+            <option value="first">Name these first (longest unnamed)</option>
             <option value="attention">Needs attention (no player)</option>
             <option value="scouted">Scouted team</option>
             <option value="other">Opponent</option>
@@ -66,6 +67,7 @@
         </label>
         <span id="tracks-count" class="muted small"></span>
       </div>
+      <p id="tracks-goal" class="hint" aria-live="polite" hidden></p>
       <div id="tracks-wait" class="section-sub" aria-live="polite" hidden></div>
       <div id="tracks-dropped" class="section-sub" aria-live="polite" hidden></div>
       <div id="tracks-error" class="section-sub" aria-live="assertive"></div>

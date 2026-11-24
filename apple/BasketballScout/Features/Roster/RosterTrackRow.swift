@@ -12,6 +12,8 @@ nonisolated struct RosterTrackRow: Identifiable, Hashable, Sendable {
     let teamTitle: String?
     /// "Matched player".
     let matchedText: String
+    /// Its share of the player time the match rate counts, shown beside "Seen" in "Name these first"; else nil.
+    var share: Double?
 
     var id: Int { trackID }
     var trackID: Int { assignment.trackID }
@@ -25,6 +27,12 @@ nonisolated struct RosterTrackRow: Identifiable, Hashable, Sendable {
 
     /// "Seen": analysed samples the track appears in.
     var frames: Int { assignment.frames }
+
+    /// "Seen" as shown: "300", or "300 (25.0%)" with its share in "Name these first".
+    var seenText: String {
+        guard let share else { return String(frames) }
+        return "\(frames) (\(ScoutFormat.percent(share, digits: 1)))"
+    }
 
     /// "#14", or "–" without a read.
     var bestReadText: String {

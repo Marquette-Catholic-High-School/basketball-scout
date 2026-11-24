@@ -157,6 +157,9 @@ nonisolated struct RosterTracksState: Sendable {
         switch filter {
         case .all:
             return true
+        case .first:
+            return Self.namesFirst(assignment, editors: editors)
+                && (choice == .automatic || pending[assignment.trackID] != nil)
         case .attention:
             return assignment.isPlayer && !assignment.ignored && (assignment.playerID ?? "").isEmpty && choice == .automatic
         case .ignored:
@@ -169,27 +172,107 @@ nonisolated struct RosterTracksState: Sendable {
     }
 
     /// The rows the filter shows, in the web's order: player tracks first, then scouted, other, no team, then
-    /// most frames first (server order on ties).
+    /// most frames first (server order on ties). "Name these first" is longest first, whatever the team, with
+    /// each row's share of the player time the match rate counts.
     func rows(editors: RosterEditors) -> [RosterTrackRow] {
-        assignments.enumerated()
+        let first = filter == .first
+        let total = first ? matchProjection(editors: editors)?.total ?? 0 : 0
+        return assignments.enumerated()
             .sorted { lhs, rhs in
+                if first {
+                    if lhs.element.frames != rhs.element.frames { return lhs.element.frames > rhs.element.frames }
+                    return lhs.element.trackID < rhs.element.trackID
+                }
                 if TrackAssignment.tableOrder(lhs.element, rhs.element) { return true }
                 if TrackAssignment.tableOrder(rhs.element, lhs.element) { return false }
                 return lhs.offset < rhs.offset
             }
             .map(\.element)
             .filter { isVisible($0, filter: filter, editors: editors) }
-            .map { row(for: $0, editors: editors) }
+            .map { assignment in
+                let weight = first ? matchWeight(assignment, editors: editors).weight : 0
+                return row(for: assignment, editors: editors, share: weight > 0 && total > 0 ? Double(weight) / Double(total) : nil)
+            }
     }
 
     /// One table row.
-    func row(for assignment: TrackAssignment, editors: RosterEditors) -> RosterTrackRow {
+    func row(for assignment: TrackAssignment, editors: RosterEditors, share: Double? = nil) -> RosterTrackRow {
         RosterTrackRow(
             assignment: assignment,
             choice: currentChoice(assignment.trackID, editors: editors),
             isPending: pending[assignment.trackID] != nil,
             teamTitle: assignment.side.map(editors.chipTitle),
-            matchedText: Self.matchedText(assignment, editors: editors))
+            matchedText: Self.matchedText(assignment, editors: editors),
+            share: share)
+    }
+
+    // MARK: - The match rate (roster.js `matchWeight`, `matchProjection`, `namesFirst`)
+
+    /// The jersey match rates the card aims for (roster.js `MATCH_GOALS`). Unnamed tracks are mostly half-seen
+    /// numbers that fit several players, and a few long ones carry most of the time.
+    static let matchGoals: [Double] = [0.75, 0.8]
+
+    /// What a track counts for in the match rate (the Data tab's figure, pipeline `_data_quality`) with the
+    /// unsaved choice applied: its frames when it is a player on a team with a roster, else 0, and whether it
+    /// names a roster player.
+    func matchWeight(_ assignment: TrackAssignment, editors: RosterEditors) -> (weight: Int, named: Bool) {
+        func rostered(_ side: TeamSide?) -> Bool { side.map { !editors[$0].rosterPlayers.isEmpty } ?? false }
+        let hasPlayer = !(assignment.playerID ?? "").isEmpty
+        guard let choice = pending[assignment.trackID] else {
+            let counts = assignment.isPlayer && !assignment.ignored && rostered(assignment.side)
+            return (counts ? assignment.frames : 0, hasPlayer)
+        }
+        switch choice {
+        case .notAPlayer:
+            return (0, false)
+        case .automatic: // as analysed, unless the track was set by hand (then unknown until the re-run)
+            let manual = assignment.method == .manual
+            let counts = (manual || (assignment.isPlayer && !assignment.ignored)) && rostered(assignment.side)
+            return (counts ? assignment.frames : 0, !manual && hasPlayer)
+        case .unknownKeepTeam:
+            return (rostered(assignment.side) ? assignment.frames : 0, false)
+        case .unknownPlayer(let side):
+            return (rostered(side) ? assignment.frames : 0, false)
+        case .player(let side, _):
+            return (rostered(side) ? assignment.frames : 0, true)
+        }
+    }
+
+    /// The match rate with the unsaved choices, as saved, and how many of the longest unnamed tracks reach each
+    /// goal; nil when no track counts.
+    func matchProjection(editors: RosterEditors) -> RosterMatchProjection? {
+        var total = 0, named = 0, saved = 0
+        var unnamed: [Int] = []
+        for assignment in assignments {
+            let (weight, isNamed) = matchWeight(assignment, editors: editors)
+            total += weight
+            if isNamed { named += weight } else if weight > 0 { unnamed.append(weight) }
+            if assignment.isPlayer, !assignment.ignored, let side = assignment.side, !editors[side].rosterPlayers.isEmpty,
+               !(assignment.playerID ?? "").isEmpty {
+                saved += assignment.frames
+            }
+        }
+        guard total > 0 else { return nil }
+        unnamed.sort(by: >)
+        let needed = Self.matchGoals.map { goal -> RosterMatchProjection.Need in
+            var sum = named, count = 0
+            while Double(sum) / Double(total) < goal, count < unnamed.count {
+                sum += unnamed[count]
+                count += 1
+            }
+            return .init(goal: goal, count: Double(sum) / Double(total) >= goal ? count : nil)
+        }
+        return RosterMatchProjection(
+            total: total, rate: Double(named) / Double(total), saved: Double(saved) / Double(total),
+            hasPending: !pending.isEmpty, needed: needed)
+    }
+
+    /// A track that counts for the match rate but names nobody: the few long ones are worth naming by hand.
+    static func namesFirst(_ assignment: TrackAssignment, editors: RosterEditors) -> Bool {
+        guard assignment.isPlayer, !assignment.ignored, (assignment.playerID ?? "").isEmpty, let side = assignment.side else {
+            return false
+        }
+        return !editors[side].rosterPlayers.isEmpty
     }
 
     /// "Matched player" (roster.js `matchedText`): the roster player of the track's team, else
@@ -286,6 +369,7 @@ nonisolated struct RosterChoiceMenu: Hashable, Sendable {
 /// The tracks table's "Show" filter (roster.html:59-65).
 nonisolated enum RosterTrackFilter: String, CaseIterable, Identifiable, Hashable, Sendable {
     case all
+    case first
     case attention
     case scouted
     case other
@@ -296,10 +380,46 @@ nonisolated enum RosterTrackFilter: String, CaseIterable, Identifiable, Hashable
     var title: String {
         switch self {
         case .all: "All tracks"
+        case .first: "Name these first (longest unnamed)"
         case .attention: "Needs attention (no player)"
         case .scouted: TeamSide.scouted.shortTitle
         case .other: TeamSide.other.shortTitle
         case .ignored: "Not a player"
         }
     }
+}
+
+/// The jersey match rate the tracks card shows (roster.js `matchProjection`): as saved, with the unsaved
+/// choices, and how many of the longest unnamed tracks reach each goal (nil: not even all of them do).
+nonisolated struct RosterMatchProjection: Hashable, Sendable {
+    struct Need: Hashable, Sendable {
+        let goal: Double
+        let count: Int?
+    }
+
+    /// The frames the rate counts.
+    let total: Int
+    let rate: Double
+    let saved: Double
+    let hasPending: Bool
+    let needed: [Need]
+
+    /// "Jersey match rate: 60%. Naming the 7 longest unnamed tracks brings it to 75% (11 for 80%)." (roster.js
+    /// `renderGoal`), with "With your unsaved choices: about 68%." when there are some.
+    var text: String {
+        var parts = ["Jersey match rate: \(ScoutFormat.percent(saved, digits: 0))."]
+        if hasPending { parts.append("With your unsaved choices: about \(ScoutFormat.percent(rate, digits: 0)).") }
+        if let first = needed.first, let count = first.count {
+            var tail = ""
+            if needed.count > 1, let second = needed[1].count, second != count {
+                tail = " (\(second) for \(ScoutFormat.percent(needed[1].goal, digits: 0)))"
+            }
+            let tracks = count == 1 ? "longest unnamed track" : "\(count) longest unnamed tracks"
+            parts.append("Naming the \(tracks) brings it to \(ScoutFormat.percent(first.goal, digits: 0))\(tail).")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// Some of the longest unnamed tracks reach the first goal ("Show them" applies).
+    var canReachGoal: Bool { needed.first?.count != nil && needed.first?.count != 0 }
 }

@@ -106,8 +106,9 @@ The screens follow the web pages (see [Using the app](../README.md#using-the-app
   files, the analysis JSON and the report as Markdown. Share them or save them to Files / Finder.
 - **Roster & jerseys**: both rosters, CSV import and the template, and the jersey assignments from
   the film. Each track shows a small picture of the player from the film; tap it (iPad, Mac) or
-  open the track (iPhone) for up to three larger ones, to tell who an unnamed track is. Save, then
-  re-run the analysis when the page offers it.
+  open the track (iPhone) for up to three larger ones, to tell who an unnamed track is. **Show:
+  Name these first** lists the longest unnamed tracks, and the line above the table says how many
+  of them reach a 75% jersey match rate. Save, then re-run the analysis when the page offers it.
 
 The app refreshes on its own while film is processing and when you come back to it. ⌘R refreshes on
 the Mac and on an iPad with a keyboard; on iPhone and iPad you can also pull down.

@@ -535,6 +535,14 @@ of the shorter track's time), and a lone digit is completed when only one number
 contains it ("4" when the only such jersey is 24). It links only when the choice is clear; what it cannot link stays unnamed, for you
 to assign in the track table.
 
+**Name these first.** What stays unnamed is mostly a number seen only in part: a track that reads
+"3" while #3 is on screen elsewhere could be #13, #23 or #31, and the analysis leaves it rather
+than guess. A few long tracks carry most of that time, so the track table says how many of them
+reach a 75% jersey match rate ("Naming the 7 longest unnamed tracks brings it to 75%"). **Show
+them** (or **Show: Name these first**) lists the unnamed tracks of both teams longest first, with
+each one's share of the player time; the line follows your choices before you save. Save, and the
+re-run counts them. Tracks with no team are not in the rate, so they are not in this list.
+
 ### 3. Confirm the team colours
 
 The analysis splits players into two teams by jersey colour. If it is not sure which

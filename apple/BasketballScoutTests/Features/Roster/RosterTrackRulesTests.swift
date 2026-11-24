@@ -130,6 +130,29 @@ struct RosterTrackRulesTests {
         #expect(tracks.countText(shown: 1) == "1 of 15 tracks")
     }
 
+    /// "Name these first" and the match-rate line (roster.js `matchProjection`; tests/test_name_first.py): the
+    /// longest unnamed team tracks whatever the team, their share, and a forecast that follows the choices.
+    @Test func nameTheseFirstListsTheLongestUnnamedTracksAndTheGoal() throws {
+        let editors = try RosterTestState.editors()
+        var tracks = try RosterTestState.tracks("tracks_unmatched.json")
+        let projection = try #require(tracks.matchProjection(editors: editors))
+        #expect(projection.total == 59990) // the referees do not count
+        #expect(projection.text == "Jersey match rate: 0%. Naming the 8 longest unnamed tracks brings it to 75%.")
+        #expect(projection.canReachGoal)
+        tracks.filter = .first
+        let rows = tracks.rows(editors: editors)
+        #expect(rows.map(\.trackID) == [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 2, 12])
+        #expect(rows.first?.seenText == "6000 (10.0%)")
+        tracks.choose(.player(.scouted, "p_fixture02"), for: 3, editors: editors)
+        #expect(tracks.rows(editors: editors).map(\.trackID).contains(3)) // a row chosen stays in the list
+        #expect(tracks.matchProjection(editors: editors)?.text
+            == "Jersey match rate: 0%. With your unsaved choices: about 10%. Naming the 7 longest unnamed tracks brings it to 75%.")
+        tracks.choose(.notAPlayer, for: 1, editors: editors)
+        #expect(tracks.matchProjection(editors: editors)?.total == 53990)
+        tracks.filter = .all
+        #expect(tracks.rows(editors: editors).first?.seenText == "6000") // the other views keep the plain count
+    }
+
     @Test func rowsComeInTheWebsOrder() throws {
         let rows = try RosterTestState.tracks().rows(editors: RosterTestState.editors())
         // Players first; scouted, other, no team; most frames first; ties keep the server's order.

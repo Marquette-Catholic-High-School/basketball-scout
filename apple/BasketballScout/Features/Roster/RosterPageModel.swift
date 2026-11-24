@@ -153,6 +153,9 @@ final class RosterPageModel {
     /// The tracks table's rows (filtered, in the web's order).
     var trackRows: [RosterTrackRow] { tracks.rows(editors: editors) }
 
+    /// The match rate line of the tracks card; nil without tracks that count.
+    var matchProjection: RosterMatchProjection? { tracks.matchProjection(editors: editors) }
+
     /// The "Assign to" entries of a track.
     func choiceMenu(for trackID: Int) -> RosterChoiceMenu {
         tracks.choiceMenu(for: trackID, editors: editors)

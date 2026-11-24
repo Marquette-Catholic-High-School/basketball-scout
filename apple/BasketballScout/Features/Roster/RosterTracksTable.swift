@@ -70,6 +70,7 @@ struct RosterTracksTable: View {
                     .font(Theme.Typography.hint)
                     .foregroundStyle(Theme.secondaryText)
             }
+            RosterMatchGoal(model: model)
             ForEach(model.trackSectionNotices, id: \.self) { notice in
                 RosterNoticeView(notice: notice, perform: actions.perform)
             }
@@ -120,7 +121,7 @@ struct RosterTracksTable: View {
             }
             .width(min: 80, ideal: 120)
             TableColumn(RosterText.columnSeen, value: \RosterTrackRow.frames) { row in
-                Text(verbatim: String(row.frames))
+                Text(verbatim: row.seenText)
                     .monospacedDigit()
                     .help(Text(verbatim: RosterText.seenHelp))
             }
