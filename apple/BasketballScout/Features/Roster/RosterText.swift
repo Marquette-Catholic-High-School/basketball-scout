@@ -174,6 +174,12 @@ nonisolated enum RosterText {
     static let columnHow = "How"
     static let columnAssign = "Assign to"
 
+    // Pictures of a tracked player, cut from the film by the server.
+    static let picturesTitle = "Pictures from the film"
+    static let picturesHint = "Up to three moments of this track, to help you tell who it is."
+    /// "Pictures of track 12" (the thumbnail's button).
+    static func picturesLabel(_ trackID: Int) -> String { "Pictures of track \(trackID)" }
+
     // The assignment choices (roster.js:356-366).
     static let automatic = "Automatic (best jersey match)"
     static let unknownKeepTeam = "Unknown player (keep team)"

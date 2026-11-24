@@ -459,6 +459,7 @@ def _discard_old_film(game_id: str) -> None:
     # What a download of the old film's results that was cut short left (up to an overlay's size).
     shutil.rmtree(storage.incoming_dir(game_id), ignore_errors=True)
     shutil.rmtree(storage.game_time_dir(game_id), ignore_errors=True)
+    shutil.rmtree(storage.previews_dir(game_id), ignore_errors=True)  # pictures of players cut from the old film
     live.discard(game_id)  # parts of a live game that never became its film
     db.clear_track_overrides(game_id)  # track ids from the old film mean nothing now
 

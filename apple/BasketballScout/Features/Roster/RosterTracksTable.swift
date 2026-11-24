@@ -10,6 +10,8 @@ struct RosterTracksTable: View {
 
     @State private var sortOrder: [KeyPathComparator<RosterTrackRow>] = []
     @State private var selection: Int?
+    /// The track whose larger pictures are showing.
+    @State private var pictureTrack: Int?
     @State private var headerHeight: CGFloat = 0
 
     var body: some View {
@@ -112,7 +114,7 @@ struct RosterTracksTable: View {
             TableColumn(RosterText.columnTrack, value: \RosterTrackRow.trackID) { row in
                 trackCell(row)
             }
-            .width(min: 64, ideal: 110)
+            .width(min: 96, ideal: 140)
             TableColumn(RosterText.columnTeam, value: \RosterTrackRow.teamSortKey) { row in
                 teamCell(row)
             }
@@ -163,6 +165,23 @@ struct RosterTracksTable: View {
 
     private func trackCell(_ row: RosterTrackRow) -> some View {
         HStack(spacing: Theme.Spacing.xSmall) {
+            if let source = model.pictureSource {
+                Button {
+                    pictureTrack = row.id
+                } label: {
+                    RosterTrackPicture(source: source, trackID: row.id, height: 40)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(verbatim: RosterText.picturesLabel(row.id)))
+                .popover(isPresented: Binding(get: { pictureTrack == row.id }, set: { if !$0 { pictureTrack = nil } })) {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.small) {
+                        Text(verbatim: "\(row.trackText)\(Labels.separator)\(RosterText.columnBestRead) \(row.bestReadText)")
+                            .font(.headline)
+                        RosterTrackPictures(source: source, trackID: row.id, height: 300)
+                    }
+                    .padding()
+                }
+            }
             Text(verbatim: row.trackText)
                 .fontWeight(.semibold)
             if let role = row.roleBadge {

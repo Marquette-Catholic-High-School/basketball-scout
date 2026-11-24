@@ -501,6 +501,14 @@ that you had not saved are dropped (the page says which tracks), and saving the 
 removes that player's saved assignments. The FastScout name column sets the exact
 spelling FastScout expects.
 
+**Who is this? Pictures of each track.** The track table shows a small picture of every tracked
+player, cut from the film at a moment he is large and fully in view. Click it for up to three
+larger pictures from different moments of that track, then choose the player under **Assign
+to**. The pictures need the film on the server (not a film given as a link, and not a live game
+before it ends) and are made the first time a row is shown, so the first look at a long table
+takes a moment. They show students: they are served only behind the sign-in, kept in the game's
+folder and deleted with the game or its film.
+
 **One player, many tracks.** The tracker loses a player whenever someone walks in front of him
 or he leaves the picture, and starts a new track when it finds him again, so a game has far more
 tracks than players. When a track ends and another of the same team starts a moment later at

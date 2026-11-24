@@ -589,3 +589,11 @@ label.btn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
 .game-time summary { cursor: pointer; }
 .game-time-grid { display: grid; gap: 0.4rem; margin: 0.6rem 0; max-width: 34rem; }
 .game-time-row { display: grid; grid-template-columns: 9.5rem minmax(5rem, 8rem) auto; gap: 0.5rem; align-items: center; }
+
+/* ------------------------------------------------------------------ pictures of tracked players */
+.track-preview { padding: 0; margin-right: 0.5rem; vertical-align: middle; border: 1px solid var(--border, #444); border-radius: 4px; background: none; line-height: 0; cursor: zoom-in; }
+.track-preview img { height: 60px; width: auto; border-radius: 3px; display: block; }
+.track-preview-dialog { max-width: min(96vw, 64rem); border: 1px solid var(--border, #444); border-radius: 8px; padding: 1rem; background: var(--surface, #1c1c1e); color: inherit; }
+.track-preview-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.track-preview-pictures { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.75rem; }
+.track-preview-pictures img { height: min(360px, 60vh); width: auto; border-radius: 4px; }

@@ -405,6 +405,46 @@ function trackVisible(a, filter) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Pictures of the tracked players (cut from the film by the server)
+// ---------------------------------------------------------------------------
+
+const previewUrl = (trackId, view, size) => `${gamePath(gameId, `/tracks/${trackId}/preview.jpg`)}?view=${view}&size=${size}`;
+
+/** A small picture of the player; the browser loads it only when the row scrolls into view. */
+function previewCell(a) {
+  if (!state.game?.has_video) return null; // no film on this server to cut it from
+  const image = el("img", { src: previewUrl(a.track_id, 0, "small"), alt: "", loading: "lazy", height: "60" });
+  const button = el("button", {
+    type: "button", class: "track-preview", "aria-label": `Larger pictures of track ${a.track_id}`, title: "Larger pictures", onClick: () => showPreviews(a),
+  }, image);
+  image.addEventListener("error", () => button.remove()); // no picture for this track
+  return button;
+}
+
+/** Up to three larger pictures, from different moments of the track; a moment the track does not have stays out. */
+function showPreviews(a) {
+  let dialog = document.getElementById("track-preview-dialog"); // made on first use
+  if (!dialog) {
+    dialog = el("dialog", { id: "track-preview-dialog", class: "track-preview-dialog" });
+    dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
+    document.body.append(dialog);
+  }
+  const pictures = [0, 1, 2].map((view) => {
+    const image = el("img", { src: previewUrl(a.track_id, view, "large"), alt: `Track ${a.track_id}, picture ${view + 1}`, height: "360" });
+    image.addEventListener("error", () => image.remove());
+    return image;
+  });
+  const read = a.best_read ? `best read #${a.best_read}` : "no number read";
+  setChildren(dialog,
+    el("div", { class: "card-head" },
+      el("strong", { text: `Track T${a.track_id}` }),
+      el("span", { class: "small muted", text: `${a.side ? state.editors[a.side]?.teamInput.value || a.side : "team unknown"} · ${read} · seen in ${a.frames} frames` }),
+      el("button", { type: "button", class: "btn-small", text: "Close", onClick: () => dialog.close() })),
+    el("div", { class: "track-preview-pictures" }, pictures));
+  if (!dialog.open) dialog.showModal();
+}
+
 function renderTracks() {
   if (!state.tracks.length) return;
   const filter = byId("tracks-filter").value;
@@ -419,7 +459,7 @@ function renderTracks() {
     select.value = value;
     select.disabled = Boolean(state.analyzing);
     return el("tr", { class: state.pending.has(a.track_id) ? "changed" : null, "data-track": String(a.track_id) },
-      el("th", { scope: "row" }, `T${a.track_id}`, a.role !== "player" ? el("span", { class: "badge", text: a.role }) : null),
+      el("th", { scope: "row" }, previewCell(a), `T${a.track_id}`, a.role !== "player" ? el("span", { class: "badge", text: a.role }) : null),
       el("td", {}, a.side ? el("span", { class: `chip chip-${a.side}`, text: state.editors[a.side]?.teamInput.value || a.side }) : "–"),
       el("td", { class: "num", text: String(a.frames) }),
       el("td", { text: a.best_read ? `#${a.best_read}` : "–" }),

@@ -105,7 +105,9 @@ The screens follow the web pages (see [Using the app](../README.md#using-the-app
 - **Exports**: the FastScout paste block (copied ready to paste), the FastScout and timeline CSV
   files, the analysis JSON and the report as Markdown. Share them or save them to Files / Finder.
 - **Roster & jerseys**: both rosters, CSV import and the template, and the jersey assignments from
-  the film. Save, then re-run the analysis when the page offers it.
+  the film. Each track shows a small picture of the player from the film; tap it (iPad, Mac) or
+  open the track (iPhone) for up to three larger ones, to tell who an unnamed track is. Save, then
+  re-run the analysis when the page offers it.
 
 The app refreshes on its own while film is processing and when you come back to it. ⌘R refreshes on
 the Mac and on an iPad with a keyboard; on iPhone and iPad you can also pull down.
@@ -168,6 +170,7 @@ in the tests): try it at a practice before you rely on it at a game.
 - **Film you are uploading** from Photos: a copy, deleted when the upload is done or cancelled.
   Films you choose from Files are read in place.
 - **Exports**: temporary files, deleted when you share or save them and every time the app starts.
+- **Pictures of tracked players**: in memory only while the app is open, never written to the device.
 - **Live games** (Mac): the parts not yet sent, in the app's own folder, deleted as each one
   arrives on the server; and the stream link, in the Keychain, until the game ends.
 

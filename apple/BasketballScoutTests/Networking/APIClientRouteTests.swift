@@ -99,7 +99,9 @@ nonisolated struct APIClientRouteTests {
         ]
         // docs/LIVE.md "HTTP API": the four routes live games added.
         let live: Set<String> = ["POST G/live", "GET G/live", "POST G/live/segments", "POST G/live/finish"]
-        #expect(routes == expected.union(live))
+        // The picture of a tracked player, cut from the film (scout/analysis/previews.py).
+        let pictures: Set<String> = ["GET G/tracks/T/preview.jpg"]
+        #expect(routes == expected.union(live).union(pictures))
         // 09 §A counts 45 operations: these minus openapi.json (developer route), plus GET G/video
         // (`videoURL`, tested below) and HEAD /api/health/live (deliberately never sent).
         #expect(expected.count - 1 + 2 == 45)

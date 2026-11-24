@@ -148,6 +148,11 @@ link_tracks(tracking) -> list[list[int]]                         # chains of tra
 share_jersey_reads(tracking) -> TrackingResult                   # every piece of a chain gets the chain's jersey reads (cut where
                                                                  # two different numbers were read); analyze_game matches on this
 
+# scout.analysis.previews   (pictures of tracked players, cut from the film with ffmpeg)
+choose_views(tracking) -> dict[int, list[View]]                  # per track, up to 3 moments: large, whole boxes spread over the track
+preview_image(game_id, track_id, view=0, size="small") -> Path   # games/<id>/previews/<track>-<view>-<size>.jpg, cut on first use;
+                                                                 # the index is rebuilt when tracking.json.gz changes
+
 # scout.analysis.game_time   (Game.play_ranges: the stretches of the film that are the game)
 check_ranges(ranges) -> list[TimeRange]                          # film order; VALIDATION_FAILED when they overlap
 clip_tracking(tracking, ranges) -> TrackingResult                # only what lies inside; periods found again
@@ -440,6 +445,7 @@ existing game), `GET /games/{id}` (results), `GET /games/{id}/roster`. Assets un
 | `DELETE /api/games/{id}/rosters/{side}/players/{player_id}` | | `Roster` |
 | `GET /api/roster-template.csv` | | CSV template |
 | `GET /api/games/{id}/tracks` | | `{"assignments": [TrackAssignment], "overrides": [TrackOverride]}` |
+| `GET /api/games/{id}/tracks/{track_id}/preview.jpg?view=0&size=small\|large` | | JPEG of the tracked player cut from the film (`view` 0-2: up to three moments; 404 without a film on the server or without ffmpeg) |
 | `PUT /api/games/{id}/tracks/{track_id}` | `TrackOverride` (`track_id` optional) | `TrackOverride` |
 | `DELETE /api/games/{id}/tracks/{track_id}` | | 204 |
 | `GET /api/games/{id}/export/fastscout.txt?side=scouted` | | `text/plain` paste block |

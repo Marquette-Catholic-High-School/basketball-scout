@@ -349,6 +349,11 @@ nonisolated extension RouteCase {
     ]
 
     static let tracks: [RouteCase] = [
+        route("trackPreview", "GET", "/api/games/\(game)/tracks/7/preview.jpg", query: "view=2&size=large", accept: "*/*",
+              response: .text(200, "JPEG bytes stand-in", contentType: "image/jpeg")) { client in
+            let picture = try await client.trackPreview(gameID: game, trackID: 7, view: 2, size: "large")
+            #expect(picture == Data("JPEG bytes stand-in".utf8))
+        },
         route("tracks", "GET", "/api/games/\(game)/tracks", capture: "tracks", response: .fixture("tracks.json")) { client in
             try expectDecoded(try await client.tracks(gameID: game), TrackState.self, "tracks.json")
         },

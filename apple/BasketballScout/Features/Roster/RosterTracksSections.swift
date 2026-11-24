@@ -57,7 +57,7 @@ struct RosterTracksSections: View {
                 } label: {
                     RosterTrackListRow(
                         row: row, choiceTitle: model.choiceTitle(for: row.id),
-                        teamColor: row.side.map { model.context.teamColor($0) })
+                        teamColor: row.side.map { model.context.teamColor($0) }, pictures: model.pictureSource)
                 }
                 .listRowBackground(row.isPending ? ScoutTone.warning.background : nil)
             }
@@ -76,8 +76,22 @@ struct RosterTrackListRow: View {
     let row: RosterTrackRow
     let choiceTitle: String
     let teamColor: HexColor?
+    /// Where the player's picture comes from; nil without a film on the server.
+    var pictures: RosterTrackPictureSource?
 
     var body: some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.small) {
+            if let pictures {
+                RosterTrackPicture(source: pictures, trackID: row.id, height: 64)
+            }
+            details
+        }
+        .padding(.vertical, Theme.Spacing.xxSmall)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: "\(row.accessibilitySummary), \(RosterText.columnAssign) \(choiceTitle)"))
+    }
+
+    private var details: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xSmall) {
             HStack(spacing: Theme.Spacing.small) {
                 Text(verbatim: row.trackText)
@@ -102,9 +116,6 @@ struct RosterTrackListRow: View {
                 .font(.caption)
                 .foregroundStyle(Theme.secondaryText)
         }
-        .padding(.vertical, Theme.Spacing.xxSmall)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: "\(row.accessibilitySummary), \(RosterText.columnAssign) \(choiceTitle)"))
     }
 }
 
@@ -125,6 +136,16 @@ struct RosterTrackDetail: View {
                             Image(systemName: "lock.fill")
                         }
                         .foregroundStyle(Theme.secondaryText)
+                    }
+                }
+                if let pictures = model.pictureSource {
+                    Section {
+                        RosterTrackPictures(source: pictures, trackID: trackID, height: 240)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                    } header: {
+                        Text(verbatim: RosterText.picturesTitle)
+                    } footer: {
+                        Text(verbatim: RosterText.picturesHint)
                     }
                 }
                 Section {

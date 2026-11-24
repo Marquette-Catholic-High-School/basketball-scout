@@ -7,12 +7,13 @@ and installing it clears the overrides.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Path
-from fastapi.responses import Response
+from fastapi import APIRouter, Path, Query
+from fastapi.responses import FileResponse, Response
 
 from scout import db
+from scout.analysis import previews
 from scout.api.deps import CurrentGame, has_analysis_file, require_analysis
 from scout.api.jobs import start_lock
 from scout.api.models import TrackOverrideBody, TrackState
@@ -28,6 +29,19 @@ TrackId = Annotated[int, Path(ge=0, le=2**63 - 1)]  # SQLite INTEGER range
 def get_tracks(game: CurrentGame) -> TrackState:
     assignments = require_analysis(game.id).track_assignments if has_analysis_file(game.id) else []
     return TrackState(assignments=assignments, overrides=db.list_track_overrides(game.id))
+
+
+@router.get("/games/{game_id}/tracks/{track_id}/preview.jpg")
+def get_track_preview(
+    game: CurrentGame,
+    track_id: TrackId,
+    view: Annotated[int, Query(ge=0, le=99)] = 0,
+    size: Literal["small", "large"] = "small",
+) -> FileResponse:
+    """A picture of the tracked player, cut from the film, so the coach can tell who it is. ``view``
+    picks one of up to three moments (404 past the last one, and when there is no film on this server)."""
+    path = previews.preview_image(game.id, track_id, view, size)
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.put("/games/{game_id}/tracks/{track_id}", response_model=TrackOverride)

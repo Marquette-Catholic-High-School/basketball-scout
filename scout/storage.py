@@ -85,6 +85,11 @@ def live_segment_tracking_path(game_id: str, index: int) -> Path:
     return live_dir(game_id) / f"seg-{int(index):05d}.tracking.json.gz"
 
 
+def previews_dir(game_id: str) -> Path:
+    """Pictures of tracked players cut from the film (scout.analysis.previews), and their index."""
+    return game_dir(game_id) / "previews"
+
+
 def game_time_dir(game_id: str) -> Path:
     """Where an ANALYZE keeps the film cut to the game time, and how to put its results back on the
     whole film's clock, until those results are in."""

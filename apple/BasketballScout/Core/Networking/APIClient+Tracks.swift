@@ -25,4 +25,14 @@ nonisolated extension APIClient {
         try await sendWithoutResult(
             APIRequest(.delete, "/api/games/{game_id}/tracks/{track_id}", ["game_id": gameID, "track_id": String(trackID)]))
     }
+
+    /// `GET /api/games/{game_id}/tracks/{track_id}/preview.jpg` → a JPEG of the tracked player, cut from
+    /// the film by the server (`view` 0–2: up to three moments, best first; `size` "small" or "large").
+    /// 404 for a view the track does not have, and when the film is not stored on the server.
+    func trackPreview(gameID: String, trackID: Int, view: Int = 0, size: String = "small") async throws(APIError) -> Data {
+        let request = APIRequest(
+            .get, "/api/games/{game_id}/tracks/{track_id}/preview.jpg", ["game_id": gameID, "track_id": String(trackID)],
+            query: [.init("view", String(view)), .init("size", size)], accept: "*/*")
+        return try await perform(request).data
+    }
 }
