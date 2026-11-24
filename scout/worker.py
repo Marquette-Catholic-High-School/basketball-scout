@@ -43,7 +43,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from scout import __version__, db, live, storage
-from scout.analysis import pipeline, synthetic
+from scout.analysis import game_time, pipeline, synthetic
 from scout.analysis.geometry import load_court_config
 from scout.config import Settings, get_settings
 from scout.errors import ErrorCode, ScoutError
@@ -300,6 +300,7 @@ class Worker:
         self._check_cancel(job.id)
         self._stage(job.id, JobStage.DOWNLOADING, PROGRESS_DOWNLOADING, "Downloading results from the GPU service")
         output = self._download(run, handle)
+        self._restore_film_times(job, output)
         # The last point a cancel stops the job: the download is thrown away and the game keeps its earlier
         # run. Taken over during the download: the new owner installs this run (maybe did already, and the
         # coach has fixed the new run's tracks since).
@@ -360,6 +361,7 @@ class Worker:
         options = self._processing_options(game)
         self._check_cancel(job.id)
         self._check_stop()
+        video, options = self._cut_to_game_time(job, game, video, options)
         if video.kind == "file":
             note = "Uploading the film to the GPU service (large files take a few minutes)"
         else:
@@ -379,6 +381,45 @@ class Worker:
         db.update_job(job.id, external_id=handle, processor=run.processor.name)
         logger.info("Job %s: submitted to %s as %s", job.id, run.processor.name, handle)
         return handle
+
+    def _cut_to_game_time(
+        self, job: Job, game: Game, video: VideoSource, options: dict[str, Any]
+    ) -> tuple[VideoSource, dict[str, Any]]:
+        """With game time marked, only those stretches go to the GPU (scout.analysis.game_time). How to
+        put the results back on the whole film's clock is saved first, so a restarted worker can.
+        The overlay video is skipped: it would be the cut film, not the one the coach watches."""
+        work = storage.game_time_dir(game.id)
+        if not game.play_ranges or video.kind != "file" or video.path is None:
+            shutil.rmtree(work, ignore_errors=True)
+            return video, options
+        self._stage(job.id, JobStage.PREPARING, PROGRESS_PREPARING, "Cutting the film to the game time")
+        cut = game_time.cut_film(video.path, game.play_ranges, work)
+        if cut is None:
+            return video, options
+        storage.write_json(
+            work / "map.json",
+            {
+                "job_id": job.id,
+                "film_duration_s": cut.film_duration_s,
+                "pieces": [{"start_s": p.start_s, "duration_s": p.duration_s} for p in cut.pieces],
+            },
+        )
+        logger.info("Job %s: %d stretch(es) of game time go to the GPU instead of the whole film", job.id, len(cut.pieces))
+        return VideoSource(kind="file", filename=video.filename, path=cut.path), {**options, "render_video": False}
+
+    def _restore_film_times(self, job: Job, output: ProcessorOutput) -> None:
+        """The results of a film cut to the game time, back on the whole film's clock."""
+        work = storage.game_time_dir(job.game_id)
+        plan = work / "map.json"
+        if not plan.is_file():
+            return
+        data = storage.read_json(plan)
+        if data.get("job_id") == job.id and output.tracking_path.exists():
+            pieces = [game_time.Piece(float(p["start_s"]), float(p["duration_s"])) for p in data["pieces"]]
+            tracking = pipeline.load_tracking(output.tracking_path)
+            restored = game_time.restore_film_times(tracking, pieces, float(data["film_duration_s"]))
+            storage.write_json(output.tracking_path, restored.model_dump_json())
+        shutil.rmtree(work, ignore_errors=True)
 
     def _video_source(self, game: Game) -> VideoSource:
         path = storage.find_source_video(game.id)

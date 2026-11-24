@@ -360,6 +360,11 @@ def _distance(a: Any, b: Any) -> float:
 # ---------------------------------------------------------------------------
 
 
+def rebuild_periods(tracking: TrackingResult) -> TrackingResult:
+    """``tracking`` (without period events) with its periods found on the whole timeline."""
+    return _with_periods(tracking)
+
+
 def _with_periods(merged: TrackingResult, gaps: Sequence[tuple[int, int]] = ()) -> TrackingResult:
     """``merged`` with its times set and the game's periods found on the whole timeline.
 

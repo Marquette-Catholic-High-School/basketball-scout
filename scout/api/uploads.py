@@ -267,6 +267,7 @@ def _finish_upload(upload_id: str, settings: Settings, auto_start: bool) -> Film
             error=None,
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
             calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
+            play_ranges=[],  # marked on the OLD film's clock
             live=None,  # an uploaded film replaces a live game's: it is a normal game from here on
         )
         return _maybe_start_analysis(game, settings, auto_start)
@@ -396,6 +397,7 @@ def set_video_url(body: VideoUrlRequest, game: CurrentGame, settings: SettingsDe
             error=None,
             team_id_map={},  # team ids are colour clusters of the OLD film: ask the coach again
             calibration=None,  # clicked on the OLD film's frame: the GPU would apply it to the new one
+            play_ranges=[],
             live=None,
         )
         return _maybe_start_analysis(game, settings, auto_start)
@@ -456,6 +458,7 @@ def _discard_old_film(game_id: str) -> None:
         path.unlink(missing_ok=True)
     # What a download of the old film's results that was cut short left (up to an overlay's size).
     shutil.rmtree(storage.incoming_dir(game_id), ignore_errors=True)
+    shutil.rmtree(storage.game_time_dir(game_id), ignore_errors=True)
     live.discard(game_id)  # parts of a live game that never became its film
     db.clear_track_overrides(game_id)  # track ids from the old film mean nothing now
 

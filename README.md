@@ -460,6 +460,21 @@ Getting good film:
   resolution or heavy compression leads to `BALL_NOT_DETECTED`.
 - **Length**: up to `SCOUT_MAX_VIDEO_MINUTES` (150) and `SCOUT_MAX_UPLOAD_GB` (12 GB).
 
+**Game time (leave out warm-ups and halftime).** A recording usually starts before tip-off and
+keeps running through halftime, and everything on it counts unless you say where the game is.
+On the game page, open **Game time**, play the film to each moment and click **Use film time**
+(or type minutes:seconds): game starts, halftime starts, halftime ends, game ends. Halftime is
+optional.
+
+- Set **before** the analysis, only the game goes to the GPU: less film, so it is faster and
+  cheaper. On the upload page tick **Mark the game time first** so the analysis waits; set the
+  marks, then click **Analyze film**. (This run makes no overlay video.)
+- Set or changed **afterwards**, the stats are rebuilt on the server in about a minute, no GPU:
+  events, minutes and jersey numbers read outside the marks are dropped.
+- The film itself is never cut: you can still watch the warm-ups.
+- **Count the whole film** removes the marks. If the film went to the GPU cut to the game time,
+  the stretches outside it were never analysed; **Full re-analysis** analyses them.
+
 ### 2. Rosters and jersey matching
 
 Each game has two rosters (the scouted team and their opponent) on the **Roster**

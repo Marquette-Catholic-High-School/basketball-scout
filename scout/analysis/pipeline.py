@@ -120,6 +120,10 @@ def analyze_game(
     Raises ``ScoutError(ANALYSIS_FAILED)`` wrapping unexpected exceptions.
     """
     try:
+        if game.play_ranges:  # only the game the coach marked: no warm-ups, no halftime shooting
+            from scout.analysis import game_time
+
+            tracking = game_time.clip_tracking(tracking, game.play_ranges)
         if court is None:
             court = _court_for(tracking)
         if rules is None:

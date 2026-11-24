@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from scout import db, storage
+from scout.analysis import game_time
 from scout.api.deps import CurrentGame, require_analysis
 from scout.api.uploads import remove_upload_parts
 from scout.errors import ErrorCode, ScoutError
@@ -17,7 +18,7 @@ from scout.schemas import Game, GameAnalysis, GameCreate, GameUpdate
 logger = logging.getLogger(__name__)
 
 # PATCH sends null to clear a field; these Game fields cannot be None.
-_CLEARED_VALUES: dict[str, Any] = {"title": "", "other_team": "", "team_id_map": {}}
+_CLEARED_VALUES: dict[str, Any] = {"title": "", "other_team": "", "team_id_map": {}, "play_ranges": []}
 
 router = APIRouter(tags=["games"])
 
@@ -48,6 +49,8 @@ def update_game(body: GameUpdate, game: CurrentGame) -> Game:
     for field, cleared in _CLEARED_VALUES.items():
         if field in changes and changes[field] is None:
             changes[field] = cleared
+    if body.play_ranges:  # in film order; overlapping or backwards marks are refused
+        changes["play_ranges"] = [r.model_dump() for r in game_time.check_ranges(body.play_ranges)]
     return db.update_game(game.id, **changes)
 
 

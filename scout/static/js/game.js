@@ -7,6 +7,7 @@ import { BoxScore } from "./boxscore.js";
 import { Calibration } from "./calibrate.js";
 import { applyTeamColors, isLight, luminance, teamColor } from "./colors.js";
 import { Exports } from "./exports.js";
+import { GameTime } from "./gametime.js";
 import { JobPanel } from "./jobpanel.js";
 import { STATUS_LABELS, isLive, liveSummary } from "./labels.js";
 import { Player } from "./player.js";
@@ -133,6 +134,8 @@ async function refresh() {
   parts.jobPanel.show(jobs.analysis);
   if (jobs.analysis) showJobStatus(jobs.analysis);
   renderTeamBanner(game, analysis);
+  // Marked on the film, so only where the film plays here; a live game has no film yet.
+  parts.gameTime.render(game, { hidden: !game.has_video || isLive(game), busy: analysisRunning(game) });
   renderPending(game, analysis);
   renderFilmState(game, analysis);
   show(byId("timeline-card"), Boolean(analysis));
@@ -472,6 +475,17 @@ function init() {
     // Start again on a cancelled Full re-analysis, and Retry on one that failed before its new results were installed,
     // send the film to the GPU again (and clear the track assignments): they ask first, like its button.
     restartConfirm: (job) => (state.game?.has_tracking && retriedOnTheGpu(job) ? fullRunConfirm(Boolean(state.analysis)) : null),
+  });
+  parts.gameTime = new GameTime({
+    gameId,
+    player: parts.player,
+    // With the GPU results on the server the stats are rebuilt from them (about a minute, no GPU);
+    // without, the marks wait for Analyze film, which then sends only the game time to the GPU.
+    onSaved: async (game) => {
+      state.game = game;
+      if (game.has_tracking && !analysisRunning(game)) await startJob("reanalyze", "Counting only the game time…");
+      else await refresh();
+    },
   });
   parts.calibration = new Calibration({
     player: parts.player,

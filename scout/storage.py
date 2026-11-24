@@ -85,6 +85,12 @@ def live_segment_tracking_path(game_id: str, index: int) -> Path:
     return live_dir(game_id) / f"seg-{int(index):05d}.tracking.json.gz"
 
 
+def game_time_dir(game_id: str) -> Path:
+    """Where an ANALYZE keeps the film cut to the game time, and how to put its results back on the
+    whole film's clock, until those results are in."""
+    return game_dir(game_id) / ".game-time"
+
+
 def upload_part_path(upload_id: str) -> Path:
     return get_settings().uploads_dir / f"{_safe(upload_id)}.part"
 

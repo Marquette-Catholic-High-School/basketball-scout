@@ -142,6 +142,12 @@ merge_parts(parts: Sequence[Part], *, filename="live.mp4", detect_periods=True) 
 LiveJoin(filename=...).add(part) / .result() -> TrackingResult   # the same join, one part at a time
 global_track_id(index, track_id) -> int                          # index * 100000 + track_id
 
+# scout.analysis.game_time   (Game.play_ranges: the stretches of the film that are the game)
+check_ranges(ranges) -> list[TimeRange]                          # film order; VALIDATION_FAILED when they overlap
+clip_tracking(tracking, ranges) -> TrackingResult                # only what lies inside; periods found again
+cut_film(source, ranges, work_dir) -> CutFilm | None             # ffmpeg, no re-encoding; None without ffmpeg
+restore_film_times(tracking, pieces, film_duration_s) -> TrackingResult   # a cut film's results on the whole film's clock
+
 # scout.live / scout.live_runner
 settled_prefix(segments, live, now) -> list[PrefixPart]          # the parts the analysis may use
 segment_job_id(job_id, index) -> str / parent_job_id(job_id) -> str   # "j_ab12-p00007" <-> "j_ab12"
@@ -165,6 +171,17 @@ result.build_tracking_result(perception, events, *, job_id, pipeline_info, artif
 `Job.status`: `queued → running → succeeded | failed | cancelled`.
 `Job.stage` (ANALYZE): `queued → preparing → uploading_to_gpu → gpu_processing →
 downloading_results → analyzing → reporting → done`. `progress` is 0–100 overall.
+
+**Game time.** With `Game.play_ranges` set (`PATCH /api/games/{id}`, `{"play_ranges":
+[{"start_s": 750, "end_s": 2400}, ...]}`; `null` clears them), every analysis counts only those
+stretches: `analyze_game` runs `game_time.clip_tracking` first, which drops track samples, ball
+samples, jersey reads and events outside them and finds the periods again (the gap between two
+stretches is the halftime). An ANALYZE of an uploaded film also sends only those stretches to
+the GPU: the worker cuts them into one shorter film (`game_time.cut_film`, in the game's
+`.game-time/` folder, with `map.json` saying where each piece sits in the whole film), turns the
+overlay video off, and after the download moves the results back onto the whole film's clock
+(`restore_film_times`) before they are installed. Without ffmpeg on the server, or for a film
+given as a link, the whole film is analysed and only the clipping applies.
 
 A fourth kind, LIVE, analyses a live game part by part while its film arrives. It follows the
 rules below where they apply (lease, hand-back on a graceful stop, `WORKER_LOST`, one analysis job

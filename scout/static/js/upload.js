@@ -290,7 +290,9 @@ async function backoff(attempt) {
 
 async function completeUpload() {
   setStatus("Finishing upload…");
-  const result = await api.post(`/api/uploads/${encodeURIComponent(state.session.id)}/complete?auto_start=true`);
+  // "Mark the game time first": the film waits on the game page, where Analyze film starts it.
+  const autoStart = !byId("mark-first")?.checked;
+  const result = await api.post(`/api/uploads/${encodeURIComponent(state.session.id)}/complete?auto_start=${autoStart}`);
   state.done = true;
   storageSet(storageKey(state.game.id), null);
   setStatus("Upload complete - opening the game…");

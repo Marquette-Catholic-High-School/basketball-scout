@@ -344,6 +344,7 @@ class LiveRunner:
                 "color": game.scouted_color,
                 "calibration": game.calibration.model_dump(mode="json") if game.calibration else None,
                 "names": [game.scouted_team, game.other_team],
+                "game_time": [r.model_dump() for r in game.play_ranges],
             },
             sort_keys=True,
             default=str,

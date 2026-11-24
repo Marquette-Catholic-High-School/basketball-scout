@@ -724,6 +724,13 @@ class LiveSegmentInit(_Model):
     filename: str | None = Field(default=None, max_length=255)
 
 
+class TimeRange(_Model):
+    """A stretch of the film, in film seconds."""
+
+    start_s: float = Field(ge=0, le=200_000)
+    end_s: float = Field(gt=0, le=200_000)
+
+
 class GameCreate(_Model):
     scouted_team: str = Field(min_length=1, max_length=120)
     other_team: str = Field(default="", max_length=120)
@@ -745,6 +752,7 @@ class GameUpdate(_Model):
     notes: str | None = Field(default=None, max_length=5000)
     scouted_color: str | None = Field(default=None, max_length=40)
     team_id_map: dict[int, TeamSide] | None = None
+    play_ranges: list[TimeRange] | None = Field(default=None, max_length=8, description="Game time; null or [] = the whole film.")
 
 
 class Game(_Model):
@@ -771,6 +779,10 @@ class Game(_Model):
         "scout.db reads it from the disk with every game.",
     )
     calibration: CourtCalibration | None = None
+    play_ranges: list[TimeRange] = Field(
+        default_factory=list,
+        description="Game time: the stretches of the film that are the game (film seconds). Empty = the whole film.",
+    )
     live: LiveInfo | None = Field(default=None, description="Set for a live game (docs/LIVE.md); None for an uploaded film.")
     latest_job_id: str | None = None
     error: ErrorInfo | None = None
