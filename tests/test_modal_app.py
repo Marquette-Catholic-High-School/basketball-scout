@@ -41,6 +41,7 @@ def reload_app(monkeypatch):
 def test_module_exposes_the_modal_objects():
     assert isinstance(app_module.app, modal.App)
     assert isinstance(app_module.process_video, modal.Function)
+    assert isinstance(app_module.analyse_piece, modal.Function)
     assert isinstance(app_module.warmup, modal.Function)
     assert isinstance(app_module.main, modal.app.LocalEntrypoint)
     assert isinstance(app_module.image, modal.Image)
@@ -60,14 +61,17 @@ def test_app_imports_where_only_modal_is_installed():
 
 def test_default_gpu_timeout_and_resources(reload_app):
     module = reload_app()  # defaults, whatever the developer's shell exports
-    assert module.GPU_TYPE == "A10G"
+    assert module.GPU_TYPE == "L40S"
     assert module.PROCESS_TIMEOUT_S == 21600  # 6 h budget for a 60-minute game
     assert module.MAX_TIMEOUT_S == 86400
-    assert (module.CPU_CORES, module.MEMORY_MB, module.MAX_CONTAINERS) == (8.0, 32768, 2)
-    spec = getattr(module.process_video, "_spec_", None)  # private in modal 1.6; best effort
-    if spec is not None:
-        assert spec.gpus == "A10G" and spec.cpu == 8.0 and spec.memory == 32768
-        assert list(spec.volumes) == ["/data"]
+    assert (module.CPU_CORES, module.MEMORY_MB, module.MAX_CONTAINERS, module.MAX_GPUS) == (8.0, 32768, 2, 8)
+    assert (module.SPLIT.piece_s, module.SPLIT.max_pieces) == (600.0, 8)
+    films = getattr(module.process_video, "_spec_", None)  # private in modal 1.6; best effort
+    pieces = getattr(module.analyse_piece, "_spec_", None)
+    if films is not None and pieces is not None:
+        assert not films.gpus and films.cpu == 8.0 and films.memory == 32768  # the coordinator needs no GPU
+        assert pieces.gpus == "L40S" and pieces.cpu == 8.0 and pieces.memory == 32768
+        assert list(films.volumes) == list(pieces.volumes) == ["/data"]
 
 
 def test_gpu_and_timeout_can_be_overridden_at_deploy_time(reload_app):

@@ -177,6 +177,11 @@ class PipelineProgress:
 # ---------------------------------------------------------------------------
 
 
+# Runs OpenHoopVision on the analysis copy: here (``perceive_here``) or, on Modal, in pieces on
+# several GPUs (``modal_app.pipeline.split.SplitPerceiver``).
+Perceive = Callable[[Path, video.AnalysisPlan, "PipelineOptions", Path, "PipelineProgress"], ohv.OhvRun]
+
+
 def run_pipeline(
     video_path: str,
     options: dict[str, Any],
@@ -185,6 +190,8 @@ def run_pipeline(
     job_id: str,
     progress: ProgressSink | None = None,
     filename: str | None = None,
+    perceive: Perceive | None = None,
+    analysis_dir: str | None = None,
 ) -> dict[str, Any]:
     """Process one film and write ``tracking.json.gz`` (+ ``annotated.mp4``) to ``output_dir``.
 
@@ -192,6 +199,10 @@ def run_pipeline(
     or ``{"status": "error", "error": {"code", "message", "detail"}}``. Expected failures
     (PipelineError, CUDA OOM after retries) are returned, not raised. ``video_path`` must
     be a local file; URL sources are downloaded by the caller (``video.download_video``).
+
+    ``perceive`` replaces the OpenHoopVision run on this machine (``perceive_here``);
+    ``analysis_dir`` is where the analysis copy is written (default: the scratch directory),
+    e.g. on the Modal volume so that other containers can read it.
     """
     started = time.monotonic()
     tracker = PipelineProgress(progress)
@@ -208,7 +219,8 @@ def run_pipeline(
         work_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=opts.work_dir))
         response = _process(
             Path(video_path), opts, out=out, work=work_dir, job_id=job_id, tracker=tracker, warnings=warnings,
-            filename=filename or Path(video_path).name, started=started,
+            filename=filename or Path(video_path).name, started=started, perceive=perceive or perceive_here,
+            analysis_dir=Path(analysis_dir) if analysis_dir else None,
         )  # fmt: skip
         tracker.done("Analysis complete")
         return response
@@ -239,6 +251,8 @@ def _process(
     warnings: list[dict[str, str]],
     filename: str,
     started: float,
+    perceive: Perceive,
+    analysis_dir: Path | None = None,
 ) -> dict[str, Any]:
     tracker.update("probe", 0.0, "Checking the film", force=True)
     probe = video.probe_video(source)
@@ -254,21 +268,11 @@ def _process(
     if plan.transcode:
         tracker.update("transcode", 0.0, "Preparing the film for analysis", force=True)
         analysed = video.transcode_for_analysis(
-            source, work / "analysis.mp4", plan, progress=tracker.reporter("transcode")
+            source, (analysis_dir or work) / "analysis.mp4", plan, progress=tracker.reporter("transcode")
         )
 
     tracker.update("ohv", 0.0, "Starting player and ball tracking", force=True)
-    run = ohv.run_ohv(
-        analysed,
-        work / "ohv",
-        analysis_fps=plan.analysed_fps,
-        expected_frames=plan.expected_frames,
-        court=ohv.CourtSpec(length_ft=opts.court_length_ft, width_ft=opts.court_width_ft),
-        render=opts.render_video,
-        weight_overrides=_weight_overrides(opts),
-        max_frames=opts.max_frames,
-        progress=tracker.reporter("ohv"),
-    )
+    run = perceive(analysed, plan, opts, work, tracker)
     warnings.extend(run.warnings)
     _write_log(out / OHV_LOG_FILE, run.log_tail)
 
@@ -327,6 +331,23 @@ def _process(
 # ---------------------------------------------------------------------------
 # Stages
 # ---------------------------------------------------------------------------
+
+
+def perceive_here(
+    analysed: Path, plan: video.AnalysisPlan, opts: PipelineOptions, work: Path, tracker: PipelineProgress
+) -> ohv.OhvRun:
+    """OpenHoopVision on the whole analysis copy, on this machine's GPU."""
+    return ohv.run_ohv(
+        analysed,
+        work / "ohv",
+        analysis_fps=plan.analysed_fps,
+        expected_frames=plan.expected_frames,
+        court=ohv.CourtSpec(length_ft=opts.court_length_ft, width_ft=opts.court_width_ft),
+        render=opts.render_video,
+        weight_overrides=weight_overrides(opts),
+        max_frames=opts.max_frames,
+        progress=tracker.reporter("ohv"),
+    )
 
 
 def check_quality(adapted: AdapterResult, expected_frames: int | None = None) -> None:
@@ -454,6 +475,10 @@ def _render(
     tracker: PipelineProgress,
 ) -> Path | None:
     """Web copy of OHV's overlay video; a failure only costs the overlay, not the analysis."""
+    if run.web_video is not None:  # encoded by the pieces and joined already
+        target = out / ANNOTATED_FILE
+        shutil.move(str(run.web_video), target)
+        return target
     if run.output_video is None:
         perception.warn("ANNOTATED_VIDEO_MISSING", "No annotated video was produced; the film plays without overlays.")
         return None
@@ -473,7 +498,7 @@ def _render(
     return target
 
 
-def _weight_overrides(opts: PipelineOptions) -> dict[str, str]:
+def weight_overrides(opts: PipelineOptions) -> dict[str, str]:
     """Custom checkpoints from options (paths may be relative to the volume root)."""
     overrides = {}
     custom = (
@@ -500,7 +525,7 @@ def _pipeline_info(
             "tracker": "McByte/ByteTrack + OSNet x1.0 ReID",
             "ocr": "SVTRv2-B jersey numbers",
         },
-        "gpu": ohv.gpu_name(),
+        "gpu": run.gpu or ohv.gpu_name(),
         "elapsed_s": elapsed,
         "options": {
             "analysis_fps": round(plan.analysed_fps, 4),
@@ -512,6 +537,7 @@ def _pipeline_info(
             "ohv_params": asdict(run.params),
             "track_sample_stride": stride,
             "manual_calibration": opts.calibration is not None,
+            **({"pieces": run.pieces} if run.pieces else {}),
         },
     }
 

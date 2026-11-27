@@ -111,7 +111,7 @@ More documentation:
                   |  SQLite database: games, jobs, rosters, reports
                   |  job queue: SQLite (default) or Redis
   +---------------v---------------+  film (Modal SDK)   +-----------------------------------+
-  | Worker         scout.worker   | ------------------> | Modal: process_video (A10G GPU)   |
+  | Worker         scout.worker   | ------------------> | Modal: process_video (L40S GPUs)  |
   |  transform: possessions,      |                     |  modal_app/app.py runs            |
   |  box score, shot zones,       | <------------------ |  OpenHoopVision: detection,       |
   |  play recognition, FastScout  |  tracking.json.gz   |  tracking, pose, jersey OCR,      |
@@ -139,6 +139,10 @@ What has not been tried yet:
   pipeline have only run against test data, so the time and cost per game and the
   accuracy on high school film are estimates. Before the first real game, run
   `make warmup-modal` (or `modal run modal_app/app.py::warmup`) and analyse one short clip.
+- **Analysing a film in pieces on several GPUs has only run against test data.** The cuts,
+  the join of the pieces' tracking and annotated videos, and the L40S's speed have not been
+  tried on Modal yet. After deploying, analyse one game and check the Data quality tab for
+  `PIECES_JOIN_WEAK`. `SCOUT_MODAL_MAX_PIECES=1` goes back to one GPU per film.
 - **Live games have only run with the demo processor and stand-ins for the camera and
   ffmpeg.** No real stream has been cut into parts by the Mac app, no real parts have been put
   together into a film on the server, and how far the stats trail the game depends on the GPU's
@@ -268,11 +272,15 @@ folder and the service user's home. Templates: `deploy/systemd/`, `deploy/nginx/
 
 ### Modal (the GPU)
 
-The film is analysed by `process_video` in `modal_app/app.py`: an A10G GPU (24 GB)
-running [OpenHoopVision](https://github.com/feifeifei85/OpenHoopVision) (RF-DETR
-player and ball detection, RTMPose skeletons, court keypoints, tracking with
-re-identification, jersey-number OCR), then possession, events and the annotated
-video. The app also owns a Volume `basketball-scout-data` (film and results in transit)
+The film is analysed by `process_video` in `modal_app/app.py`:
+[OpenHoopVision](https://github.com/feifeifei85/OpenHoopVision) (RF-DETR player and
+ball detection, RTMPose skeletons, court keypoints, tracking with re-identification,
+jersey-number OCR) on L40S GPUs (48 GB), then possession, events and the annotated
+video. OpenHoopVision works through the film one frame at a time (a 75-minute game took
+95 minutes on one A10G), so the film is cut into pieces of about 10 minutes that are
+analysed at the same time on up to 8 GPUs and then joined into one film again: a game
+takes about as long as one piece (how the pieces are joined:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#analysing-a-film-on-several-gpus)). The app also owns a Volume `basketball-scout-data` (film and results in transit)
 and a Dict `basketball-scout-progress` (progress).
 
 1. **Account.** Sign up at <https://modal.com>. The Starter plan includes $30 of
@@ -319,9 +327,11 @@ sudo -u scout -H .venv/bin/python -m dotenv -f .env run -- .venv/bin/modal run m
 ```
 
 Deploy-time options (read by `modal_app/app.py` during `modal deploy`, so redeploy
-after changing them): `SCOUT_MODAL_GPU` (default `A10G`), `SCOUT_MODAL_TIMEOUT_S`
-(default 21600 = 6 hours per film) and `SCOUT_MODAL_MAX_CONTAINERS` (default 2 GPUs at
-once). Put them in `.env`, so `update.sh` keeps using them on later deploys. If you
+after changing them): `SCOUT_MODAL_GPU` (default `L40S`), `SCOUT_MODAL_TIMEOUT_S`
+(default 21600 = 6 hours per film), `SCOUT_MODAL_MAX_CONTAINERS` (default 2 films at
+once), `SCOUT_MODAL_PIECE_MINUTES` (default 10), `SCOUT_MODAL_MAX_PIECES` (default 8
+pieces of a film, each on its own GPU) and `SCOUT_MODAL_MAX_GPUS` (default 8 GPUs at once
+over all films). Put them in `.env`, so `update.sh` keeps using them on later deploys. If you
 raise `SCOUT_MODAL_TIMEOUT_S` above 8 hours, also raise `SCOUT_MODAL_MAX_WAIT_HOURS`
 (default 8): the worker stops waiting after that many hours, counted from the start of
 the job, and cancels the GPU call (while Modal cannot be reached at all it keeps
@@ -753,9 +763,12 @@ reads the same file).
 | `SCOUT_MODAL_POLL_SECONDS` | `10` | How often the worker checks a GPU job |
 | `SCOUT_MODAL_MAX_WAIT_HOURS` | `8` | Give up waiting for a GPU job after this long (`MODAL_TIMEOUT`; not while Modal cannot be reached) |
 | `SCOUT_MODAL_CLEANUP` | `true` | Delete film and results from the Modal Volume after download |
-| `SCOUT_MODAL_GPU` | `A10G` | Deploy time: GPU type (redeploy after changing) |
-| `SCOUT_MODAL_TIMEOUT_S` | `21600` | Deploy time: GPU time limit per film in seconds (max 86400). Above 8 hours also raise `SCOUT_MODAL_MAX_WAIT_HOURS` |
-| `SCOUT_MODAL_MAX_CONTAINERS` | `2` | Deploy time: most GPU containers at once (cost cap) |
+| `SCOUT_MODAL_GPU` | `L40S` | Deploy time: GPU type (redeploy after changing) |
+| `SCOUT_MODAL_TIMEOUT_S` | `21600` | Deploy time: time limit per film in seconds (max 86400). Above 8 hours also raise `SCOUT_MODAL_MAX_WAIT_HOURS` |
+| `SCOUT_MODAL_MAX_CONTAINERS` | `2` | Deploy time: films analysed at once on Modal |
+| `SCOUT_MODAL_PIECE_MINUTES` | `10` | Deploy time: a film is cut into pieces of about this length, analysed at the same time |
+| `SCOUT_MODAL_MAX_PIECES` | `8` | Deploy time: most pieces (GPUs) for one film; `1` analyses it whole on one GPU |
+| `SCOUT_MODAL_MAX_GPUS` | `8` | Deploy time: most GPU containers at once over all films (cost cap) |
 | `SCOUT_ANALYSIS_FPS` | `15` | Frames per second analysed (lower = cheaper, may miss quick plays) |
 | `SCOUT_ANALYSIS_MAX_SIDE` | `1280` | Frames scaled so the longer side is at most this (320-3840) |
 | `SCOUT_RENDER_ANNOTATED_VIDEO` | `true` | Render the annotated video |
@@ -815,12 +828,15 @@ are part of the code checkout, so once you have edited one, update with
 
 ## Costs
 
-**Modal (GPU).** The A10G list price is about **$1.10 per GPU hour**. The GPU function
-also reserves 8 CPU cores and 32 GB of memory, which Modal bills separately (see
-<https://modal.com/pricing>). A 60-minute game is expected to need roughly 1-3 GPU
-hours; this has **not been measured yet**, so watch the usage page for your first
-games. At that estimate the GPU part is roughly $1.10-$3.30 per game, plus the CPU and
-memory time. Nothing runs between jobs, so an idle month costs nothing beyond storage.
+**Modal (GPU).** The L40S list price is about **$1.95 per GPU hour** (the A10G, about
+$1.10, is slower). Each GPU container also reserves 8 CPU cores and 32 GB of memory, which
+Modal bills separately (see <https://modal.com/pricing>), and so does the CPU container
+that prepares the film and joins the pieces. Measured so far: a 75-minute game took 95
+minutes of tracking on one A10G (about 1.27 GPU minutes per minute of film). Cut into 8
+pieces on 8 GPUs, the GPU time stays about the same plus a few minutes per GPU for starting
+up and for the overlap at the cuts; the L40S has **not been measured yet**, so expect very
+roughly $2.50-$4 per full game, and watch the usage page for your first games.
+`SCOUT_MODAL_MAX_PIECES=1` with `SCOUT_MODAL_GPU=A10G` is the slow, cheapest setting. Nothing runs between jobs, so an idle month costs nothing beyond storage.
 The Starter plan includes $30 of credit per month. Ways to spend less: lower
 `SCOUT_ANALYSIS_FPS`, set `SCOUT_RENDER_ANNOTATED_VIDEO=false`, keep
 `SCOUT_MODAL_MAX_CONTAINERS` low, and set a budget alert in the Modal dashboard

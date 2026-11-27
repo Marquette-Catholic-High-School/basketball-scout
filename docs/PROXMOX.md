@@ -247,9 +247,11 @@ default disk-only snapshot or shut the VM down first.
 > **Not needed when you use Modal** (the default). Only do this to run the computer
 > vision on your own NVIDIA card instead of renting one.
 
-You need an NVIDIA GPU with plenty of memory (the Modal default, an A10G, has 24 GB;
-smaller cards are more likely to fail with `GPU_OOM`), a CPU and board with an IOMMU
-(Intel VT-d or AMD-Vi), and the GPU in its own IOMMU group. Give the VM more RAM too:
+You need an NVIDIA GPU with plenty of memory (24 GB like an A10G, which the app ran on
+before Modal's default became the 48 GB L40S; smaller cards are more likely to fail with
+`GPU_OOM`), a CPU and board with an IOMMU (Intel VT-d or AMD-Vi), and the GPU in its own
+IOMMU group. A local GPU analyses the whole film in one piece, so a game takes about as long
+as the game itself or longer (Modal splits it over several GPUs). Give the VM more RAM too:
 the same work gets 32 GB on Modal by itself, so plan 48-64 GB for the VM.
 
 On the Proxmox host:

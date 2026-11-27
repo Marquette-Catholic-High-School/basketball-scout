@@ -6,10 +6,15 @@
 
 The server (``scout.processing.modal_client``) uploads film to the Volume, spawns
 ``process_video`` and polls the progress Dict; the request/response dicts are documented
-in docs/TRACKING_SCHEMA.md. Deploy-time settings come from the environment, using the same
-names as ``.env``: SCOUT_MODAL_GPU (default A10G), SCOUT_MODAL_TIMEOUT_S (default 21600),
-SCOUT_MODAL_MAX_CONTAINERS, SCOUT_MODAL_APP_NAME, SCOUT_MODAL_VOLUME_NAME and
-SCOUT_MODAL_PROGRESS_DICT.
+in docs/TRACKING_SCHEMA.md. ``process_video`` runs in a CPU container: it prepares the film,
+has ``analyse_piece`` track the players in pieces of the film on several GPUs at once
+(``modal_app.pipeline.split``) and builds the results from the joined pieces.
+
+Deploy-time settings come from the environment, using the same names as ``.env``:
+SCOUT_MODAL_GPU (default L40S), SCOUT_MODAL_TIMEOUT_S (default 21600),
+SCOUT_MODAL_MAX_CONTAINERS (films at once), SCOUT_MODAL_MAX_GPUS (GPUs at once),
+SCOUT_MODAL_PIECE_MINUTES, SCOUT_MODAL_MAX_PIECES, SCOUT_MODAL_APP_NAME,
+SCOUT_MODAL_VOLUME_NAME and SCOUT_MODAL_PROGRESS_DICT.
 
 Importing this module needs only ``modal``: the computer vision runs in an OpenHoopVision
 subprocess inside the container (see ``modal_app/pipeline/ohv.py``).
@@ -31,10 +36,11 @@ from typing import Any
 
 import modal
 
-from modal_app.pipeline import errors, ohv
+from modal_app.pipeline import errors, ohv, pieces
 from modal_app.pipeline.errors import PipelineError
 from modal_app.pipeline.progress import ProgressSink
 from modal_app.pipeline.runner import VOLUME_ROOT, PipelineProgress, run_pipeline
+from modal_app.pipeline.split import PieceCalls, SplitPerceiver, SplitSettings, progress_key, run_piece
 from modal_app.pipeline.video import DEFAULT_MAX_DOWNLOAD_BYTES, download_video
 
 logger = logging.getLogger(__name__)
@@ -49,14 +55,16 @@ def _env(name: str, default: str) -> str:
 APP_NAME = _env("SCOUT_MODAL_APP_NAME", "basketball-scout")
 VOLUME_NAME = _env("SCOUT_MODAL_VOLUME_NAME", "basketball-scout-data")
 PROGRESS_DICT_NAME = _env("SCOUT_MODAL_PROGRESS_DICT", "basketball-scout-progress")
-GPU_TYPE = _env("SCOUT_MODAL_GPU", "A10G")  # 24 GB, about $1.10/h
+# 48 GB, about $1.95/h. The A10G (24 GB, about $1.10/h) analysed a 75-minute film in 95 minutes
+# on one GPU; the L40S is a newer, faster card (not measured here yet).
+GPU_TYPE = _env("SCOUT_MODAL_GPU", "L40S")
 
 # Time budget per film. OpenHoopVision analyses every frame of the 15 fps analysis copy with
-# five networks plus per-player tracking, team-colour and OCR logic in Python. It publishes
-# no throughput figure and we have not measured one, so this is an estimate: a 60-minute
-# 1080p game should take roughly 1-3 hours end to end on an A10G. The 6-hour default leaves
-# headroom for long or high-frame-rate film and out-of-memory retries (each restarts OHV).
-# Modal's hard limit is 24 hours.
+# five networks plus per-player tracking, team-colour and OCR logic in Python, one frame after
+# another: on one A10G a 75-minute film took 95 minutes. The film is therefore analysed in
+# pieces of about SCOUT_MODAL_PIECE_MINUTES on up to SCOUT_MODAL_MAX_PIECES GPUs at once, so a
+# game takes about as long as one piece. The 6-hour default leaves headroom for long film, few
+# GPUs and out-of-memory retries (each restarts OHV). Modal's hard limit is 24 hours.
 DEFAULT_TIMEOUT_S = 6 * 3600
 MAX_TIMEOUT_S = 24 * 3600
 
@@ -70,11 +78,24 @@ def _timeout_from_env() -> int:
     return max(600, min(MAX_TIMEOUT_S, value))
 
 
-def _max_containers_from_env() -> int:
+def _positive_int(name: str, default: int) -> int:
     try:
-        return max(1, int(_env("SCOUT_MODAL_MAX_CONTAINERS", "2")))
+        return max(1, int(_env(name, str(default))))
     except ValueError:
-        return 2
+        return default
+
+
+def _max_containers_from_env() -> int:
+    return _positive_int("SCOUT_MODAL_MAX_CONTAINERS", 2)
+
+
+def _split_from_env() -> SplitSettings:
+    try:
+        minutes = float(_env("SCOUT_MODAL_PIECE_MINUTES", str(pieces.DEFAULT_PIECE_S / 60)))
+    except ValueError:
+        minutes = pieces.DEFAULT_PIECE_S / 60
+    minutes = max(pieces.MIN_PIECE_S / 60, minutes)
+    return SplitSettings(piece_s=minutes * 60, max_pieces=_positive_int("SCOUT_MODAL_MAX_PIECES", pieces.DEFAULT_MAX_PIECES))
 
 
 PROCESS_TIMEOUT_S = _timeout_from_env()
@@ -82,7 +103,11 @@ STARTUP_TIMEOUT_S = 20 * 60  # cold start pulls a ~10 GB image
 WARMUP_TIMEOUT_S = 30 * 60
 CPU_CORES = 8.0  # decoding, ffmpeg and OHV's per-player Python work are CPU-bound
 MEMORY_MB = 32768  # OHV keeps every frame's player records in RAM while finalising
-MAX_CONTAINERS = _max_containers_from_env()  # cost cap: GPU jobs at once
+MAX_CONTAINERS = _max_containers_from_env()  # films at once (process_video containers)
+SPLIT = _split_from_env()
+# Cost cap: GPU containers at once, over all films. One film uses up to SPLIT.max_pieces; with
+# fewer GPUs its pieces wait for a free one (slower, not more expensive).
+MAX_GPUS = _positive_int("SCOUT_MODAL_MAX_GPUS", 8)
 
 
 def build_image() -> modal.Image:
@@ -227,15 +252,26 @@ def dict_sink(store: Any, job_id: str) -> ProgressSink:
     return sink
 
 
-def handle_request(request: Any, *, volume: Any, progress_store: Any, root: Path = Path(VOLUME_ROOT)) -> dict[str, Any]:
+def handle_request(
+    request: Any,
+    *,
+    volume: Any,
+    progress_store: Any,
+    root: Path = Path(VOLUME_ROOT),
+    piece_calls: PieceCalls | None = None,
+    split: SplitSettings | None = None,
+) -> dict[str, Any]:
     """Body of ``process_video``: resolve the film, run the pipeline, persist the outputs.
 
-    Never raises for expected failures (they become ``{"status": "error"}``). Modal's
-    ``InputCancellation`` is a BaseException and is deliberately not caught.
+    With ``piece_calls`` the players are tracked in pieces on several GPUs
+    (``split.SplitPerceiver``; the analysis copy is written to the volume for them), without it
+    on this machine. Never raises for expected failures (they become ``{"status": "error"}``).
+    Modal's ``InputCancellation`` is a BaseException and is deliberately not caught.
     """
     job_id = str(request.get("job_id") or "unknown") if isinstance(request, dict) else "unknown"
     sink = dict_sink(progress_store, job_id)
     download_dir: Path | None = None
+    analysis_dir: Path | None = None
     try:
         parsed = parse_request(request)
         volume.reload()  # see files uploaded after this container mounted the volume
@@ -253,6 +289,17 @@ def handle_request(request: Any, *, volume: Any, progress_store: Any, root: Path
             assert parsed.volume_path is not None
             source = resolve_volume_path(root, parsed.volume_path, must_exist=True)
         output_dir = resolve_volume_path(root, parsed.output_dir)
+        extra: dict[str, Any] = {}
+        if piece_calls is not None:
+            analysis_dir = root / "tmp" / parsed.job_id / "analysis"
+            analysis_dir.mkdir(parents=True, exist_ok=True)
+            extra = {
+                "analysis_dir": str(analysis_dir),
+                "perceive": SplitPerceiver(
+                    piece_calls, job_id=parsed.job_id, root=root, output_dir=output_dir,
+                    commit=volume.commit, reload=volume.reload, settings=split,
+                ),
+            }  # fmt: skip
         response = run_pipeline(
             str(source),
             parsed.options,
@@ -260,6 +307,7 @@ def handle_request(request: Any, *, volume: Any, progress_store: Any, root: Path
             job_id=parsed.job_id,
             progress=sink,
             filename=parsed.filename,
+            **extra,
         )
     except PipelineError as exc:
         response = {"status": "error", "job_id": job_id, "error": exc.to_dict(), "warnings": []}
@@ -268,8 +316,9 @@ def handle_request(request: Any, *, volume: Any, progress_store: Any, root: Path
         failure = PipelineError(errors.PIPELINE_FAILED, f"GPU worker error: {type(exc).__name__}: {exc}"[:300])
         response = {"status": "error", "job_id": job_id, "error": failure.to_dict(), "warnings": []}
     finally:
-        if download_dir is not None:
-            shutil.rmtree(download_dir, ignore_errors=True)
+        for scratch in (download_dir, analysis_dir):
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
     try:
         volume.commit()  # make outputs visible to the server as soon as we return
     except Exception as exc:  # noqa: BLE001
@@ -297,9 +346,60 @@ def _configure_logging() -> None:
 # ---------------------------------------------------------------------------
 
 
+class ModalPieceCalls:
+    """``split.PieceCalls`` over the deployed ``analyse_piece`` function and the progress Dict."""
+
+    def __init__(self, function: Any, store: Any) -> None:
+        self.function = function
+        self.store = store
+
+    def spawn(self, request: dict[str, Any]) -> Any:
+        return self.function.spawn(request)
+
+    def result(self, call: Any) -> dict[str, Any] | None:
+        failure: str | None = None
+        try:
+            return call.get(timeout=0)
+        except TimeoutError:  # the BUILTIN TimeoutError: still queued or running
+            return None
+        except modal.exception.FunctionTimeoutError:  # subclass of modal's TimeoutError: check it first
+            failure = "A piece of the film ran past its time limit on the GPU."
+        except (
+            modal.exception.ConnectionError,
+            modal.exception.ServiceError,
+            modal.exception.InternalError,
+            modal.exception.ResourceExhaustedError,
+            modal.exception.TimeoutError,
+        ) as exc:  # trouble reaching Modal, not an outcome of the piece: ask again later
+            logger.warning("could not check a piece: %s", exc)
+            return None
+        except Exception as exc:  # noqa: BLE001 - the remote failed: report it as the piece's error
+            logger.warning("a piece failed on Modal: %s", exc)
+            failure = f"A piece of the film failed on the GPU: {type(exc).__name__}: {exc}"[:300]
+        return {"status": "error", "error": {"code": errors.PIPELINE_FAILED, "message": failure, "detail": None}}
+
+    def cancel(self, call: Any) -> None:
+        try:
+            call.cancel()
+        except Exception:  # noqa: BLE001 - best effort
+            logger.warning("could not cancel a piece")
+
+    def progress(self, key: str) -> float | None:
+        try:
+            entry = self.store.get(key)
+        except Exception:  # noqa: BLE001 - progress is best-effort
+            return None
+        return entry.get("fraction") if isinstance(entry, dict) else None
+
+    def forget(self, key: str) -> None:
+        try:
+            self.store.pop(key)
+        except Exception:  # noqa: BLE001 - KeyError, or Modal unreachable: the entry is tiny
+            pass
+
+
 @app.function(
     image=image,
-    gpu=GPU_TYPE,
     timeout=PROCESS_TIMEOUT_S,
     startup_timeout=STARTUP_TIMEOUT_S,
     cpu=CPU_CORES,
@@ -311,10 +411,53 @@ def _configure_logging() -> None:
 def process_video(request: dict) -> dict:
     """Analyse one film; returns a small manifest (big outputs live on the Volume).
 
-    Idempotent: a preempted call re-runs from scratch and overwrites ``output_dir``.
+    A CPU container: the player tracking runs in ``analyse_piece`` on the GPUs. Idempotent: a
+    preempted call re-runs from scratch and overwrites ``output_dir``.
     """
     _configure_logging()
-    return handle_request(request, volume=vol, progress_store=progress_dict)
+    calls = ModalPieceCalls(analyse_piece, progress_dict)
+    return handle_request(request, volume=vol, progress_store=progress_dict, piece_calls=calls, split=SPLIT)
+
+
+@app.function(
+    image=image,
+    gpu=GPU_TYPE,
+    timeout=PROCESS_TIMEOUT_S,
+    startup_timeout=STARTUP_TIMEOUT_S,
+    cpu=CPU_CORES,
+    memory=MEMORY_MB,
+    volumes={VOLUME_ROOT: vol},
+    retries=0,  # a failed piece fails the film (process_video reports it)
+    max_containers=MAX_GPUS,
+)
+def analyse_piece(request: dict) -> dict:
+    """Track the players in one piece of a film (``split.run_piece``); outputs go to the Volume."""
+    _configure_logging()
+    key = split_progress_key(request)
+
+    def report(fraction: float, message: str) -> None:
+        progress_dict[key] = {"fraction": fraction, "message": message, "updated_at": time.time()}
+
+    vol.reload()  # the analysis copy was written after this container mounted the volume
+    return finish_piece(run_piece(request, root=Path(VOLUME_ROOT), progress=report), vol)
+
+
+def finish_piece(response: dict[str, Any], volume: Any) -> dict[str, Any]:
+    """Commit the piece's outputs so ``process_video`` sees them; a failed commit fails the piece."""
+    try:
+        volume.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("volume commit failed")
+        if response.get("status") == "ok":
+            failure = PipelineError(errors.PIPELINE_FAILED, "A piece's results could not be saved to the Modal volume.", detail=str(exc))
+            return {"status": "error", "index": response.get("index"), "error": failure.to_dict()}
+    return response
+
+
+def split_progress_key(request: Any) -> str:
+    piece = request.get("piece") if isinstance(request, dict) else None
+    index = int(piece.get("index") or 0) if isinstance(piece, dict) else 0
+    return progress_key(str(request.get("job_id") or "unknown"), index)
 
 
 @app.function(image=image, gpu=GPU_TYPE, timeout=WARMUP_TIMEOUT_S, cpu=CPU_CORES, memory=MEMORY_MB)

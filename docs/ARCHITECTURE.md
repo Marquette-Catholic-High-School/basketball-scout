@@ -1,11 +1,11 @@
 # Architecture
 
 ```
- Browser (vanilla HTML/JS)                         Modal (serverless A10G GPU)
+ Browser (vanilla HTML/JS)                         Modal (CPU + serverless L40S GPUs)
  ┌───────────────────────────┐                     ┌──────────────────────────────┐
  │ /            games list   │                     │ modal_app/app.py             │
- │ /upload      drag & drop  │                     │  process_video(request)      │
- │ /games/{id}  results      │                     │   └ pipeline.runner          │
+ │ /upload      drag & drop  │                     │  process_video(request) CPU  │
+ │ /games/{id}  results      │                     │   └ analyse_piece × N   GPUs │
  │ /games/{id}/roster        │                     │      video → detect → track  │
  └────────────┬──────────────┘                     │      → pose → OCR → teams    │
               │ HTTP Basic auth                     │      → court → ball holders │
@@ -171,8 +171,12 @@ join_film(game_id, segments) -> Path | None                      # ffmpeg concat
 LiveRunner(worker, run).run()                                    # the LIVE job
 
 # modal_app.pipeline
-runner.run_pipeline(video_path, options, *, output_dir, job_id, progress=None, filename=None) -> response dict
+runner.run_pipeline(video_path, options, *, output_dir, job_id, progress=None, filename=None, perceive=None, analysis_dir=None) -> response dict
     # video_path is a local file; modal_app/app.py downloads a {"type": "url"} film first
+    # perceive runs OpenHoopVision: runner.perceive_here (this machine), or on Modal split.SplitPerceiver
+pieces.plan_pieces(frames, fps, *, piece_s=600.0, max_pieces=8, overlap_s=20.0) -> list[PieceSpec]
+pieces.join_tracks(pieces, dest) -> JoinReport                 # the pieces' OHV records as one film's
+split.run_piece(request, *, root, progress=None) -> response dict   # body of analyse_piece (one GPU)
 possession.assign_ball_holders(perception, cfg=None) -> None
 events.enrich_events(perception, existing_events, cfg=None) -> list[dict]   # copies with assists, blocks, rebound types filled in
 events.detect_events(perception, cfg=None, existing_events=None) -> list[dict]
@@ -181,6 +185,34 @@ events.detect_period_events(perception, cfg=None, existing_events=None) -> list[
     # only the periods, inferred timeouts and opening jump balls, without event ids (the server's live join)
 result.build_tracking_result(perception, events, *, job_id, pipeline_info, artifacts=None, sample_stride=1) -> dict
 ```
+
+## Analysing a film on several GPUs
+
+OpenHoopVision analyses one frame after another (a 75-minute film took 95 minutes on one A10G),
+so on Modal a film is analysed in pieces at the same time (`modal_app/pipeline/split.py`):
+
+1. `process_video` (a CPU container) probes the film and writes the analysis copy (15 fps) to
+   the volume, under `tmp/<job_id>/analysis/`.
+2. `pieces.plan_pieces` cuts it into pieces of about `SCOUT_MODAL_PIECE_MINUTES` (default 10),
+   at most `SCOUT_MODAL_MAX_PIECES` (default 8). A film of under about 10 minutes, such as a
+   live game's part, is one piece. Each piece owns its stretch and also analyses 10 seconds
+   before and after it (the overlap).
+3. One `analyse_piece` call per piece (GPU containers, at most `SCOUT_MODAL_MAX_GPUS` at once)
+   cuts its frames out (frame-exact), runs OpenHoopVision and leaves `ohv_tracks.jsonl.gz` and
+   its own stretch of the annotated web video in `results/<job_id>/pieces/<n>/`. Its progress
+   goes to the progress Dict under `<job_id>:piece<n>`; `process_video` averages them into the
+   job's progress. A failed piece fails the film (the other pieces are cancelled), and so does
+   a cancel of `process_video`.
+4. `pieces.join_tracks` writes one OHV tracks file for the whole film: each piece's own frames;
+   one player id across the cut where the two pieces' boxes of a player match in the overlap
+   (a cut that starts a frame or two off is found and corrected); each event from the piece
+   that owns its first frame; team labels made to agree. A cut where few players could be
+   followed adds the `PIECES_JOIN_WEAK` warning. The web videos are joined without re-encoding.
+5. The rest of the pipeline (adapter, events, possessions, periods, `tracking.json.gz`) runs
+   once on the joined film, as with one GPU. `TrackingResult.pipeline.options.pieces` lists the
+   pieces and their GPU seconds.
+
+The local processor (`SCOUT_PROCESSOR=local`) still analyses the film in one piece.
 
 ## Job lifecycle
 

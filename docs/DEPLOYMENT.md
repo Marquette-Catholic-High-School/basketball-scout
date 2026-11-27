@@ -227,7 +227,8 @@ The web app is light; the heavy computer vision runs on Modal.
   double click from starting two analyses live in that process's memory. A second
   uvicorn process would not recognise the first one's device cookies.
 - **More films at once:** raise `SCOUT_WORKER_CONCURRENCY` (default 2, max 16; restart
-  the worker) together with `SCOUT_MODAL_MAX_CONTAINERS` (default 2; redeploy). A
+  the worker) together with `SCOUT_MODAL_MAX_CONTAINERS` (default 2; redeploy) and, for the
+  pieces of those films, `SCOUT_MODAL_MAX_GPUS` (default 8). A
   running job mostly waits on the GPU, but the analysis step after it runs on this
   server's CPU and memory, so keep concurrency below the number of cores and watch memory
   the first time several full games finish together.
@@ -247,7 +248,8 @@ The web app is light; the heavy computer vision runs on Modal.
 - **Local GPU** (`SCOUT_PROCESSOR=local`): one film at a time.
 - **Live games** ([LIVE.md](LIVE.md)): a live game holds one worker slot for the length of the
   game and runs up to `SCOUT_LIVE_MAX_PARALLEL` (default 3) GPU calls at a time, so set
-  `SCOUT_MODAL_MAX_CONTAINERS` to 3 or more and redeploy before the first one; with the default
+  `SCOUT_MODAL_MAX_CONTAINERS` to 3 or more (`SCOUT_MODAL_MAX_GPUS` too, if you lowered it)
+  and redeploy before the first one; with the default
   `SCOUT_WORKER_CONCURRENCY=2` one other film can be analysed alongside. The server needs
   `ffmpeg` (the installer puts it there) to put the parts together into the film. The Mac that
   records the game must reach the server over https from the gym: a VPN such as Tailscale, a
@@ -256,9 +258,14 @@ The web app is light; the heavy computer vision runs on Modal.
 
 ## Modal cost controls
 
-- **GPUs at once:** `SCOUT_MODAL_MAX_CONTAINERS` (default 2) sets `max_containers` on the
-  `process_video` function. Put it in `.env` and redeploy
-  (`sudo /opt/basketball-scout/scripts/update.sh --deploy-modal`).
+- **GPUs at once:** a film is cut into pieces of about `SCOUT_MODAL_PIECE_MINUTES` (default
+  10) that run at the same time, one GPU each, at most `SCOUT_MODAL_MAX_PIECES` (default 8).
+  `SCOUT_MODAL_MAX_GPUS` (default 8) sets `max_containers` on the `analyse_piece` function,
+  the cap over all films; `SCOUT_MODAL_MAX_CONTAINERS` (default 2) does the same for the
+  films (`process_video`, a CPU container). Fewer GPUs make a film slower, not cheaper: the
+  GPU time is about the same, plus a few minutes per GPU for starting up. The cheapest,
+  slowest setting is `SCOUT_MODAL_MAX_PIECES=1` with `SCOUT_MODAL_GPU=A10G`. Put them in
+  `.env` and redeploy (`sudo /opt/basketball-scout/scripts/update.sh --deploy-modal`).
 - **Time per film:** `SCOUT_MODAL_TIMEOUT_S` (default 6 hours) stops a runaway job;
   `SCOUT_MODAL_MAX_WAIT_HOURS` (default 8) is the worker's own limit, counted from the
   start of the job (upload included); when it runs out the worker cancels the GPU call

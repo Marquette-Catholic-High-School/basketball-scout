@@ -277,13 +277,17 @@ def reload_app(monkeypatch):
 
 def test_blank_deploy_settings_in_env_fall_back_to_the_defaults(reload_app):
     """`dotenv run -- modal deploy` turns `SCOUT_MODAL_GPU=` lines into empty strings."""
-    blank = ("GPU", "TIMEOUT_S", "MAX_CONTAINERS", "APP_NAME", "VOLUME_NAME", "PROGRESS_DICT")
+    blank = ("GPU", "TIMEOUT_S", "MAX_CONTAINERS", "APP_NAME", "VOLUME_NAME", "PROGRESS_DICT", "MAX_GPUS",
+             "PIECE_MINUTES", "MAX_PIECES")  # fmt: skip
     module = reload_app(**{f"SCOUT_MODAL_{name}": "" for name in blank})
-    assert (module.GPU_TYPE, module.PROCESS_TIMEOUT_S, module.MAX_CONTAINERS) == ("A10G", 21600, 2)
+    assert (module.GPU_TYPE, module.PROCESS_TIMEOUT_S, module.MAX_CONTAINERS) == ("L40S", 21600, 2)
+    assert (module.MAX_GPUS, module.SPLIT.piece_s, module.SPLIT.max_pieces) == (8, 600.0, 8)
     assert (module.APP_NAME, module.VOLUME_NAME) == ("basketball-scout", "basketball-scout-data")
     assert module.PROGRESS_DICT_NAME == "basketball-scout-progress"
-    module = reload_app(SCOUT_MODAL_MAX_CONTAINERS="two", SCOUT_MODAL_GPU=" L40S ")
-    assert (module.MAX_CONTAINERS, module.GPU_TYPE) == (2, "L40S")
+    module = reload_app(SCOUT_MODAL_MAX_CONTAINERS="two", SCOUT_MODAL_GPU=" A10G ", SCOUT_MODAL_MAX_GPUS="many")
+    assert (module.MAX_CONTAINERS, module.GPU_TYPE, module.MAX_GPUS) == (2, "A10G", 8)
+    module = reload_app(SCOUT_MODAL_PIECE_MINUTES="0.5", SCOUT_MODAL_MAX_PIECES="1", SCOUT_MODAL_MAX_GPUS="20")
+    assert (module.SPLIT.piece_s, module.SPLIT.max_pieces, module.MAX_GPUS) == (120.0, 1, 20)  # 2 minutes at least
 
 
 def test_image_installs_libgl_for_opencv(monkeypatch):

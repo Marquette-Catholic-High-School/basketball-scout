@@ -500,6 +500,10 @@ class OhvRun:
     warnings: list[dict[str, str]] = field(default_factory=list)
     elapsed_s: float = 0.0
     log_tail: list[str] = field(default_factory=list)
+    # Set when the film was analysed in pieces on several GPUs (modal_app.pipeline.split):
+    web_video: Path | None = None  # the annotated web video, already encoded and joined
+    gpu: str | None = None  # the GPU the pieces ran on (the joining container has none)
+    pieces: list[dict[str, Any]] | None = None  # per piece: frames, seconds, attempts
 
 
 def ohv_home(override: str | os.PathLike[str] | None = None) -> Path:

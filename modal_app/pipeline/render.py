@@ -46,13 +46,32 @@ def nvenc_available() -> bool:
 
 
 def build_render_command(
-    src: str, dst: str, *, target_height: int, source_height: int | None, encoder: str
+    src: str,
+    dst: str,
+    *,
+    target_height: int,
+    source_height: int | None,
+    encoder: str,
+    frames: tuple[int, int | None] | None = None,
 ) -> list[str]:
-    """ffmpeg command for the web copy. Scales down only when the source is taller."""
+    """ffmpeg command for the web copy. Scales down only when the source is taller.
+
+    ``frames`` = (first, count) keeps only those frames (count None: to the end), as a piece of
+    a film analysed on several GPUs does: its own stretch, without the overlap.
+    """
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y"]
     cmd += ["-i", src, "-map", "0:v:0", "-an", "-sn", "-dn"]
+    filters = []
+    if frames is not None:
+        first, count = frames
+        keep = f"gte(n\\,{first})" if count is None else f"between(n\\,{first}\\,{first + count - 1})"
+        filters += [f"select='{keep}'", "setpts=N/FRAME_RATE/TB"]
     if source_height is None or source_height > target_height:
-        cmd += ["-vf", f"scale=-2:'min({target_height},ih)'"]
+        filters.append(f"scale=-2:'min({target_height},ih)'")
+    if filters:
+        cmd += ["-vf", ",".join(filters)]
+    if frames is not None:
+        cmd += ["-fps_mode", "passthrough"]
     cmd += ["-pix_fmt", "yuv420p", *_ENCODER_OPTIONS[encoder], "-movflags", "+faststart"]
     cmd += ["-progress", "pipe:1", "-nostats", dst]
     return cmd
@@ -66,6 +85,7 @@ def render_web_video(
     source_height: int | None = None,
     expected_frames: int = 0,
     progress: FractionProgress | None = None,
+    frames: tuple[int, int | None] | None = None,
 ) -> str:
     """Encode ``src`` to ``dst`` (atomically); return the encoder used.
 
@@ -79,8 +99,9 @@ def render_web_video(
     failure: PipelineError | None = None
     for encoder in encoders:
         cmd = build_render_command(
-            str(src), str(tmp), target_height=target_height, source_height=source_height, encoder=encoder
-        )
+            str(src), str(tmp), target_height=target_height, source_height=source_height, encoder=encoder,
+            frames=frames,
+        )  # fmt: skip
         try:
             run_ffmpeg(
                 cmd,

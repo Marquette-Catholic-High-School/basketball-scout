@@ -39,7 +39,10 @@ needs_bash = pytest.mark.skipif(BASH is None, reason="bash is not installed")
 # "KEY=value" or a documented, commented-out "# KEY=value".
 SETTING_LINE = re.compile(r"^\s*#?\s*([A-Z][A-Z0-9_]*)=")
 # SCOUT_* keys that modal_app/app.py reads at `modal deploy` time (not Settings fields).
-DEPLOY_TIME_KEYS = {"SCOUT_MODAL_GPU", "SCOUT_MODAL_TIMEOUT_S", "SCOUT_MODAL_MAX_CONTAINERS"}
+DEPLOY_TIME_KEYS = {
+    "SCOUT_MODAL_GPU", "SCOUT_MODAL_TIMEOUT_S", "SCOUT_MODAL_MAX_CONTAINERS", "SCOUT_MODAL_PIECE_MINUTES",
+    "SCOUT_MODAL_MAX_PIECES", "SCOUT_MODAL_MAX_GPUS",
+}  # fmt: skip
 # Keys read straight from the environment by the Modal / Anthropic SDKs or the GPU pipeline.
 SDK_KEYS = {"ANTHROPIC_API_KEY", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "MODAL_ENVIRONMENT", "OHV_HOME"}
 

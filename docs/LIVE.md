@@ -220,7 +220,7 @@ The Mac app does this ([apple/README.md](../apple/README.md#live-games)); any cl
 | Setting | Default | Meaning |
 |---|---|---|
 | `SCOUT_LIVE_SEGMENT_SECONDS` | `120` | Length of each part when the client does not say (20 to 600). Shorter parts bring the stats sooner and cut more plays in two. |
-| `SCOUT_LIVE_MAX_PARALLEL` | `3` | GPU calls at once for one live game. Keep `SCOUT_MODAL_MAX_CONTAINERS` at least as high (it is set when the Modal app is deployed). |
+| `SCOUT_LIVE_MAX_PARALLEL` | `3` | GPU calls at once for one live game. Keep `SCOUT_MODAL_MAX_CONTAINERS` and `SCOUT_MODAL_MAX_GPUS` at least as high (they are set when the Modal app is deployed). A 2-minute part is one piece on one GPU. |
 | `SCOUT_LIVE_IDLE_MINUTES` | `45` | A live game ends by itself after this long without new film. |
 | `SCOUT_LIVE_SEGMENT_TIMEOUT_MINUTES` | `30` | Longest wait for the GPU on one part before it is given up. |
 

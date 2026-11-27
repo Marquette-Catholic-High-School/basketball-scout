@@ -131,7 +131,7 @@ Gzipped JSON validating as `scout.schemas.TrackingResult`:
 |---|---|
 | `schema_version` | `"1.0"` |
 | `video` | fps, size, frame_count, duration_s, analysis_fps, codec |
-| `pipeline` | name (`openhoopvision` / `builtin` / `synthetic`), version, models used, gpu, elapsed_s, options |
+| `pipeline` | name (`openhoopvision` / `builtin` / `synthetic`), version, models used, gpu, elapsed_s, options (`options.pieces`: the pieces of a film analysed on several GPUs, each with its first owned frame of the analysis copy and its GPU seconds) |
 | `court` | `length_ft`, `width_ft`, `homographies[]` (frame ranges + 3×3 pixel→feet matrix, source `model`/`manual`/`classical`) |
 | `teams[]` | team_id, dominant jersey colour (`color_rgb`, null when OpenHoopVision did not report it; `color_name` `dark` / `light`), track_count |
 | `tracks[]` | track_id, team_id, role (`player`/`referee`/`unknown`), jersey_reads[] (frame, raw text, conf), samples[] (f, bbox, court_xy, conf) |
