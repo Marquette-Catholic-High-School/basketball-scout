@@ -21,6 +21,8 @@ nonisolated enum ReportTexts {
         message: "Scouting reports need an Anthropic API key.",
         hint: "Add ANTHROPIC_API_KEY to .env on the server and restart the worker. Stats and exports work without it.")
 
+    static let sideLabel = "Report on"
+    static let sideHint = "Both teams are in the analysis, so a report on the other team needs no new analysis."
     static let focusLabel = "Coach focus (optional)"
     static let focusPlaceholder = "For example: we play a 2-3 zone - how will they attack it? Who do we leave open?"
 
@@ -33,8 +35,10 @@ nonisolated enum ReportTexts {
     /// The tail after a cancel that came too late (report.js:162).
     static let lateCancelNote = "Cancel requested: Claude is already writing it, so it will finish and be kept."
 
-    /// The body without a report.
-    static let noReportYet = "No scouting report yet. Add anything you want Claude to focus on, then click Generate report."
+    /// The body without a report on the chosen team.
+    static func noReportYet(team: String) -> String {
+        "No scouting report on \(team) yet. Add anything you want Claude to focus on, then click Generate report."
+    }
 
     // MARK: Finished report jobs (report.js:166-177, 09 B13)
 

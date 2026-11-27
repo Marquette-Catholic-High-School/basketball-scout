@@ -37,8 +37,9 @@ nonisolated struct RequestEncodingTests {
     }
 
     @Test func reportRequest() throws {
-        #expect(try json(ReportRequest()) == #"{"coach_focus":null}"#)
-        #expect(try json(ReportRequest(coachFocus: "  Who do we leave open?  ")) == #"{"coach_focus":"Who do we leave open?"}"#)
+        #expect(try json(ReportRequest()) == #"{"coach_focus":null,"side":"scouted"}"#)
+        #expect(try json(ReportRequest(coachFocus: "  Who do we leave open?  ")) == #"{"coach_focus":"Who do we leave open?","side":"scouted"}"#)
+        #expect(try json(ReportRequest(side: .other)) == #"{"coach_focus":null,"side":"other"}"#)
         #expect(ReportRequest(coachFocus: "\n\t ").coachFocus == nil)
         #expect(ReportRequest(coachFocus: String(repeating: "a", count: 2000)).isFocusWithinLimit)
         #expect(!ReportRequest(coachFocus: String(repeating: "a", count: 2001)).isFocusWithinLimit)

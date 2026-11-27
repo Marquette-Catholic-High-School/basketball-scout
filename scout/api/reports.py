@@ -18,7 +18,7 @@ router = APIRouter(tags=["reports"])
 @router.post("/games/{game_id}/reports", response_model=Job, status_code=202)
 def request_report(body: ReportRequest, game: CurrentGame, settings: SettingsDep) -> Job:
     """Queue a report; poll ``GET /api/jobs/{id}``, then read ``GET /api/games/{id}/reports``."""
-    return start_job(game, JobKind.REPORT, {"coach_focus": body.coach_focus}, settings)
+    return start_job(game, JobKind.REPORT, {"coach_focus": body.coach_focus, "side": body.side.value}, settings)
 
 
 @router.get("/games/{game_id}/reports", response_model=list[ReportRecord])
@@ -38,8 +38,8 @@ def get_report(report_id: ReportId) -> ReportRecord:
 def report_markdown(game: CurrentGame, report_id: str | None = None, download: bool = False) -> Response:
     """The latest report (or ``report_id``) as Markdown, rendered with the current game details."""
     record = _report_for_game(game, report_id)
-    markdown = render.report_to_markdown(record.report, game, model=record.model)
-    filename = export_filename("scouting_report", game, TeamSide.SCOUTED, "md")
+    markdown = render.report_to_markdown(record.report, game, model=record.model, side=record.side)
+    filename = export_filename("scouting_report", game, record.side, "md")
     return text_download(markdown, "text/markdown", filename, download)
 
 

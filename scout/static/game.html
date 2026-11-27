@@ -257,6 +257,13 @@
         </div>
         <div class="report-controls">
           <div id="report-claude-warning"></div>
+          <label class="field">Report on
+            <select id="report-side">
+              <option value="scouted">Scouted team</option>
+              <option value="other">Other team</option>
+            </select>
+          </label>
+          <p class="hint">Both teams are in the analysis, so a report on the other team needs no new analysis.</p>
           <label class="field">Coach focus (optional)
             <textarea id="report-focus" maxlength="2000" placeholder="For example: we play a 2-3 zone - how will they attack it? Who do we leave open?"></textarea>
           </label>

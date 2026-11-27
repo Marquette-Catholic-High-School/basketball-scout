@@ -12,7 +12,9 @@ import Observation
 final class ReportViewModel: SessionActivity {
     /// The coach focus text; kept after generating, as on the web (03 §7.8). Set it with `setFocus(_:)`.
     private(set) var focusText = ""
-    /// The version the coach picked; nil follows the newest report.
+    /// "Report on": the team the next report is about and whose reports show. Set it with `setSide(_:)`.
+    private(set) var side: TeamSide = .scouted
+    /// The version the coach picked; nil follows the newest report on `side`.
     private(set) var pinnedReportID: String?
     /// Starting or cancelling the report job failed (already through the lockout gate).
     private(set) var actionError: (any PresentableError)?
@@ -36,7 +38,13 @@ final class ReportViewModel: SessionActivity {
 
     /// The report on screen (09 R30 after a report job succeeded).
     func selectedReport(in context: GameContext) -> ReportRecord? {
-        ReportRules.selectedReport(in: context.reports, pinnedID: pinnedReportID, finishedJob: context.finishedReportJob)
+        ReportRules.selectedReport(
+            in: context.reports, side: side, pinnedID: pinnedReportID, finishedJob: context.finishedReportJob)
+    }
+
+    /// There is a report on the chosen team ("Regenerate report").
+    func hasReport(in context: GameContext) -> Bool {
+        ReportRules.newest(on: side, in: context.reports) != nil
     }
 
     /// A report job is being followed (Generate is disabled and the status line shows). After following
@@ -73,9 +81,19 @@ final class ReportViewModel: SessionActivity {
         if clamped != focusText { focusText = clamped }
     }
 
-    /// Picks a version; picking the newest follows the newest again.
+    /// "Report on": shows that team's newest report; Generate writes about it.
+    func setSide(_ newSide: TeamSide) {
+        guard newSide != side else { return }
+        side = newSide
+        pinnedReportID = nil
+    }
+
+    /// Picks a version, and "Report on" moves to its team (Regenerate writes about the team on show);
+    /// picking that team's newest follows the newest again.
     func select(_ reportID: String, in context: GameContext) {
-        pinnedReportID = reports(in: context).first?.id == reportID ? nil : reportID
+        guard let record = context.reports.first(where: { $0.id == reportID }) else { return }
+        side = record.reportSide
+        pinnedReportID = ReportRules.newest(on: side, in: context.reports)?.id == reportID ? nil : reportID
     }
 
     /// Takes in a report job that ended since the last look: after a success the new report is shown
@@ -96,7 +114,7 @@ final class ReportViewModel: SessionActivity {
         isStarting = true
         actionError = nil
         hiddenOutcomeJobID = context.finishedReportJob?.id
-        let request = ReportRequest(coachFocus: focusText)
+        let request = ReportRequest(coachFocus: focusText, side: side)
         do {
             let job = try await client.generateReport(gameID: context.gameID, request)
             isStarting = false
@@ -159,6 +177,7 @@ final class ReportViewModel: SessionActivity {
     /// The lockout gate or sign-out stopped everything: forget the focus text and the file.
     func sessionDidStop() {
         focusText = ""
+        side = .scouted
         pinnedReportID = nil
         actionError = nil
         isStarting = false

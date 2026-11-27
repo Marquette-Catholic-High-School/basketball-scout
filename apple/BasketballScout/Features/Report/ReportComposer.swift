@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Writing a report (03 §7.8 "Controls"): the Claude warning, the coach focus field, "Generate report" /
+/// Writing a report (03 §7.8 "Controls"): the Claude warning, "Report on", the coach focus field, "Generate report" /
 /// "Regenerate report", the status line while the report job runs (with Cancel, 09 R31) and the report
 /// area's one message box.
 struct ReportComposer: View {
@@ -18,6 +18,7 @@ struct ReportComposer: View {
                 let warning = ReportTexts.claudeNotConfigured
                 NoticeView(tone: ScoutTone(warning.tone), title: warning.title, message: warning.message, hint: warning.hint)
             }
+            sidePicker
             focusField
             generateRow
             if let job = model.followedJob(in: context) {
@@ -31,6 +32,27 @@ struct ReportComposer: View {
             }
         }
         .confirmAction($confirmation)
+    }
+
+    // MARK: Report on
+
+    private var sidePicker: some View {
+        let side = Binding(get: { model.side }, set: { model.setSide($0) })
+        return VStack(alignment: .leading, spacing: Theme.Spacing.xSmall) {
+            ReportLabeledControl(label: ReportTexts.sideLabel) {
+                Picker(ReportTexts.sideLabel, selection: side) {
+                    ForEach(TeamSide.knownCases, id: \.self) { team in
+                        Text(verbatim: context.reportTeamName(team)).tag(team)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+            }
+            Text(verbatim: ReportTexts.sideHint)
+                .font(Theme.Typography.hint)
+                .foregroundStyle(Theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: Coach focus
@@ -61,7 +83,7 @@ struct ReportComposer: View {
     // MARK: Generate and status
 
     private var generateRow: some View {
-        let title = ReportRules.generateTitle(hasReports: !context.reports.isEmpty)
+        let title = ReportRules.generateTitle(hasReports: model.hasReport(in: context))
         return BusyButton(title, busyTitle: title, isBusy: model.isStarting, isProminent: true) {
             Task { await model.generate(in: context) }
         }

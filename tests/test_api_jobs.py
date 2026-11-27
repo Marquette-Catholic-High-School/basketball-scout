@@ -81,7 +81,7 @@ def test_report_job_rules(auth_headers, game, monkeypatch):
         assert r.status_code == 503 and error_code(r) == "REPORT_NOT_CONFIGURED"
     with TestClient(make_app(monkeypatch, ANTHROPIC_API_KEY="sk-ant-test"), headers=auth_headers) as c:
         r = post_job(c, game.id, "report", coach_focus="we play zone")
-        assert r.status_code == 201 and r.json()["params"] == {"coach_focus": "we play zone"}
+        assert r.status_code == 201 and r.json()["params"] == {"coach_focus": "we play zone", "side": "scouted"}
         assert db.get_game(game.id).status == GameStatus.DRAFT  # reports do not touch the game status
         r = post_job(c, game.id, "report")
         assert r.status_code == 409 and "report" in r.json()["error"]["message"]

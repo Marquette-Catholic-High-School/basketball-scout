@@ -596,7 +596,12 @@ started). A new film clears the calibration, since it was clicked on the old fil
 
 On the **Scouting report** tab, optionally type a coach focus ("their press break",
 "who takes the last shot"), then **Generate report**. It takes a few minutes. Versions
-are kept; **Download .md** or **Print**. With `SCOUT_AUTO_REPORT=true` (the default)
+are kept; **Download .md** or **Print**.
+
+**Report on** picks the team. The analysis holds both teams' box scores and plays, so
+to scout the other team in the same film, choose it and click **Generate report**:
+nothing is uploaded or analysed again, and Claude writes about that team, with the
+game's scouted team as its opponent. Player names come from that team's roster. With `SCOUT_AUTO_REPORT=true` (the default)
 a report is written automatically after each analysis when an API key is set. What is
 sent to Claude: [Security and privacy](#security-and-privacy).
 

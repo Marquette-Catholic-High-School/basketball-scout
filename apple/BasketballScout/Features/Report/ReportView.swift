@@ -26,7 +26,8 @@ private struct ReportTabContent: View {
     var body: some View {
         let reports = model.reports(in: context)
         let selected = model.selectedReport(in: context)
-        let gameTitle = context.game?.displayTitle ?? ""
+        // The report's title names the team it is about ("Scouting report: <team>").
+        let gameTitle = context.reportTeamName(selected?.reportSide ?? model.side)
         Card(title: ReportTexts.tabTitle) {
             ReportComposer(model: model, context: context)
             if let file = model.files.readyFile {
@@ -48,7 +49,7 @@ private struct ReportTabContent: View {
                 }
                 .accessibilityElement(children: .combine)
             } else {
-                Text(verbatim: ReportTexts.noReportYet)
+                Text(verbatim: ReportTexts.noReportYet(team: context.reportTeamName(model.side)))
                     .foregroundStyle(Theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -82,7 +83,8 @@ private struct ReportTabContent: View {
         return ReportLabeledControl(label: ReportTexts.versionLabel) {
             Picker(ReportTexts.versionLabel, selection: selection) {
                 ForEach(reports) { record in
-                    Text(verbatim: ReportRules.versionTitle(record)).tag(record.id)
+                    Text(verbatim: ReportRules.versionTitle(record, team: context.reportTeamName(record.reportSide)))
+                        .tag(record.id)
                 }
             }
             .labelsHidden()
@@ -139,6 +141,11 @@ extension GameContext {
     /// File > Print… (⌘P): prints the report the Report tab shows.
     func printReportOnScreen() {
         guard let record = reportOnScreen else { return }
-        ReportPageModels.report(for: self).print(record, gameTitle: game?.displayTitle ?? "")
+        ReportPageModels.report(for: self).print(record, gameTitle: reportTeamName(record.reportSide))
+    }
+
+    /// The name of the team a report is about, as the game page shows it.
+    func reportTeamName(_ side: TeamSide) -> String {
+        game?.teamName(side, analysis: analysis) ?? side.shortTitle
     }
 }

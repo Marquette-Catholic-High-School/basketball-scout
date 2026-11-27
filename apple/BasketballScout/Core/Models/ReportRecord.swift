@@ -22,6 +22,8 @@ nonisolated struct ReportRecord: Codable, Hashable, Sendable, Identifiable {
     var usage: [String: Int]
     /// `end_turn` or `stop_sequence`; the web warns for a legacy `max_tokens`.
     var stopReason: String?
+    /// The team the report is about; nil for reports written before "Report on" (they are on the scouted team).
+    var side: TeamSide? = nil
 
     enum CodingKeys: String, CodingKey, CaseIterable {
         case id
@@ -33,7 +35,11 @@ nonisolated struct ReportRecord: Codable, Hashable, Sendable, Identifiable {
         case markdown
         case usage
         case stopReason = "stop_reason"
+        case side
     }
+
+    /// The team the report is about.
+    var reportSide: TeamSide { side == .other ? .other : .scouted }
 
     /// The report hit the length limit (a legacy record; the current server fails such jobs instead, 03 §5.3).
     var wasCutOff: Bool { stopReason == "max_tokens" }

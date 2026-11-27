@@ -1,5 +1,6 @@
 // Claude scouting report: render ReportRecord.report, generate / regenerate with an
-// optional coach focus, history, Markdown download and print.
+// optional coach focus, history, Markdown download and print. "Report on" picks the team:
+// the analysis holds both, so a report on the other team needs no new analysis.
 
 import { api, gamePath, pollJob } from "./api.js";
 import { jobStageText, tooLateToStop } from "./labels.js";
@@ -20,6 +21,12 @@ const LIST_SECTIONS = [
 ];
 
 const THREAT_LABELS = { high: "High", medium: "Medium", low: "Low" };
+
+/** The team a report (or the "Report on" choice) is about, by the names typed for the game. */
+export function teamName(game, side) {
+  if (side === "other") return game?.other_team || "Other team";
+  return game?.scouted_team || "Scouted team";
+}
 
 function bulletList(items, tag = "ul") {
   return el(tag, {}, items.map((item) => el("li", { text: item })));
@@ -68,6 +75,7 @@ export class Report {
     this.polling = null;
     byId("report-generate").addEventListener("click", () => this.generate());
     byId("report-history").addEventListener("change", (e) => this.select(e.target.value));
+    byId("report-side").addEventListener("change", () => this.showSide());
     byId("report-print").addEventListener("click", () => this.print());
     window.addEventListener("afterprint", () => document.body.classList.remove("print-report"));
   }
@@ -75,6 +83,8 @@ export class Report {
   /** Load the report history; resume polling when a report job is already running. */
   async load(game, { activeJob = null, claudeConfigured = null } = {}) {
     this.game = game;
+    const sideSelect = byId("report-side");
+    for (const option of sideSelect.options) option.textContent = teamName(game, option.value);
     setChildren(byId("report-claude-warning"), claudeConfigured === false
       ? notice("warning", "Claude is not configured", "Scouting reports need an Anthropic API key.", "Add ANTHROPIC_API_KEY to .env on the server and restart the worker. Stats and exports work without it.")
       : null);
@@ -86,7 +96,7 @@ export class Report {
       showError(byId("report-error"), err);
     }
     this.renderHistory();
-    this.select(this.reports[0]?.id);
+    this.showSide();
     if (activeJob && !this.polling) this.track(activeJob);
   }
 
@@ -94,11 +104,18 @@ export class Report {
     const select = byId("report-history");
     setChildren(select, this.reports.map((r) => el("option", {
       value: r.id,
-      text: `${formatDateTime(r.created_at)} · ${r.model}${r.coach_focus ? " · with coach focus" : ""}`,
+      text: `${formatDateTime(r.created_at)} · ${teamName(this.game, r.side)} · ${r.model}${r.coach_focus ? " · with coach focus" : ""}`,
     })));
     select.disabled = this.reports.length < 2;
     show(byId("report-history-wrap"), this.reports.length > 0);
-    byId("report-generate").textContent = this.reports.length ? "Regenerate report" : "Generate report";
+  }
+
+  /** The chosen team's latest report (reports from before "Report on" are on the scouted team). */
+  showSide() {
+    const side = byId("report-side").value;
+    const latest = this.reports.find((r) => (r.side || "scouted") === side);
+    byId("report-generate").textContent = latest ? "Regenerate report" : "Generate report";
+    this.select(latest?.id);
   }
 
   select(reportId) {
@@ -107,10 +124,13 @@ export class Report {
     show(download, Boolean(record));
     show(byId("report-print"), Boolean(record));
     if (!record) {
-      setChildren(byId("report-body"), el("p", { class: "muted", text: "No scouting report yet. Add anything you want Claude to focus on, then click Generate report." }));
+      const team = teamName(this.game, byId("report-side").value);
+      setChildren(byId("report-body"), el("p", { class: "muted", text: `No scouting report on ${team} yet. Add anything you want Claude to focus on, then click Generate report.` }));
       return;
     }
     byId("report-history").value = record.id;
+    byId("report-side").value = record.side || "scouted";  // Regenerate writes about the team on show
+    byId("report-generate").textContent = "Regenerate report";
     download.href = gamePath(this.gameId, `/export/report.md?report_id=${encodeURIComponent(record.id)}&download=1`);
     this.renderReport(record);
   }
@@ -123,8 +143,8 @@ export class Report {
         el("h3", { text: title }),
         sectionContent(key, report[key])));
     setChildren(byId("report-body"),
-      el("h2", { text: `Scouting report: ${this.game?.display_title || ""}` }),
-      el("p", { class: "report-meta", text: `Written ${formatDateTime(record.created_at)} by ${record.model}` }),
+      el("h2", { text: `Scouting report: ${teamName(this.game, record.side)}` }),
+      el("p", { class: "report-meta", text: `From the film ${this.game?.display_title || ""} · written ${formatDateTime(record.created_at)} by ${record.model}` }),
       record.coach_focus ? el("p", { class: "report-meta", text: `Coach focus: ${record.coach_focus}` }) : null,
       record.stop_reason === "max_tokens" ? notice("warning", "This report was cut off", "It hit the length limit before finishing.", "Raise SCOUT_CLAUDE_MAX_TOKENS in .env and regenerate.") : null,
       el("p", { class: "report-headline", text: report.headline }),
@@ -138,7 +158,8 @@ export class Report {
     clearError(byId("report-error"));
     button.disabled = true;
     try {
-      const job = await api.post(gamePath(this.gameId, "/reports"), { coach_focus: focus || null });
+      const side = byId("report-side").value;
+      const job = await api.post(gamePath(this.gameId, "/reports"), { coach_focus: focus || null, side });
       await this.track(job);
     } catch (err) {
       showError(byId("report-error"), err);

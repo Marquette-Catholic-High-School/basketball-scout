@@ -210,31 +210,35 @@ def _jersey_sort_key(entry: dict[str, Any]) -> tuple[int, int, str]:
     return (0, int(jersey), entry["name"]) if jersey.isdigit() else (1, 0, entry["name"])
 
 
-def _scouted_section(analysis: GameAnalysis, roster: Roster | None) -> dict[str, Any]:
-    box = analysis.box_score(TeamSide.SCOUTED)
+def _opposite(side: TeamSide) -> TeamSide:
+    return TeamSide.OTHER if side == TeamSide.SCOUTED else TeamSide.SCOUTED
+
+
+def _scouted_section(analysis: GameAnalysis, roster: Roster | None, side: TeamSide) -> dict[str, Any]:
+    box = analysis.box_score(side)
     if box is None:
-        return {"name": _team_name(analysis, TeamSide.SCOUTED)}
+        return {"name": _team_name(analysis, side)}
     players = sorted((_player_entry(line, roster) for line in box.players if _played(line)), key=_jersey_sort_key)
     totals, unattributed = box.totals, box.team_unattributed
     return _drop_none(
         {
-            "name": _team_name(analysis, TeamSide.SCOUTED),
+            "name": _team_name(analysis, side),
             "possessions": box.possessions,
             "ppp": _round2(box.points_per_possession),
             "totals": _line_stats(totals, minutes=False),
             "unattributed": _line_stats(unattributed, minutes=False) if _has_stats(unattributed) else None,
             "players": players,
             "shot_zones": _team_zones(totals.zones) or None,
-            "shot_locations": _shot_locations(analysis, TeamSide.SCOUTED) or None,
+            "shot_locations": _shot_locations(analysis, side) or None,
             "three_point_rate_pct": _ratio_pct(totals.tpa, totals.fga),
             "free_throw_rate_pct": _ratio_pct(totals.fta, totals.fga),
         }
     )
 
 
-def _other_section(analysis: GameAnalysis) -> dict[str, Any]:
-    box = analysis.box_score(TeamSide.OTHER)
-    section: dict[str, Any] = {"name": _team_name(analysis, TeamSide.OTHER)}
+def _other_section(analysis: GameAnalysis, side: TeamSide) -> dict[str, Any]:
+    box = analysis.box_score(side)
+    section: dict[str, Any] = {"name": _team_name(analysis, side)}
     if box is not None:
         section["possessions"] = box.possessions
         section["ppp"] = _round2(box.points_per_possession)
@@ -242,16 +246,17 @@ def _other_section(analysis: GameAnalysis) -> dict[str, Any]:
     return _drop_none(section)
 
 
-def _game_section(analysis: GameAnalysis, game: Game) -> dict[str, Any]:
+def _game_section(analysis: GameAnalysis, game: Game, side: TeamSide) -> dict[str, Any]:
     periods = sum(1 for event in analysis.timeline if event.type == EventType.PERIOD_START)
+    them = _opposite(side)
     return _drop_none(
         {
-            "scouted_team": game.scouted_team,
-            "other_team": game.other_team or _team_name(analysis, TeamSide.OTHER),
+            "scouted_team": game.team_name(side) or _team_name(analysis, side),
+            "other_team": game.team_name(them) or _team_name(analysis, them),
             "date": game.game_date.isoformat() if game.game_date else None,
             "level": game.level,
             "location": game.location,
-            "final_score": {"scouted": _score(analysis, TeamSide.SCOUTED), "other": _score(analysis, TeamSide.OTHER)},
+            "final_score": {"scouted": _score(analysis, side), "other": _score(analysis, them)},
             "film_minutes": round(analysis.video.duration_s / 60, 1),
             "periods_seen": periods or None,
         }
@@ -280,16 +285,16 @@ def _play_types(analysis: GameAnalysis, side: TeamSide, category: str) -> list[d
     ]
 
 
-def _defense_section(analysis: GameAnalysis) -> dict[str, Any]:
+def _defense_section(analysis: GameAnalysis, side: TeamSide) -> dict[str, Any]:
     shapes = Counter(
         str(play.attrs["zone_shape"])
         for play in analysis.plays
-        if play.type == PlayType.ZONE_DEFENSE and play.side == TeamSide.SCOUTED and play.attrs.get("zone_shape")
+        if play.type == PlayType.ZONE_DEFENSE and play.side == side and play.attrs.get("zone_shape")
     )
     return _drop_none(
         {
-            "defensive_possessions": sum(1 for p in analysis.possessions if p.side == TeamSide.OTHER),
-            "looks": _play_types(analysis, TeamSide.SCOUTED, "defense"),
+            "defensive_possessions": sum(1 for p in analysis.possessions if p.side == _opposite(side)),
+            "looks": _play_types(analysis, side, "defense"),
             "zone_shapes": dict(sorted(shapes.items())) or None,
         }
     )
@@ -313,11 +318,13 @@ def _transition(analysis: GameAnalysis, side: TeamSide) -> dict[str, Any]:
     )
 
 
-def _play_roles(analysis: GameAnalysis, roster: Roster | None) -> dict[str, dict[str, list[dict[str, Any]]]]:
+def _play_roles(
+    analysis: GameAnalysis, roster: Roster | None, side: TeamSide
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
     """Per offensive play type and role: the scouted players involved most often."""
     tallies: dict[tuple[str, str, str], tuple[int, int]] = {}
     for play in analysis.plays:
-        if play.side != TeamSide.SCOUTED or play.category != "offense":
+        if play.side != side or play.category != "offense":
             continue
         for role, ref in play.players.items():
             key = (play.type.value, role, _player_label(ref, roster))
@@ -332,8 +339,8 @@ def _play_roles(analysis: GameAnalysis, roster: Roster | None) -> dict[str, dict
     return roles
 
 
-def _free_throws(analysis: GameAnalysis, roster: Roster | None) -> list[dict[str, Any]]:
-    box = analysis.box_score(TeamSide.SCOUTED)
+def _free_throws(analysis: GameAnalysis, roster: Roster | None, side: TeamSide) -> list[dict[str, Any]]:
+    box = analysis.box_score(side)
     lines = [line for line in box.players if line.fta] if box else []
     lines.sort(key=lambda line: (-line.fta, _player_label(line.player, roster)))
     return [
@@ -348,17 +355,15 @@ def _free_throws(analysis: GameAnalysis, roster: Roster | None) -> list[dict[str
     ]
 
 
-def _tendencies(analysis: GameAnalysis, roster: Roster | None) -> dict[str, Any]:
-    sections = {"play_roles": _play_roles(analysis, roster), "free_throws": _free_throws(analysis, roster)}
+def _tendencies(analysis: GameAnalysis, roster: Roster | None, side: TeamSide) -> dict[str, Any]:
+    sections = {"play_roles": _play_roles(analysis, roster, side), "free_throws": _free_throws(analysis, roster, side)}
     return {key: value for key, value in sections.items() if value}
 
 
-def _turnovers(analysis: GameAnalysis) -> dict[str, Any]:
-    scouted, other = analysis.box_score(TeamSide.SCOUTED), analysis.box_score(TeamSide.OTHER)
+def _turnovers(analysis: GameAnalysis, side: TeamSide) -> dict[str, Any]:
+    scouted, other = analysis.box_score(side), analysis.box_score(_opposite(side))
     committed = Counter(
-        event.label
-        for event in analysis.timeline
-        if event.type == EventType.TURNOVER and event.side == TeamSide.SCOUTED
+        event.label for event in analysis.timeline if event.type == EventType.TURNOVER and event.side == side
     )
     return {
         "committed": _drop_none(
@@ -393,9 +398,9 @@ def _scoring_runs(analysis: GameAnalysis) -> list[dict[str, Any]]:
     return runs
 
 
-def _play_log(analysis: GameAnalysis, roster: Roster | None) -> list[dict[str, Any]]:
+def _play_log(analysis: GameAnalysis, roster: Roster | None, side: TeamSide) -> list[dict[str, Any]]:
     plays = sorted(
-        (p for p in analysis.plays if p.side == TeamSide.SCOUTED and p.category == "offense"),
+        (p for p in analysis.plays if p.side == side and p.category == "offense"),
         key=lambda p: (p.start_t, p.id),
     )
     if len(plays) > _PLAY_LOG_LIMIT:  # a long film: an even spread, so the late game is not simply missing
@@ -417,9 +422,9 @@ def _play_log(analysis: GameAnalysis, roster: Roster | None) -> list[dict[str, A
     return log
 
 
-def _data_quality(analysis: GameAnalysis) -> dict[str, Any]:
+def _data_quality(analysis: GameAnalysis, side: TeamSide) -> dict[str, Any]:
     quality = analysis.data_quality
-    box = analysis.box_score(TeamSide.SCOUTED)
+    box = analysis.box_score(side)
     warnings = list(dict.fromkeys(f"{w.code}: {w.message}" for w in quality.warnings))[:_MAX_WARNINGS]
     return _drop_none(
         {
@@ -460,6 +465,7 @@ def build_report_payload(
     game: Game,
     rosters: dict[TeamSide, Roster],
     *,
+    side: TeamSide = TeamSide.SCOUTED,
     token_budget: int = PAYLOAD_TOKEN_BUDGET,
 ) -> dict[str, Any]:
     """Compact, deterministic (sorted, rounded) JSON-able summary of the game for Claude.
@@ -469,20 +475,25 @@ def build_report_payload(
     tendencies, turnovers, scoring runs, a play log and data-quality caveats. Sections are
     dropped in ``_TRIM_ORDER`` if the payload would exceed ``token_budget`` (listed under
     ``omitted_sections`` so nothing disappears silently).
+
+    ``side`` is the team the report is about. The analysis holds both teams' stats and plays,
+    so ``TeamSide.OTHER`` scouts the opponent in the same film, with no new analysis: in the
+    payload it is then the "scouted team", and the game's scouted team is the "other team".
     """
-    roster = rosters.get(TeamSide.SCOUTED)
+    them = _opposite(side)
+    roster = rosters.get(side)
     payload: dict[str, Any] = {
-        "game": _game_section(analysis, game),
-        "scouted_team": _scouted_section(analysis, roster),
-        "other_team": _other_section(analysis),
-        "scouted_offense": {"play_types": _play_types(analysis, TeamSide.SCOUTED, "offense")},
-        "scouted_defense": _defense_section(analysis),
-        "transition": {side.value: _transition(analysis, side) for side in TeamSide},
-        "tendencies": _tendencies(analysis, roster),
-        "turnovers": _turnovers(analysis),
+        "game": _game_section(analysis, game, side),
+        "scouted_team": _scouted_section(analysis, roster, side),
+        "other_team": _other_section(analysis, them),
+        "scouted_offense": {"play_types": _play_types(analysis, side, "offense")},
+        "scouted_defense": _defense_section(analysis, side),
+        "transition": {"scouted": _transition(analysis, side), "other": _transition(analysis, them)},
+        "tendencies": _tendencies(analysis, roster, side),
+        "turnovers": _turnovers(analysis, side),
         "scoring_runs": _scoring_runs(analysis),
-        "play_log": _play_log(analysis, roster),
-        "data_quality": _data_quality(analysis),
+        "play_log": _play_log(analysis, roster, side),
+        "data_quality": _data_quality(analysis, side),
     }
     return _fit_budget(payload, token_budget)
 
@@ -751,11 +762,12 @@ def generate_report(
     game: Game,
     rosters: dict[TeamSide, Roster],
     *,
+    side: TeamSide = TeamSide.SCOUTED,
     coach_focus: str | None = None,
     settings: Settings | None = None,
     client: Any | None = None,
 ) -> ReportRecord:
-    """Call Claude and return a validated report. ``client`` is injectable for tests.
+    """Call Claude and return a validated report on ``side``. ``client`` is injectable for tests.
 
     Raises ``ScoutError`` with REPORT_NOT_CONFIGURED / REPORT_AUTH_FAILED /
     REPORT_RATE_LIMITED / REPORT_OVERLOADED / REPORT_REFUSED / REPORT_TRUNCATED /
@@ -765,11 +777,12 @@ def generate_report(
     if client is None:
         client = _make_client(settings)
     focus = _clean_focus(coach_focus)
-    payload_json = _payload_json(build_report_payload(analysis, game, rosters))
+    payload_json = _payload_json(build_report_payload(analysis, game, rosters, side=side))
     request = _build_request(settings, payload_json, build_user_prompt(payload_json, focus))
     logger.info(
-        "Requesting a Claude scouting report for game %s (model %s, effort %s, ~%d payload tokens).",
+        "Requesting a Claude scouting report for game %s, %s side (model %s, effort %s, ~%d payload tokens).",
         game.id,
+        side.value,
         settings.claude_model,
         settings.claude_effort,
         int(len(payload_json) / _CHARS_PER_TOKEN),
@@ -782,10 +795,11 @@ def generate_report(
     logger.info("Claude report for game %s finished: model %s, stop %s, usage %s.", game.id, model, stop_reason, usage)
     return ReportRecord(
         game_id=game.id,
+        side=side,
         model=model,
         coach_focus=focus,
         report=report,
-        markdown=report_to_markdown(report, game, model=model),
+        markdown=report_to_markdown(report, game, model=model, side=side),
         usage=usage,
         stop_reason=stop_reason,
     )

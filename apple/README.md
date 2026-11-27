@@ -101,7 +101,7 @@ The screens follow the web pages (see [Using the app](../README.md#using-the-app
 - **Film player**: Space plays and pauses, ← and → step 5 seconds, [ and ] jump between events
   (with a keyboard on iPad and Mac). Tap an event, a play or a shot to jump to it in the film.
 - **Court calibration** ("Calibrate court" under the film): for fixed cameras, as on the web.
-- **Scouting report**: generate, read, share, print or copy it.
+- **Scouting report**: generate (on either team: **Report on**), read, share, print or copy it.
 - **Exports**: the FastScout paste block (copied ready to paste), the FastScout and timeline CSV
   files, the analysis JSON and the report as Markdown. Share them or save them to Files / Finder.
 - **Roster & jerseys**: both rosters, CSV import and the template, and the jersey assignments from

@@ -263,12 +263,12 @@ nonisolated extension RouteCase {
 
     static let reports: [RouteCase] = [
         route("generateReport", "POST", "/api/games/\(game)/reports", contentType: "application/json",
-              body: .json(#"{"coach_focus":null}"#), response: .json(202, reportJob)) { client in
+              body: .json(#"{"coach_focus":null,"side":"scouted"}"#), response: .json(202, reportJob)) { client in
             let job = try await client.generateReport(gameID: game)
             #expect(job.id == "j_22acdd6ecdcf" && job.kind == .report && job.status == .queued)
         },
         route("generateReportWithFocus", "POST", "/api/games/\(game)/reports", contentType: "application/json",
-              body: .json(#"{"coach_focus":"We play a 2-3 zone"}"#), response: .json(202, reportJob)) { client in
+              body: .json(#"{"coach_focus":"We play a 2-3 zone","side":"scouted"}"#), response: .json(202, reportJob)) { client in
             _ = try await client.generateReport(gameID: game, ReportRequest(coachFocus: "  We play a 2-3 zone  "))
         },
         route("reports", "GET", "/api/games/\(game)/reports", capture: "reports_list_seeded",

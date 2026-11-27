@@ -77,6 +77,20 @@ struct ReportRulesTests {
         #expect(ReportRules.selectedReport(in: [other, written], pinnedID: nil, finishedJob: failed)?.id == "r_written")
     }
 
+    @Test func reportOnShowsTheNewestReportOnThatTeam() throws {
+        var theirs = try Self.report("r_theirs", at: "2026-11-11T20:30:00Z")
+        theirs.side = .other
+        let ours = try Self.report("r_ours", at: "2026-11-11T20:00:00Z")  // no side: written before "Report on"
+        #expect(ReportRules.selectedReport(in: [theirs, ours], pinnedID: nil, finishedJob: nil)?.id == "r_ours")
+        #expect(ReportRules.selectedReport(in: [theirs, ours], side: .other, pinnedID: nil, finishedJob: nil)?.id == "r_theirs")
+        // The report a finished job wrote shows only on its own team.
+        let job = Self.reportJob(startedAt: "2026-11-11T20:10:00Z")
+        #expect(ReportRules.selectedReport(in: [theirs, ours], side: .scouted, pinnedID: nil, finishedJob: job)?.id == "r_ours")
+        #expect(ReportRules.newest(on: .other, in: [ours]) == nil)
+        #expect(ReportRules.versionTitle(theirs, team: "Lincoln", locale: Locale(identifier: "en_US"), timeZone: .gmt)
+            .contains(" · Lincoln · claude-opus-5-5"))
+    }
+
     // MARK: Version picker (report.js:96-101, 07 §5.4)
 
     @Test func versionTitlesNameTheTimeTheModelAndTheCoachFocus() throws {

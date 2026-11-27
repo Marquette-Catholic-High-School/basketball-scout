@@ -152,7 +152,8 @@ def create_job(body: JobCreate, game: CurrentGame, settings: SettingsDep) -> Job
             hint="Start the live stream from the Mac app.",
         )
     if body.kind == JobKind.REPORT:  # the worker hands coach_focus to Claude: same limits as POST /reports
-        params = {"coach_focus": validate_model(ReportRequest, params).coach_focus}
+        request = validate_model(ReportRequest, params)
+        params = {"coach_focus": request.coach_focus, "side": request.side.value}
     elif "coach_focus" in params:  # an analysis job that writes the report passes it to Claude too
         params = {**params, "coach_focus": validate_model(ReportRequest, params).coach_focus}
     return start_job(game, body.kind, params, settings)

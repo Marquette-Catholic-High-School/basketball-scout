@@ -637,6 +637,7 @@ class Worker:
             analysis,
             db.require_game(job.game_id),
             db.get_rosters(job.game_id),
+            side=TeamSide(job.params.get("side") or TeamSide.SCOUTED),
             coach_focus=job.params.get("coach_focus"),
             settings=self.settings,
         )

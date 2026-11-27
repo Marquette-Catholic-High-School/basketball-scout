@@ -19,6 +19,8 @@ nonisolated struct ModelKeyContractTests {
     /// What live games added (docs/LIVE.md): a server older than them sends none of these keys.
     static let liveGameKeys: Set<String> = ["live"]
     static let liveUploadKeys: Set<String> = ["live_segment", "live_duration_s"]
+    /// "Report on" (a report on either team): servers before it send and take no `side`.
+    static let reportSideKeys: Set<String> = ["side"]
 
     static func keys<K: CodingKey & CaseIterable>(_ type: K.Type) -> [String] {
         type.allCases.map(\.stringValue)
@@ -51,7 +53,7 @@ nonisolated struct ModelKeyContractTests {
         Case(model: "TrackState", keys: keys(TrackState.CodingKeys.self), fixture: "tracks.json", path: []),
         Case(model: "TrackAssignment", keys: keys(TrackAssignment.CodingKeys.self), fixture: "tracks.json", path: ["assignments", 0]),
         Case(model: "TrackOverride", keys: keys(TrackOverride.CodingKeys.self), fixture: "track_override_assign.json", path: []),
-        Case(model: "ReportRecord", keys: keys(ReportRecord.CodingKeys.self), fixture: "report_get_seeded.json", path: []),
+        Case(model: "ReportRecord", keys: keys(ReportRecord.CodingKeys.self), fixture: "report_get_seeded.json", path: [], newer: reportSideKeys),
         Case(model: "ScoutingReport", keys: keys(ScoutingReport.CodingKeys.self), fixture: "report_get_seeded.json", path: ["report"]),
         Case(model: "KeyPlayer", keys: keys(KeyPlayer.CodingKeys.self), fixture: "report_get_seeded.json", path: ["report", "key_players", 0]),
         Case(model: "PlayTendency", keys: keys(PlayTendency.CodingKeys.self), fixture: "report_get_seeded.json", path: ["report", "play_tendencies", 0]),
@@ -93,7 +95,7 @@ nonisolated struct ModelKeyContractTests {
         #expect(Self.keys(LiveSegment.CodingKeys.self).count == 14)
         #expect(Self.keys(HealthStatus.CodingKeys.self).count == 11)
         #expect(Self.keys(CourtCalibration.CodingKeys.self).count == 7)
-        #expect(Self.keys(ReportRecord.CodingKeys.self).count == 9)
+        #expect(Self.keys(ReportRecord.CodingKeys.self).count == 9 + 1)
         #expect(Self.keys(RosterPlayer.CodingKeys.self).count == 10)
         #expect(Self.keys(TimelineEvent.CodingKeys.self).count == 21)
         #expect(Self.keys(ShotRecord.CodingKeys.self).count == 14)
@@ -155,7 +157,7 @@ nonisolated struct ModelKeyContractTests {
         #expect(Set(Self.keys(RosterPlayerInput.CodingKeys.self)) == properties("RosterPlayer-Input"))
         #expect(Set(Self.keys(RosterPlayerPatch.CodingKeys.self)) == properties("RosterPlayerPatch"))
         #expect(Set(Self.keys(TrackOverrideBody.CodingKeys.self)) == properties("TrackOverrideBody"))
-        #expect(Set(Self.keys(ReportRequest.CodingKeys.self)) == properties("ReportRequest"))
+        #expect(Set(Self.keys(ReportRequest.CodingKeys.self)).subtracting(Self.reportSideKeys) == properties("ReportRequest"))
     }
 
     /// The live-game types use the field names of a server that has live games (its `openapi.json`).

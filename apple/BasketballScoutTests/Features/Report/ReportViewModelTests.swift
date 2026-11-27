@@ -85,7 +85,7 @@ struct ReportViewModelTests {
 
         let post = try #require(h.server.requests.last { $0.method == "POST" })
         #expect(post.path == "\(gamePath)/reports")
-        #expect(post.bodyText == #"{"coach_focus":"We play a 2-3 zone"}"#)
+        #expect(post.bodyText == #"{"coach_focus":"We play a 2-3 zone","side":"scouted"}"#)
         #expect(post.header("Content-Type") == "application/json")
         #expect(post.header("Authorization") != nil)
         #expect(model.isFollowingJob(in: context))
@@ -102,6 +102,45 @@ struct ReportViewModelTests {
         #expect(model.canGenerate(in: context))
     }
 
+    @Test func reportOnTheOtherTeamShowsItsReportsAndSendsItsSide() async throws {
+        let h = try await readyServer()
+        defer { h.cleanUp() }
+        var reports = try twoVersions()
+        reports[1].side = .other  // the older version is on the other team
+        h.server.on("GET", "\(gamePath)/reports", try SessionFixtures.reply(reports))
+        let context = context(h)
+        let model = ReportViewModel()
+        await context.refresh()
+        #expect(model.side == .scouted && model.selectedReport(in: context)?.id == reports[0].id)
+
+        model.setSide(.other)
+        #expect(model.selectedReport(in: context)?.id == "r_00000000000a")
+        #expect(model.hasReport(in: context))
+
+        model.setSide(.scouted)
+        model.select("r_00000000000a", in: context)  // a version on the other team: "Report on" follows it
+        #expect(model.side == .other && model.pinnedReportID == nil)
+
+        h.server.on("POST", "\(gamePath)/reports", try SessionFixtures.reply(reportJob(status: .succeeded, stage: .done), status: 202))
+        await model.generate(in: context)
+        let post = try #require(h.server.requests.last { $0.method == "POST" })
+        #expect(post.bodyText == #"{"coach_focus":null,"side":"other"}"#)
+    }
+
+    @Test func withoutAReportOnTheChosenTeamTheTabSaysSo() async throws {
+        let h = try await readyServer()
+        defer { h.cleanUp() }
+        let context = context(h)
+        let model = ReportViewModel()
+        await context.refresh()
+        model.setSide(.other)
+        #expect(model.selectedReport(in: context) == nil)
+        #expect(!model.hasReport(in: context))
+        let team = context.reportTeamName(.other)
+        #expect(!team.isEmpty)
+        #expect(ReportTexts.noReportYet(team: team) == "No scouting report on \(team) yet. Add anything you want Claude to focus on, then click Generate report.")
+    }
+
     @Test func anEmptyFocusIsSentAsNull() async throws {
         let h = try await readyServer()
         defer { h.cleanUp() }
@@ -111,7 +150,7 @@ struct ReportViewModelTests {
         model.setFocus("   \n ")
         await model.generate(in: context)
         let post = try #require(h.server.requests.last { $0.method == "POST" })
-        #expect(post.bodyText == #"{"coach_focus":null}"#)
+        #expect(post.bodyText == #"{"coach_focus":null,"side":"scouted"}"#)
     }
 
     @Test func aRefusedStartIsShownAndThePageIsReadAgain() async throws {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from scout.schemas import Game, KeyPlayer, PlayTendency, ScoutingReport
+from scout.schemas import Game, KeyPlayer, PlayTendency, ScoutingReport, TeamSide
 
 # A line starting with one of these would turn into a heading, quote or list item.
 _BLOCK_START = re.compile(r"^(#{1,6}|>|[-+*]|\d+[.)])(?=\s|$)")
@@ -84,14 +84,16 @@ def _play_tendencies(tendencies: list[PlayTendency]) -> list[str]:
     return ["## Play Tendencies", _table(["Play type", "Frequency", "Effectiveness", "Counter"], rows)]
 
 
-def report_to_markdown(report: ScoutingReport, game: Game, *, model: str | None = None) -> str:
+def report_to_markdown(
+    report: ScoutingReport, game: Game, *, model: str | None = None, side: TeamSide = TeamSide.SCOUTED
+) -> str:
     """A coach-ready document: title, headline, summary, keys, personnel, offense, defense, plans, caveats.
 
-    Empty sections are left out. The footer names the model and reminds the reader that
-    the numbers come from video analysis.
+    The title names ``side``, the team the report is about. Empty sections are left out. The
+    footer names the model and reminds the reader that the numbers come from video analysis.
     """
     blocks = [
-        f"# Scouting Report: {_inline(game.scouted_team)}",
+        f"# Scouting Report: {_inline(game.team_name(side) or 'Opponent')}",
         _subtitle(game),
         f"> **{_inline(report.headline)}**",
         "## Summary",

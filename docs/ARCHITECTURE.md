@@ -121,10 +121,10 @@ sanitize_fastscout_name(text) -> str                         # letters and space
 jersey_words(jersey) -> str                                  # "23" -> "Twenty Three" (unrostered players)
 
 # scout.reporting.claude_report
-build_report_payload(analysis, game, rosters, *, token_budget=PAYLOAD_TOKEN_BUDGET) -> dict
-generate_report(analysis, game, rosters, *, coach_focus=None, settings=None, client=None) -> ReportRecord
+build_report_payload(analysis, game, rosters, *, side=TeamSide.SCOUTED, token_budget=PAYLOAD_TOKEN_BUDGET) -> dict
+generate_report(analysis, game, rosters, *, side=TeamSide.SCOUTED, coach_focus=None, settings=None, client=None) -> ReportRecord
 # scout.reporting.render
-report_to_markdown(report: ScoutingReport, game: Game, *, model: str | None = None) -> str
+report_to_markdown(report: ScoutingReport, game: Game, *, model: str | None = None, side: TeamSide = TeamSide.SCOUTED) -> str
 
 # scout.jobs.queue
 get_queue(settings=None) -> JobQueue        # .enqueue(job_id) .claim(worker_id, timeout) .ack(...) .requeue_stale() .ping()

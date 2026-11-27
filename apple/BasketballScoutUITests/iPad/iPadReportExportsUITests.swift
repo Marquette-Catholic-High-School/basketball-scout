@@ -26,7 +26,7 @@ final class iPadReportExportsUITests: XCTestCase {
         driver.expectText("Claude is not configured")
         driver.expectText("Scouting reports need an Anthropic API key.")
         driver.expectText("Coach focus (optional)")
-        driver.expectText("No scouting report yet.")
+        driver.expectText("No scouting report on ")
         XCTAssertFalse(app.buttons["Download .md"].exists, "Download .md without a report")
         let generate = app.buttons["Generate report"].firstMatch
         XCTAssertTrue(generate.waitForExistence(timeout: 10))

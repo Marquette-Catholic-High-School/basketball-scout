@@ -145,8 +145,8 @@ def fakes(monkeypatch):
     def load_analysis(path: Path) -> GameAnalysis:
         return GameAnalysis.model_validate_json(path.read_text())
 
-    def generate_report(analysis, game, rosters, *, coach_focus=None, settings=None, client=None):
-        calls.reports.append({"game": game, "coach_focus": coach_focus, "settings": settings})
+    def generate_report(analysis, game, rosters, *, side=TeamSide.SCOUTED, coach_focus=None, settings=None, client=None):
+        calls.reports.append({"game": game, "side": side, "coach_focus": coach_focus, "settings": settings})
         if calls.report_error:
             raise calls.report_error
         return make_report(game.id)
@@ -588,6 +588,14 @@ def test_report_job_saves_a_report_and_leaves_the_game_alone(game, queue, fakes,
     assert fakes.reports[0]["coach_focus"] == "Who handles the press?"
     assert len(db.list_reports(game.id)) == 1
     assert db.get_game(game.id).status == GameStatus.READY
+
+
+def test_report_job_on_the_other_team_passes_the_side(game, queue, fakes):
+    storage.write_text_atomic(storage.analysis_path(game.id), make_analysis(game.id).model_dump_json())
+    db.update_game(game.id, status=GameStatus.READY, has_analysis=True)
+    submit_job(game.id, JobKind.REPORT, {"coach_focus": None, "side": "other"}, queue=queue)
+    make_worker(FakeProcessor(), queue).run_once(timeout=1)
+    assert fakes.reports[0]["side"] == TeamSide.OTHER
 
 
 def test_report_job_failure_fails_the_job_but_not_the_game(game, queue, fakes):

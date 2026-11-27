@@ -20,7 +20,7 @@ final class iPhoneReportExportsTests: XCTestCase {
         kit.selectTab("Scouting report")
         XCTAssertTrue(kit.wait(kit.any("Claude is not configured"), 5), "no Claude warning")
         XCTAssertTrue(kit.any("Scouting reports need an Anthropic API key.").exists)
-        XCTAssertTrue(kit.any("No scouting report yet.").exists, "no empty-report text")
+        XCTAssertTrue(kit.any("No scouting report on ").exists, "no empty-report text")
         XCTAssertTrue(kit.any("Coach focus (optional)").exists)
         kit.shot("empty")
         let generate = kit.button("Generate report")

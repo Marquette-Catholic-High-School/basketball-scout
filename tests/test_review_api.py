@@ -532,7 +532,7 @@ def test_report_jobs_from_the_generic_jobs_route_get_the_report_limits(auth_head
         assert c.post(url, json={"kind": "report", "params": {"coach_focus": "x" * 2001}}).status_code == 422
         assert c.post(url, json={"kind": "report", "params": {"coach_focus": {"nested": 1}}}).status_code == 422
         r = c.post(url, json={"kind": "report", "params": {"coach_focus": "We play zone", "other": 1}})
-        assert r.status_code == 201 and r.json()["params"] == {"coach_focus": "We play zone"}
+        assert r.status_code == 201 and r.json()["params"] == {"coach_focus": "We play zone", "side": "scouted"}
 
 
 # ---------------------------------------------------------------------------

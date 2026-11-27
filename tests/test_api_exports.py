@@ -11,7 +11,7 @@ from scout import db
 from scout.export import fastscout
 from scout.main import create_app
 from scout.reporting import render
-from scout.schemas import GameCreate, JobKind, JobStatus, TeamSide
+from scout.schemas import GameCreate, JobKind, JobStatus, ReportRecord, TeamSide
 from tests.test_api_support import make_app, save_report, write_analysis
 
 
@@ -105,10 +105,26 @@ def test_request_report_queues_a_job(auth_headers, game, monkeypatch):
         assert r.status_code == 202
         job = r.json()
         assert job["kind"] == JobKind.REPORT and job["status"] == JobStatus.QUEUED
-        assert job["params"] == {"coach_focus": "We play a 2-3 zone"}
+        assert job["params"] == {"coach_focus": "We play a 2-3 zone", "side": "scouted"}
         assert c.post(f"/api/games/{game.id}/reports", json={}).status_code == 409  # one at a time
         r = c.post(f"/api/games/{game.id}/reports", json={"coach_focus": "x" * 2001})
         assert r.status_code == 422
+
+
+def test_request_report_on_the_other_team(auth_headers, game, monkeypatch):
+    write_analysis(game, monkeypatch)
+    with TestClient(make_app(monkeypatch, ANTHROPIC_API_KEY="sk-ant-test"), headers=auth_headers) as c:
+        assert c.post(f"/api/games/{game.id}/reports", json={"side": "home"}).status_code == 422
+        r = c.post(f"/api/games/{game.id}/reports", json={"side": "other"})
+        assert r.status_code == 202 and r.json()["params"] == {"coach_focus": None, "side": "other"}
+
+
+def test_report_markdown_on_the_other_team_is_named_for_it(client, dated_game):
+    record = save_report(dated_game.id, "Their report", datetime.now(UTC))
+    theirs = db.save_report(ReportRecord(**{**record.model_dump(exclude={"id"}), "side": TeamSide.OTHER}))
+    r = client.get(f"/api/games/{dated_game.id}/export/report.md", params={"report_id": theirs.id, "download": "1"})
+    assert r.status_code == 200 and r.text.startswith("# Scouting Report: Rival HS")
+    assert r.headers["content-disposition"] == 'attachment; filename="scouting_report_rival-hs_2026-01-09.md"'
 
 
 def test_request_report_without_api_key(client, game, monkeypatch):
@@ -129,7 +145,7 @@ def test_list_and_get_reports(client, game):
 
 def test_report_markdown(client, dated_game, monkeypatch):
     monkeypatch.setattr(
-        render, "report_to_markdown", lambda report, game, model=None: f"# {report.headline}\n\n{game.display_title} ({model})\n"
+        render, "report_to_markdown", lambda report, game, model=None, side=None: f"# {report.headline}\n\n{game.display_title} ({model})\n"
     )
     r = client.get(f"/api/games/{dated_game.id}/export/report.md")
     assert r.status_code == 404 and "No scouting report" in r.json()["error"]["message"]

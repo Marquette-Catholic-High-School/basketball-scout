@@ -32,24 +32,35 @@ nonisolated enum ReportRules {
     }
 
     /// The report on screen: the version the coach picked while it exists; after a report job succeeded,
-    /// the report it wrote (09 R30); otherwise the newest (report.js `load`).
-    static func selectedReport(in reports: [ReportRecord], pinnedID: String?, finishedJob: Job?) -> ReportRecord? {
+    /// the report it wrote (09 R30) when it is on `side`; otherwise the newest on `side` ("Report on";
+    /// report.js `showSide`).
+    static func selectedReport(
+        in reports: [ReportRecord], side: TeamSide = .scouted, pinnedID: String?, finishedJob: Job?
+    ) -> ReportRecord? {
         if let pinnedID, let pinned = reports.first(where: { $0.id == pinnedID }) { return pinned }
         if let finishedJob, finishedJob.kind == .report, finishedJob.status == .succeeded,
-           let written = reportWritten(by: finishedJob, in: reports) {
+           let written = reportWritten(by: finishedJob, in: reports), written.reportSide == side {
             return written
         }
-        return newestFirst(reports).first
+        return newest(on: side, in: reports)
     }
 
-    /// A version picker option (report.js:96-99): "<local date-time> · <model>", plus " · with coach focus".
+    /// The newest report on `side`.
+    static func newest(on side: TeamSide, in reports: [ReportRecord]) -> ReportRecord? {
+        newestFirst(reports).first { $0.reportSide == side }
+    }
+
+    /// A version picker option (report.js:96-99): "<local date-time> · <team> · <model>", plus " · with coach
+    /// focus".
     static func versionTitle(
         _ record: ReportRecord,
+        team: String? = nil,
         locale: Locale = .autoupdatingCurrent,
         timeZone: TimeZone = .autoupdatingCurrent
     ) -> String {
         ScoutFormat.joined([
             ScoutFormat.dateTime(record.createdAt, locale: locale, timeZone: timeZone),
+            team,
             record.model,
             ServerText.nonEmpty(record.coachFocus) == nil ? nil : ReportTexts.withCoachFocus,
         ])

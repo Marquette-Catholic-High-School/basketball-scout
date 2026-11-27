@@ -818,6 +818,10 @@ class Game(_Model):
             return f"{self.scouted_team} vs {self.other_team}"
         return self.scouted_team
 
+    def team_name(self, side: TeamSide) -> str:
+        """The name the coach typed for ``side`` ("" when the other team has none)."""
+        return self.scouted_team if side == TeamSide.SCOUTED else self.other_team
+
 
 class JobKind(StrEnum):
     ANALYZE = "analyze"  # GPU processing + transform (+ report)
@@ -925,6 +929,10 @@ class JobCreate(_Model):
 
 class ReportRequest(_Model):
     coach_focus: str | None = Field(default=None, max_length=2000, description="Optional extra instructions, e.g. 'we play a 2-3 zone'.")
+    side: TeamSide = Field(
+        default=TeamSide.SCOUTED,
+        description="The team the report is about. 'other' scouts the opponent in the same film, from the same analysis.",
+    )
 
 
 class KeyPlayer(_Model):
@@ -964,6 +972,7 @@ class ReportRecord(_Model):
     id: str = Field(default_factory=lambda: new_id("r_"))
     game_id: str
     created_at: datetime | None = None
+    side: TeamSide = Field(default=TeamSide.SCOUTED, description="The team the report is about.")
     model: str
     coach_focus: str | None = None
     report: ScoutingReport
